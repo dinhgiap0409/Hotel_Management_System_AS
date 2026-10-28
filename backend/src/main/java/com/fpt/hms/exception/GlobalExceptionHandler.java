@@ -1,0 +1,122 @@
+package com.fpt.hms.exception;
+
+import com.fpt.hms.common.ApiErrorResponse;
+import com.fpt.hms.common.FieldValidationError;
+import com.fpt.hms.common.MessageResolver;
+import com.fpt.hms.common.TraceIdFilter;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.time.Instant;
+import java.util.List;
+
+/**
+ * Centralized Exception Handler (SDD Section 4.1.2.1 - Table 4.1-2).
+ */
+@Slf4j
+@RestControllerAdvice
+@RequiredArgsConstructor
+public class GlobalExceptionHandler {
+
+    private final MessageResolver messageResolver;
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiErrorResponse> handleValidation(MethodArgumentNotValidException ex,
+                                                             HttpServletRequest request) {
+        List<FieldValidationError> fieldErrors = ex.getBindingResult().getFieldErrors().stream()
+                .map(err -> FieldValidationError.builder()
+                        .field(err.getField())
+                        .code(err.getCode())
+                        .message(err.getDefaultMessage())
+                        .build())
+                .toList();
+
+        ApiErrorResponse payload = ApiErrorResponse.builder()
+                .timestamp(Instant.now())
+                .status(HttpStatus.BAD_REQUEST.value())
+                .errorCode("VALIDATION_ERROR")
+                .message(messageResolver.resolve("VALIDATION_ERROR"))
+                .path(request.getRequestURI())
+                .traceId(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY))
+                .validationErrors(fieldErrors)
+                .build();
+
+        return ResponseEntity.badRequest().body(payload);
+    }
+
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<ApiErrorResponse> handleBusinessException(BusinessException ex,
+                                                                    HttpServletRequest request) {
+        log.warn("Business rule violation [{}]: {}", ex.getErrorCode(), ex.getMessage());
+        return buildResponse(ex.getHttpStatus(), ex.getErrorCode(),
+                ex.getMessage() != null ? ex.getMessage() : messageResolver.resolve(ex.getErrorCode()),
+                request);
+    }
+
+    @ExceptionHandler(InvalidReservationStateException.class)
+    public ResponseEntity<ApiErrorResponse> handleInvalidState(InvalidReservationStateException ex,
+                                                               HttpServletRequest request) {
+        return buildResponse(HttpStatus.CONFLICT, ex.getErrorCode(), ex.getMessage(), request);
+    }
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNotFound(ResourceNotFoundException ex,
+                                                           HttpServletRequest request) {
+        return buildResponse(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND", ex.getMessage(), request);
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ApiErrorResponse> handleAuthException(AuthenticationException ex,
+                                                                HttpServletRequest request) {
+        return buildResponse(HttpStatus.UNAUTHORIZED, "AUTH_INVALID_CREDENTIALS",
+                messageResolver.resolve("MSG01B"), request);
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiErrorResponse> handleAccessDenied(AccessDeniedException ex,
+                                                               HttpServletRequest request) {
+        return buildResponse(HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN",
+                messageResolver.resolve("AUTH_FORBIDDEN"), request);
+    }
+
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ApiErrorResponse> handleOptimisticLock(OptimisticLockingFailureException ex,
+                                                                 HttpServletRequest request) {
+        return buildResponse(HttpStatus.CONFLICT, "CONCURRENT_UPDATE",
+                "The record was modified by another user. Please refresh and try again.", request);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiErrorResponse> handleGenericException(Exception ex,
+                                                                   HttpServletRequest request) {
+        String traceId = MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY);
+        log.error("Unhandled internal error [traceId={}]: ", traceId, ex);
+        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR",
+                messageResolver.resolve("INTERNAL_ERROR"), request);
+    }
+
+    private ResponseEntity<ApiErrorResponse> buildResponse(HttpStatus status,
+                                                           String errorCode,
+                                                           String message,
+                                                           HttpServletRequest request) {
+        ApiErrorResponse payload = ApiErrorResponse.builder()
+                .timestamp(Instant.now())
+                .status(status.value())
+                .errorCode(errorCode)
+                .message(message)
+                .path(request.getRequestURI())
+                .traceId(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY))
+                .build();
+        return ResponseEntity.status(status).body(payload);
+    }
+}

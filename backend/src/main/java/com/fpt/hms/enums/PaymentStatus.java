@@ -1,0 +1,8 @@
+package com.fpt.hms.enums;
+
+public enum PaymentStatus {
+    PENDING,
+    PAID,
+    FAILED,
+    REFUNDED
+}

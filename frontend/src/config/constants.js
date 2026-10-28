@@ -1,0 +1,39 @@
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1';
+
+export const ROLES = {
+  ADMIN: 'ADMIN',
+  GENERAL_MANAGER: 'GENERAL_MANAGER',
+  SALES_MANAGER: 'SALES_MANAGER',
+  HOUSEKEEPING_MANAGER: 'HOUSEKEEPING_MANAGER',
+  SERVICE_MANAGER: 'SERVICE_MANAGER',
+  ACCOUNTANT: 'ACCOUNTANT',
+  FRONT_DESK: 'FRONT_DESK',
+  HOUSEKEEPING: 'HOUSEKEEPING',
+  SERVICE_STAFF: 'SERVICE_STAFF',
+  CUSTOMER: 'CUSTOMER',
+};
+
+export const STAFF_ROLES = [
+  ROLES.ADMIN,
+  ROLES.GENERAL_MANAGER,
+  ROLES.SALES_MANAGER,
+  ROLES.HOUSEKEEPING_MANAGER,
+  ROLES.SERVICE_MANAGER,
+  ROLES.ACCOUNTANT,
+  ROLES.FRONT_DESK,
+  ROLES.HOUSEKEEPING,
+  ROLES.SERVICE_STAFF,
+];
+
+export const ROLE_DEFAULT_ROUTES = {
+  ADMIN: '/admin/users',
+  GENERAL_MANAGER: '/staff/reports',
+  SALES_MANAGER: '/staff/rooms',
+  HOUSEKEEPING_MANAGER: '/staff/housekeeping',
+  SERVICE_MANAGER: '/staff/services-billing',
+  ACCOUNTANT: '/staff/reports',
+  FRONT_DESK: '/staff/frontdesk',
+  HOUSEKEEPING: '/staff/housekeeping',
+  SERVICE_STAFF: '/staff/services-billing',
+  CUSTOMER: '/',
+};
