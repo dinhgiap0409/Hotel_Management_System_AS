@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.dto.frontdesk;
+package com.fpt.hms.dto.frontdesk;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

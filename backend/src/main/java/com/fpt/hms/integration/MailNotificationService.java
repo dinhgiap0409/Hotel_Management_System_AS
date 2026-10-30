@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.integration;
+package com.fpt.hms.integration;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

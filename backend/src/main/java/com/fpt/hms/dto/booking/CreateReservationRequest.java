@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.dto.booking;
+package com.fpt.hms.dto.booking;
 
 import jakarta.validation.constraints.*;
 import lombok.Data;

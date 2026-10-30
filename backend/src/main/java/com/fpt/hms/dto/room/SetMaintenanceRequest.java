@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.dto.room;
+package com.fpt.hms.dto.room;
 
 import jakarta.validation.constraints.Future;
 import jakarta.validation.constraints.NotBlank;

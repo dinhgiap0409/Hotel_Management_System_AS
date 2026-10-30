@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.service.impl;
+package com.fpt.hms.service.impl;
 
 import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.dto.billing_report.InvoiceDto;

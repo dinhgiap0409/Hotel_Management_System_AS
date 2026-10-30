@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.dto.auth;
+package com.fpt.hms.dto.auth;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

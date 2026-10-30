@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.dto.billing_report;
+package com.fpt.hms.dto.billing_report;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;

@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.repository;
+package com.fpt.hms.repository;
 
 import com.fpt.hms.entity.Staff;
 import org.springframework.data.jpa.repository.JpaRepository;

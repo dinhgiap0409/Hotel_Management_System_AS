@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.scheduler;
+package com.fpt.hms.scheduler;
 
 import com.fpt.hms.entity.Reservation;
 import com.fpt.hms.enums.ReservationStatus;

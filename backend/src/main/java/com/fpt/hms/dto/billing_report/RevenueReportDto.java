@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.dto.billing_report;
+package com.fpt.hms.dto.billing_report;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

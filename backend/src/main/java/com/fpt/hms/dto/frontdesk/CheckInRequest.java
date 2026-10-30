@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.dto.frontdesk;
+package com.fpt.hms.dto.frontdesk;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;

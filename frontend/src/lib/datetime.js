@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Standardized Date/Time formatting utilities (SDD Section 4.1.1.2).
  * Business dates use yyyy-MM-dd strings; event instants convert from ISO UTC to Asia/Ho_Chi_Minh.
  */

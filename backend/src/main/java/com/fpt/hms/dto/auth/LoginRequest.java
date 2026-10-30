@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.dto.auth;
+package com.fpt.hms.dto.auth;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;

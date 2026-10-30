@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.service;
+package com.fpt.hms.service;
 
 import com.fpt.hms.dto.room.RoomDto;
 import com.fpt.hms.dto.room.RoomTypeDto;

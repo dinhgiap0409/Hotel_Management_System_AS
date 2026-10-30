@@ -1,4 +1,4 @@
-﻿package com.fpt.hms.controller;
+package com.fpt.hms.controller;
 
 import com.fpt.hms.dto.auth.LoginRequest;
 import com.fpt.hms.dto.auth.LoginResponse;
