@@ -14,16 +14,16 @@ export const MyBookingsPage = () => {
 
   return (
     <div>
-      <h2>Lá»‹ch sá»­ Äáº·t phÃ²ng cá»§a TÃ´i (UC-15, UC-16)</h2>
+      <h2>Lịch sử Đặt phòng của Tôi (UC-15, UC-16)</h2>
       <DataTable
         keyField="bookingId"
         data={bookings}
         columns={[
-          { header: 'MÃ£ Booking', render: (b) => `#${b.bookingId}` },
-          { header: 'NgÃ y nháº­n phÃ²ng', render: (b) => formatDate(b.checkInDate) },
-          { header: 'NgÃ y tráº£ phÃ²ng', render: (b) => formatDate(b.checkOutDate) },
-          { header: 'Tá»•ng tiá»n', render: (b) => formatVND(b.totalAmount) },
-          { header: 'Tráº¡ng thÃ¡i', render: (b) => <StatusBadge status={b.status} /> },
+          { header: 'Mã Booking', render: (b) => `#${b.bookingId}` },
+          { header: 'Ngày nhận phòng', render: (b) => formatDate(b.checkInDate) },
+          { header: 'Ngày trả phòng', render: (b) => formatDate(b.checkOutDate) },
+          { header: 'Tổng tiền', render: (b) => formatVND(b.totalAmount) },
+          { header: 'Trạng thái', render: (b) => <StatusBadge status={b.status} /> },
         ]}
       />
     </div>

@@ -17,33 +17,33 @@ export const FrontDeskDashboardPage = () => {
 
   return (
     <div>
-      <h2>Quáº§y Lá»… tÃ¢n â€” Check-in, LÆ°u trÃº & Check-out (UC-17, UC-18, UC-19, UC-20)</h2>
-      <p style={{ color: '#64748b' }}>DÃ nh cho: NhÃ¢n viÃªn Lá»… tÃ¢n (Front-Desk) & General Manager</p>
+      <h2>Quầy Lễ tân — Check-in, Lưu trú & Check-out (UC-17, UC-18, UC-19, UC-20)</h2>
+      <p style={{ color: '#64748b' }}>Dành cho: Nhân viên Lễ tân (Front-Desk) & General Manager</p>
 
-      <h3>1. Danh sÃ¡ch PhÃ²ng Ä‘ang LÆ°u trÃº (Active Stays)</h3>
+      <h3>1. Danh sách Phòng đang Lưu trú (Active Stays)</h3>
       <DataTable
         keyField="stayId"
         data={stays}
         columns={[
           { header: 'Stay ID', render: (s) => `#${s.stayId}` },
-          { header: 'PhÃ²ng', render: (s) => <strong>{s.room?.roomNumber}</strong> },
-          { header: 'KhÃ¡ch hÃ ng', render: (s) => s.booking?.customer?.fullName },
-          { header: 'Giá» Check-in', render: (s) => formatDateTime(s.actualCheckIn) },
-          { header: 'Tráº¡ng thÃ¡i', render: (s) => <StatusBadge status={s.status} /> },
+          { header: 'Phòng', render: (s) => <strong>{s.room?.roomNumber}</strong> },
+          { header: 'Khách hàng', render: (s) => s.booking?.customer?.fullName },
+          { header: 'Giờ Check-in', render: (s) => formatDateTime(s.actualCheckIn) },
+          { header: 'Trạng thái', render: (s) => <StatusBadge status={s.status} /> },
         ]}
       />
 
-      <h3 style={{ marginTop: 28 }}>2. Danh sÃ¡ch Äáº·t phÃ²ng (Bookings)</h3>
+      <h3 style={{ marginTop: 28 }}>2. Danh sách Đặt phòng (Bookings)</h3>
       <DataTable
         keyField="bookingId"
         data={bookings}
         columns={[
-          { header: 'MÃ£ Booking', render: (b) => `#${b.bookingId}` },
-          { header: 'KhÃ¡ch hÃ ng', render: (b) => b.customer?.fullName },
-          { header: 'Check-in dá»± kiáº¿n', render: (b) => formatDate(b.checkInDate) },
-          { header: 'Check-out dá»± kiáº¿n', render: (b) => formatDate(b.checkOutDate) },
-          { header: 'Tá»•ng tiá»n dá»± kiáº¿n', render: (b) => formatVND(b.totalAmount) },
-          { header: 'Tráº¡ng thÃ¡i', render: (b) => <StatusBadge status={b.status} /> },
+          { header: 'Mã Booking', render: (b) => `#${b.bookingId}` },
+          { header: 'Khách hàng', render: (b) => b.customer?.fullName },
+          { header: 'Check-in dự kiến', render: (b) => formatDate(b.checkInDate) },
+          { header: 'Check-out dự kiến', render: (b) => formatDate(b.checkOutDate) },
+          { header: 'Tổng tiền dự kiến', render: (b) => formatVND(b.totalAmount) },
+          { header: 'Trạng thái', render: (b) => <StatusBadge status={b.status} /> },
         ]}
       />
     </div>

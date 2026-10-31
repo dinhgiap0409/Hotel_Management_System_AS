@@ -21,7 +21,7 @@ export const LoginPage = () => {
       const target = ROLE_DEFAULT_ROUTES[savedUser.role] || '/';
       navigate(target);
     } catch (err) {
-      setError(err.response?.data?.message || 'ÄÄƒng nháº­p tháº¥t báº¡i. Vui lÃ²ng kiá»ƒm tra thÃ´ng tin.');
+      setError(err.response?.data?.message || 'Đăng nhập thất bại. Vui lòng kiểm tra thông tin.');
     } finally {
       setLoading(false);
     }
@@ -34,9 +34,9 @@ export const LoginPage = () => {
 
   return (
     <div style={{ maxWidth: 460, margin: '40px auto', background: '#fff', padding: 32, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
-      <h2 style={{ marginTop: 0, color: '#0f172a' }}>ÄÄƒng nháº­p Há»‡ thá»‘ng HMS</h2>
+      <h2 style={{ marginTop: 0, color: '#0f172a' }}>Đăng nhập Hệ thống HMS</h2>
       <p style={{ color: '#64748b', fontSize: 13, marginBottom: 20 }}>
-        Há»‡ thá»‘ng phÃ¢n quyá»n 10 vai trÃ² chuyÃªn biá»‡t (Máº­t kháº©u máº«u: <code>Admin@123</code>)
+        Hệ thống phân quyền 10 vai trò chuyên biệt (Mật khẩu mẫu: <code>Admin@123</code>)
       </p>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 20 }}>
@@ -89,7 +89,7 @@ export const LoginPage = () => {
           />
         </div>
         <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Máº­t kháº©u</label>
+          <label style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>Mật khẩu</label>
           <input
             type="password"
             value={password}
@@ -103,11 +103,11 @@ export const LoginPage = () => {
           disabled={loading}
           style={{ width: '100%', background: '#0284c7', color: '#fff', border: 'none', padding: '12px', borderRadius: 6, fontWeight: 600, cursor: 'pointer' }}
         >
-          {loading ? 'Äang xá»­ lÃ½...' : 'ÄÄƒng nháº­p'}
+          {loading ? 'Đang xử lý...' : 'Đăng nhập'}
         </button>
       </form>
       <div style={{ marginTop: 16, textAlign: 'center', fontSize: 14 }}>
-        ChÆ°a cÃ³ tÃ i khoáº£n khÃ¡ch hÃ ng? <Link to="/register" style={{ color: '#0284c7' }}>ÄÄƒng kÃ½ ngay</Link>
+        Chưa có tài khoản khách hàng? <Link to="/register" style={{ color: '#0284c7' }}>Đăng ký ngay</Link>
       </div>
     </div>
   );

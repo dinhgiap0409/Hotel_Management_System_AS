@@ -15,41 +15,41 @@ export const ReportsDashboardPage = () => {
 
   return (
     <div>
-      <h2>BÃ¡o cÃ¡o KPI Doanh thu & Kiá»ƒm duyá»‡t ÄÃ¡nh giÃ¡ (UC-27, UC-28, UC-29)</h2>
+      <h2>Báo cáo KPI Doanh thu & Kiểm duyệt Đánh giá (UC-27, UC-28, UC-29)</h2>
       <p style={{ color: '#64748b' }}>
-        DÃ nh cho: <strong>General Manager</strong> (ToÃ n quyá»n KPI), <strong>Accountant</strong> (BÃ¡o cÃ¡o doanh thu), vÃ  <strong>Sales & Marketing Manager</strong> (Kiá»ƒm duyá»‡t Ä‘Ã¡nh giÃ¡ & KPI láº¥p Ä‘áº§y).
+        Dành cho: <strong>General Manager</strong> (Toàn quyền KPI), <strong>Accountant</strong> (Báo cáo doanh thu), và <strong>Sales & Marketing Manager</strong> (Kiểm duyệt đánh giá & KPI lấp đầy).
       </p>
 
       {kpi && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
           <div style={{ background: '#fff', padding: 20, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b' }}>Tá»•ng sá»‘ PhÃ²ng</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Tổng số Phòng</div>
             <div style={{ fontSize: 24, fontWeight: 700 }}>{kpi.totalRooms}</div>
           </div>
           <div style={{ background: '#fff', padding: 20, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b' }}>Tá»•ng LÆ°á»£t Äáº·t phÃ²ng</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Tổng Lượt Đặt phòng</div>
             <div style={{ fontSize: 24, fontWeight: 700 }}>{kpi.totalBookings}</div>
           </div>
           <div style={{ background: '#fff', padding: 20, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b' }}>Tá»•ng HÃ³a Ä‘Æ¡n PhÃ¡t hÃ nh</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Tổng Hóa đơn Phát hành</div>
             <div style={{ fontSize: 24, fontWeight: 700 }}>{kpi.totalInvoices}</div>
           </div>
           <div style={{ background: '#fff', padding: 20, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b' }}>Tá»•ng Doanh thuÄÃ£ thu</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Tổng Doanh thuĐã thu</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: '#16a34a' }}>{formatVND(kpi.totalCollectedRevenue)}</div>
           </div>
         </div>
       )}
 
-      <h3>Danh sÃ¡ch ÄÃ¡nh giÃ¡ cá»§a KhÃ¡ch hÃ ng (Customer Reviews)</h3>
+      <h3>Danh sách Đánh giá của Khách hàng (Customer Reviews)</h3>
       <DataTable
         keyField="reviewId"
         data={reviews}
         columns={[
           { header: 'ID', render: (r) => `#${r.reviewId}` },
-          { header: 'Sá»‘ sao', render: (r) => `${r.rating} / 5 â­` },
-          { header: 'Nháº­n xÃ©t', render: (r) => r.comment },
-          { header: 'Tráº¡ng thÃ¡i', render: (r) => <StatusBadge status={r.status} /> },
+          { header: 'Số sao', render: (r) => `${r.rating} / 5 ⭐` },
+          { header: 'Nhận xét', render: (r) => r.comment },
+          { header: 'Trạng thái', render: (r) => <StatusBadge status={r.status} /> },
         ]}
       />
     </div>

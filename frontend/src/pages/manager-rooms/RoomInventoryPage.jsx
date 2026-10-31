@@ -15,34 +15,34 @@ export const RoomInventoryPage = () => {
 
   return (
     <div>
-      <h2>Quáº£n lÃ½ Háº¡ng phÃ²ng, GiÃ¡ cÆ¡ sá»Ÿ & SÆ¡ Ä‘á»“ PhÃ²ng (UC-07, UC-08)</h2>
+      <h2>Quản lý Hạng phòng, Giá cơ sở & Sơ đồ Phòng (UC-07, UC-08)</h2>
       <p style={{ color: '#64748b' }}>
-        Háº¡ng phÃ²ng & GiÃ¡ cÆ¡ sá»Ÿ do <strong>Sales & Marketing Manager</strong> quáº£n lÃ½; Danh má»¥c PhÃ²ng váº­t lÃ½ do <strong>Housekeeping Manager</strong> quáº£n lÃ½.
+        Hạng phòng & Giá cơ sở do <strong>Sales & Marketing Manager</strong> quản lý; Danh mục Phòng vật lý do <strong>Housekeeping Manager</strong> quản lý.
       </p>
 
-      <h3>Danh má»¥c Háº¡ng phÃ²ng (Room Types)</h3>
+      <h3>Danh mục Hạng phòng (Room Types)</h3>
       <DataTable
         keyField="roomTypeId"
         data={roomTypes}
         columns={[
           { header: 'ID', render: (rt) => `#${rt.roomTypeId}` },
-          { header: 'TÃªn Háº¡ng phÃ²ng', render: (rt) => <strong>{rt.typeName}</strong> },
-          { header: 'Sá»©c chá»©a', render: (rt) => `${rt.capacity} khÃ¡ch` },
-          { header: 'GiÃ¡ cÆ¡ sá»Ÿ / ÄÃªm', render: (rt) => formatVND(rt.basePrice) },
-          { header: 'Tráº¡ng thÃ¡i', render: (rt) => <StatusBadge status={rt.status} /> },
+          { header: 'Tên Hạng phòng', render: (rt) => <strong>{rt.typeName}</strong> },
+          { header: 'Sức chứa', render: (rt) => `${rt.capacity} khách` },
+          { header: 'Giá cơ sở / Đêm', render: (rt) => formatVND(rt.basePrice) },
+          { header: 'Trạng thái', render: (rt) => <StatusBadge status={rt.status} /> },
         ]}
       />
 
-      <h3 style={{ marginTop: 28 }}>Danh sÃ¡ch PhÃ²ng Váº­t lÃ½ (Physical Rooms)</h3>
+      <h3 style={{ marginTop: 28 }}>Danh sách Phòng Vật lý (Physical Rooms)</h3>
       <DataTable
         keyField="roomId"
         data={rooms}
         columns={[
-          { header: 'Sá»‘ phÃ²ng', render: (r) => <strong>{r.roomNumber}</strong> },
-          { header: 'Táº§ng', render: (r) => `Táº§ng ${r.floor}` },
-          { header: 'Háº¡ng phÃ²ng', render: (r) => r.roomType?.typeName },
-          { header: 'Tráº¡ng thÃ¡i', render: (r) => <StatusBadge status={r.status} /> },
-          { header: 'Äá»™ sáº¡ch', render: (r) => <StatusBadge status={r.cleanliness} /> },
+          { header: 'Số phòng', render: (r) => <strong>{r.roomNumber}</strong> },
+          { header: 'Tầng', render: (r) => `Tầng ${r.floor}` },
+          { header: 'Hạng phòng', render: (r) => r.roomType?.typeName },
+          { header: 'Trạng thái', render: (r) => <StatusBadge status={r.status} /> },
+          { header: 'Độ sạch', render: (r) => <StatusBadge status={r.cleanliness} /> },
         ]}
       />
     </div>

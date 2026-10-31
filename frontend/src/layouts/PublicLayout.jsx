@@ -20,16 +20,16 @@ export function PublicLayout() {
           </Link>
           <div className="navbar-nav ms-auto align-items-center gap-2">
             <Link className="nav-link" to="/">
-              TÃ¬m & Äáº·t PhÃ²ng
+              Tìm & Đặt Phòng
             </Link>
             <Link className="nav-link" to="/my-bookings">
-              Tra cá»©u Äáº·t PhÃ²ng
+              Tra cứu Đặt Phòng
             </Link>
             {isAuthenticated && user ? (
               <>
                 {user.role !== 'CUSTOMER' && (
                   <Link className="btn btn-sm btn-warning fw-semibold" to="/staff">
-                    Báº£ng Ä‘iá»u khiá»ƒn Ná»™i bá»™ ({user.role})
+                    Bảng điều khiển Nội bộ ({user.role})
                   </Link>
                 )}
                 <Link className="btn btn-sm btn-outline-light" to="/profile">
@@ -37,16 +37,16 @@ export function PublicLayout() {
                   {user.fullName}
                 </Link>
                 <button className="btn btn-sm btn-danger" onClick={handleLogout}>
-                  ÄÄƒng xuáº¥t
+                  Đăng xuất
                 </button>
               </>
             ) : (
               <>
                 <Link className="btn btn-sm btn-outline-light" to="/login">
-                  ÄÄƒng nháº­p
+                  Đăng nhập
                 </Link>
                 <Link className="btn btn-sm btn-primary" to="/register">
-                  ÄÄƒng kÃ½ KhÃ¡ch hÃ ng
+                  Đăng ký Khách hàng
                 </Link>
               </>
             )}
@@ -57,7 +57,7 @@ export function PublicLayout() {
         <Outlet />
       </main>
       <footer className="bg-dark text-secondary py-3 text-center small mt-5">
-        HMS - Hotel Management System Â© 2026 | SBA301 Group Project (FPT University)
+        HMS - Hotel Management System © 2026 | SBA301 Group Project (FPT University)
       </footer>
     </div>
   );

@@ -50,16 +50,16 @@ http.interceptors.response.use(
     const status = error.response?.status;
     const data = error.response?.data;
     const traceId = data?.traceId || error.response?.headers?.['x-trace-id'];
-    const message = data?.message || error.message || 'ÄÃ£ xáº£y ra lá»—i káº¿t ná»‘i mÃ¡y chá»§.';
+    const message = data?.message || error.message || 'Đã xảy ra lỗi kết nối máy chủ.';
 
     if (!status || status >= 500) {
       notifyToast({ type: 'SYSTEM_ERROR', message, traceId });
     } else if (status === 403) {
-      notifyToast({ type: 'ERROR', message: data?.message || 'Báº¡n khÃ´ng cÃ³ quyá»n thá»±c hiá»‡n thao tÃ¡c nÃ y (403).' });
+      notifyToast({ type: 'ERROR', message: data?.message || 'Bạn không có quyền thực hiện thao tác này (403).' });
     } else if (status === 409 || status === 422 || status === 400) {
       notifyToast({ type: 'ERROR', message });
     } else if (status === 429) {
-      notifyToast({ type: 'WARNING', message: 'Thao tÃ¡c quÃ¡ nhanh, vui lÃ²ng thá»­ láº¡i sau giÃ¢y lÃ¡t.' });
+      notifyToast({ type: 'WARNING', message: 'Thao tác quá nhanh, vui lòng thử lại sau giây lát.' });
     }
     return Promise.reject(error);
   }

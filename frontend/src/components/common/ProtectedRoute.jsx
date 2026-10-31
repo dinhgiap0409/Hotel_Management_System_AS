@@ -13,8 +13,8 @@ export function ProtectedRoute({ roles, children }) {
     return (
       <div className="container py-5 text-center">
         <i className="bi bi-shield-x text-danger display-1"></i>
-        <h2 className="mt-3">403 - KhÃ´ng cÃ³ quyá»n truy cáº­p</h2>
-        <p className="text-muted">Vai trÃ² hiá»‡n táº¡i ({user.role}) khÃ´ng Ä‘Æ°á»£c phÃ©p truy cáº­p trang nÃ y.</p>
+        <h2 className="mt-3">403 - Không có quyền truy cập</h2>
+        <p className="text-muted">Vai trò hiện tại ({user.role}) không được phép truy cập trang này.</p>
       </div>
     );
   }

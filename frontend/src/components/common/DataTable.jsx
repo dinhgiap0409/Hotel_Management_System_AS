@@ -1,6 +1,6 @@
 import React from 'react';
 
-export const DataTable = ({ columns, data, keyField = 'id', emptyMessage = 'KhÃ´ng cÃ³ dá»¯ liá»‡u' }) => {
+export const DataTable = ({ columns, data, keyField = 'id', emptyMessage = 'Không có dữ liệu' }) => {
   return (
     <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, border: '1px solid #e2e8f0' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 14 }}>

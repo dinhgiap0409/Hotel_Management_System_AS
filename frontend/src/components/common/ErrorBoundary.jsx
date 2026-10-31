@@ -15,9 +15,9 @@ export class ErrorBoundary extends React.Component {
       return (
         <div className="container py-5 text-center">
           <i className="bi bi-bug text-danger display-1"></i>
-          <h3 className="mt-3">ÄÃ£ xáº£y ra lá»—i hiá»ƒn thá»‹ giao diá»‡n</h3>
+          <h3 className="mt-3">Đã xảy ra lỗi hiển thị giao diện</h3>
           <button className="btn btn-primary mt-2" onClick={() => window.location.reload()}>
-            Táº£i láº¡i trang
+            Tải lại trang
           </button>
         </div>
       );
