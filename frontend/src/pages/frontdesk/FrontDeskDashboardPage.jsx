@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { frontDeskApi } from '../../services/frontDeskApi';
 import { bookingApi } from '../../services/bookingApi';
 import { DataTable } from '../../components/common/DataTable';

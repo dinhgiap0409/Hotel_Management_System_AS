@@ -1,4 +1,3 @@
-import React from 'react';
 import { Route } from 'react-router-dom';
 import { LandingSearchPage } from '../pages/booking/LandingSearchPage';
 import { MyBookingsPage } from '../pages/booking/MyBookingsPage';

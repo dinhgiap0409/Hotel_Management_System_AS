@@ -1,4 +1,3 @@
-import React from 'react';
 import { Route } from 'react-router-dom';
 import { ServicesAndBillingPage } from '../pages/services-billing/ServicesAndBillingPage';
 import { ReportsDashboardPage } from '../pages/reports-reviews/ReportsDashboardPage';

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Route } from 'react-router-dom';
 import { HousekeepingBoardPage } from '../pages/housekeeping/HousekeepingBoardPage';
 import { RoomInventoryPage } from '../pages/manager-rooms/RoomInventoryPage';

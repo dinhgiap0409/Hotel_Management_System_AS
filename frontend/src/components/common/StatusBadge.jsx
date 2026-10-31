@@ -1,5 +1,3 @@
-import React from 'react';
-
 const STATUS_COLORS = {
   Active: { bg: '#dcfce7', text: '#166534' },
   Available: { bg: '#dcfce7', text: '#166534' },

@@ -1,5 +1,3 @@
-import React from 'react';
-
 export const DataTable = ({ columns, data, keyField = 'id', emptyMessage = 'Không có dữ liệu' }) => {
   return (
     <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, border: '1px solid #e2e8f0' }}>
