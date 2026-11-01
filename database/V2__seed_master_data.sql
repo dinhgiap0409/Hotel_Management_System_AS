@@ -1,7 +1,7 @@
 -- =============================================================================
 -- HOTEL MANAGEMENT SYSTEM (HMS) - MASTER SEED DATA
 -- Default password for all sample accounts: Admin@123
--- BCrypt Hash (cost 10) for "Admin@123": $2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy
+-- BCrypt Hash (cost 10) for "Admin@123": $2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76
 -- =============================================================================
 
 USE [HMS_DB];
@@ -28,16 +28,16 @@ GO
 IF NOT EXISTS (SELECT 1 FROM dbo.[Account])
 BEGIN
     INSERT INTO dbo.[Account] (role_id, email, password_hash, status) VALUES
-    (1,  N'admin@hms.com',           '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE'),
-    (2,  N'gm@hms.com',              '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE'),
-    (3,  N'sales.manager@hms.com',   '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE'),
-    (4,  N'hk.manager@hms.com',      '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE'),
-    (5,  N'service.manager@hms.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE'),
-    (6,  N'accountant@hms.com',      '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE'),
-    (7,  N'frontdesk@hms.com',       '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE'),
-    (8,  N'housekeeping@hms.com',    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE'),
-    (9,  N'service@hms.com',         '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE'),
-    (10, N'customer@gmail.com',      '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', N'ACTIVE');
+    (1,  N'admin@hms.com',           '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE'),
+    (2,  N'gm@hms.com',              '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE'),
+    (3,  N'sales.manager@hms.com',   '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE'),
+    (4,  N'hk.manager@hms.com',      '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE'),
+    (5,  N'service.manager@hms.com', '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE'),
+    (6,  N'accountant@hms.com',      '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE'),
+    (7,  N'frontdesk@hms.com',       '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE'),
+    (8,  N'housekeeping@hms.com',    '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE'),
+    (9,  N'service@hms.com',         '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE'),
+    (10, N'customer@gmail.com',      '$2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76', N'ACTIVE');
 END
 GO
 
