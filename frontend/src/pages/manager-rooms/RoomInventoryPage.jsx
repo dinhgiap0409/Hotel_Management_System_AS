@@ -15,12 +15,12 @@ export const RoomInventoryPage = () => {
 
   return (
     <div>
-      <h2>Quản lý Hạng phòng, Giá cơ sở & Sơ đồ Phòng (UC-07, UC-08)</h2>
+      <h2>Quản lý Hạng phòng, Giá cơ sở & Sơ đồ Phòng</h2>
       <p style={{ color: '#64748b' }}>
-        Hạng phòng & Giá cơ sở do <strong>Sales & Marketing Manager</strong> quản lý; Danh mục Phòng vật lý do <strong>Housekeeping Manager</strong> quản lý.
+        Quản lý danh mục hạng phòng, đơn giá cơ sở và danh sách phòng vật lý trong khách sạn.
       </p>
 
-      <h3>Danh mục Hạng phòng (Room Types)</h3>
+      <h3>Danh mục Hạng phòng</h3>
       <DataTable
         keyField="roomTypeId"
         data={roomTypes}
@@ -33,7 +33,7 @@ export const RoomInventoryPage = () => {
         ]}
       />
 
-      <h3 style={{ marginTop: 28 }}>Danh sách Phòng Vật lý (Physical Rooms)</h3>
+      <h3 style={{ marginTop: 28 }}>Danh sách Phòng Vật lý</h3>
       <DataTable
         keyField="roomId"
         data={rooms}

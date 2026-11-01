@@ -14,7 +14,7 @@ export const MyBookingsPage = () => {
 
   return (
     <div>
-      <h2>Lịch sử Đặt phòng của Tôi (UC-15, UC-16)</h2>
+      <h2>Lịch sử Đặt phòng của Tôi</h2>
       <DataTable
         keyField="bookingId"
         data={bookings}

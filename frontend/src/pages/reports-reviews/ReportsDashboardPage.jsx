@@ -15,9 +15,9 @@ export const ReportsDashboardPage = () => {
 
   return (
     <div>
-      <h2>Báo cáo KPI Doanh thu & Kiểm duyệt Đánh giá (UC-27, UC-28, UC-29)</h2>
+      <h2>Báo cáo Doanh thu & Kiểm duyệt Đánh giá</h2>
       <p style={{ color: '#64748b' }}>
-        Dành cho: <strong>General Manager</strong> (Toàn quyền KPI), <strong>Accountant</strong> (Báo cáo doanh thu), và <strong>Sales & Marketing Manager</strong> (Kiểm duyệt đánh giá & KPI lấp đầy).
+        Tổng hợp các chỉ số vận hành, doanh thu khách sạn và đánh giá của khách hàng sau lưu trú.
       </p>
 
       {kpi && (
@@ -35,13 +35,13 @@ export const ReportsDashboardPage = () => {
             <div style={{ fontSize: 24, fontWeight: 700 }}>{kpi.totalInvoices}</div>
           </div>
           <div style={{ background: '#fff', padding: 20, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b' }}>Tổng Doanh thuĐã thu</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Tổng Doanh thu Đã thu</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: '#16a34a' }}>{formatVND(kpi.totalCollectedRevenue)}</div>
           </div>
         </div>
       )}
 
-      <h3>Danh sách Đánh giá của Khách hàng (Customer Reviews)</h3>
+      <h3>Danh sách Đánh giá của Khách hàng</h3>
       <DataTable
         keyField="reviewId"
         data={reviews}

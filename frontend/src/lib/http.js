@@ -1,13 +1,15 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config/constants';
 
-/**
- * In-memory token store (SDD Section 4.1.5.2: Access token is kept in memory only, not localStorage).
- */
-let inMemoryAccessToken = null;
+let inMemoryAccessToken = sessionStorage.getItem('hms_access_token') || null;
 
 export function setAccessToken(token) {
   inMemoryAccessToken = token;
+  if (token) {
+    sessionStorage.setItem('hms_access_token', token);
+  } else {
+    sessionStorage.removeItem('hms_access_token');
+  }
 }
 
 export function getAccessToken() {
@@ -25,9 +27,6 @@ export function notifyToast(toast) {
   toastListeners.forEach((fn) => fn(toast));
 }
 
-/**
- * Single configured Axios instance with centralized error interceptor (SDD Section 4.1.2.2).
- */
 export const http = axios.create({
   baseURL: API_BASE_URL,
   headers: {

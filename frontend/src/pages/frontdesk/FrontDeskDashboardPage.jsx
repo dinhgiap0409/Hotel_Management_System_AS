@@ -17,10 +17,10 @@ export const FrontDeskDashboardPage = () => {
 
   return (
     <div>
-      <h2>Quầy Lễ tân — Check-in, Lưu trú & Check-out (UC-17, UC-18, UC-19, UC-20)</h2>
-      <p style={{ color: '#64748b' }}>Dành cho: Nhân viên Lễ tân (Front-Desk) & General Manager</p>
+      <h2>Quầy Lễ tân — Check-in, Lưu trú & Check-out</h2>
+      <p style={{ color: '#64748b' }}>Quản lý khách nhận phòng, danh sách phòng đang lưu trú và thủ tục trả phòng.</p>
 
-      <h3>1. Danh sách Phòng đang Lưu trú (Active Stays)</h3>
+      <h3>1. Danh sách Phòng đang Lưu trú</h3>
       <DataTable
         keyField="stayId"
         data={stays}
@@ -33,7 +33,7 @@ export const FrontDeskDashboardPage = () => {
         ]}
       />
 
-      <h3 style={{ marginTop: 28 }}>2. Danh sách Đặt phòng (Bookings)</h3>
+      <h3 style={{ marginTop: 28 }}>2. Danh sách Đặt phòng</h3>
       <DataTable
         keyField="bookingId"
         data={bookings}
