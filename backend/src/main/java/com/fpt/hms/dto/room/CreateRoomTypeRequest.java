@@ -42,3 +42,4 @@ public class CreateRoomTypeRequest {
     @Size(max = 500, message = "Đường dẫn ảnh tối đa 500 ký tự")
     private String imageUrl;
 }
+

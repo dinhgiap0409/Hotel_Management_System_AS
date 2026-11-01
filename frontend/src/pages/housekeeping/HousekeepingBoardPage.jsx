@@ -23,8 +23,8 @@ export const HousekeepingBoardPage = () => {
 
   return (
     <div>
-      <h2>Bảng Điều phối Buồng phòng & Bảo trì (UC-09, UC-10, UC-11)</h2>
-      <p style={{ color: '#64748b' }}>Dành cho: Housekeeping Manager & Nhân viên Housekeeping</p>
+      <h2>Bảng Điều phối Buồng phòng & Bảo trì</h2>
+      <p style={{ color: '#64748b' }}>Theo dõi trạng thái vệ sinh phòng vật lý và nhiệm vụ dọn phòng.</p>
 
       <h3>1. Trạng thái Vệ sinh Phòng vật lý</h3>
       <DataTable
@@ -44,7 +44,7 @@ export const HousekeepingBoardPage = () => {
                   onClick={() => handleMarkCleaned(r.roomId)}
                   style={{ background: '#16a34a', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 4, cursor: 'pointer' }}
                 >
-                  Xác nhận Đã dọn sạch (Clean)
+                  Xác nhận Đã dọn sạch
                 </button>
               ) : (
                 <span style={{ color: '#64748b', fontSize: 13 }}>Sẵn sàng đón khách</span>
@@ -53,7 +53,7 @@ export const HousekeepingBoardPage = () => {
         ]}
       />
 
-      <h3 style={{ marginTop: 28 }}>2. Danh sách Nhiệm vụ Dọn phòng (Housekeeping Tasks)</h3>
+      <h3 style={{ marginTop: 28 }}>2. Danh sách Nhiệm vụ Dọn phòng</h3>
       <DataTable
         keyField="taskId"
         data={tasks}

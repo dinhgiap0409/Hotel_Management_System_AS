@@ -22,3 +22,4 @@ public class UpdateRoomTypePricesRequest {
     @Valid
     private List<RoomTypePriceDto> prices;
 }
+

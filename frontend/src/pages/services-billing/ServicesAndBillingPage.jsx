@@ -17,12 +17,12 @@ export const ServicesAndBillingPage = () => {
 
   return (
     <div>
-      <h2>Dịch vụ Nội khu, Hóa đơn Folio & Khuyến mãi (UC-21..UC-26)</h2>
+      <h2>Dịch vụ Nội khu, Hóa đơn & Khuyến mãi</h2>
       <p style={{ color: '#64748b' }}>
-        Phân quyền chuyên biệt: <strong>Service Manager</strong> quản lý danh mục dịch vụ; <strong>Accountant</strong> kiểm soát hóa đơn & hoàn tiền; <strong>Sales & Marketing Manager</strong> quản lý Voucher.
+        Quản lý danh mục dịch vụ phụ trợ, đơn gọi dịch vụ phòng, hóa đơn lưu trú và chương trình khuyến mãi.
       </p>
 
-      <h3>1. Danh mục Dịch vụ Khách sạn (POS Services)</h3>
+      <h3>1. Danh mục Dịch vụ Khách sạn</h3>
       <DataTable
         keyField="serviceId"
         data={services}
@@ -35,7 +35,7 @@ export const ServicesAndBillingPage = () => {
         ]}
       />
 
-      <h3 style={{ marginTop: 28 }}>2. Đơn gọi Dịch vụ của Khách (Service Orders)</h3>
+      <h3 style={{ marginTop: 28 }}>2. Đơn gọi Dịch vụ của Khách</h3>
       <DataTable
         keyField="orderId"
         data={orders}
@@ -46,7 +46,7 @@ export const ServicesAndBillingPage = () => {
         ]}
       />
 
-      <h3 style={{ marginTop: 28 }}>3. Danh sách Mã Khuyến mãi (Vouchers — Sales & Marketing)</h3>
+      <h3 style={{ marginTop: 28 }}>3. Danh sách Mã Khuyến mãi (Vouchers)</h3>
       <DataTable
         keyField="voucherId"
         data={vouchers}

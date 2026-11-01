@@ -14,7 +14,7 @@ export const LandingSearchPage = () => {
       <div style={{ background: '#0f172a', color: '#fff', padding: '36px 28px', borderRadius: 12, marginBottom: 28 }}>
         <h1 style={{ marginTop: 0 }}>Chào mừng đến với Khách sạn HMS Luxury</h1>
         <p style={{ color: '#cbd5e1', maxWidth: 640 }}>
-          Tra cứu phòng trống theo thời gian thực, áp dụng mã giảm giá khuyến mãi và thanh toán tiền cọc an toàn qua cổng VNPay (UC-12, UC-13, UC-14).
+          Tra cứu phòng trống theo thời gian thực, áp dụng mã giảm giá khuyến mãi và thanh toán tiền cọc an toàn qua cổng VNPay.
         </p>
       </div>
 

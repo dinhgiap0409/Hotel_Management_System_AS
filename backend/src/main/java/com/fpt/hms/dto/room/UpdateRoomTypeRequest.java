@@ -44,3 +44,4 @@ public class UpdateRoomTypeRequest {
 
     private Boolean isActive;
 }
+

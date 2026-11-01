@@ -40,3 +40,4 @@ public class RoomTypePriceDto {
 
     private Boolean isActive;
 }
+
