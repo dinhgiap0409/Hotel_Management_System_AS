@@ -41,11 +41,20 @@ public class GlobalExceptionHandler {
                         .build())
                 .toList();
 
+        String detailedValidationMessage = fieldErrors.stream()
+                .map(FieldValidationError::getMessage)
+                .filter(msg -> msg != null && !msg.isBlank())
+                .distinct()
+                .collect(java.util.stream.Collectors.joining("; "));
+        if (detailedValidationMessage.isEmpty()) {
+            detailedValidationMessage = messageResolver.resolve("VALIDATION_ERROR");
+        }
+
         ApiErrorResponse payload = ApiErrorResponse.builder()
                 .timestamp(Instant.now())
                 .status(HttpStatus.BAD_REQUEST.value())
                 .errorCode("VALIDATION_ERROR")
-                .message(messageResolver.resolve("VALIDATION_ERROR"))
+                .message(detailedValidationMessage)
                 .path(request.getRequestURI())
                 .traceId(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY))
                 .validationErrors(fieldErrors)

@@ -49,6 +49,18 @@ http.interceptors.response.use(
     const status = error.response?.status;
     const data = error.response?.data;
     const traceId = data?.traceId || error.response?.headers?.['x-trace-id'];
+
+    // Extract detailed field validation messages when validationErrors is returned
+    if (data && Array.isArray(data.validationErrors) && data.validationErrors.length > 0) {
+      const detailedMsg = data.validationErrors
+        .map((item) => item.message)
+        .filter(Boolean)
+        .join('; ');
+      if (detailedMsg) {
+        data.message = detailedMsg;
+      }
+    }
+
     const message = data?.message || error.message || 'Đã xảy ra lỗi kết nối máy chủ.';
 
     if (!status || status >= 500) {

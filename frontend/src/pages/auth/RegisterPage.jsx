@@ -21,6 +21,18 @@ export const RegisterPage = () => {
     setError(null);
     setSuccessMsg(null);
 
+    const trimmedPhone = form.phone.trim();
+    if (!/^(0|\+84)\d{9}$/.test(trimmedPhone)) {
+      setError('Số điện thoại Việt Nam không hợp lệ (10 chữ số, bắt đầu bằng 0 hoặc +84).');
+      return;
+    }
+
+    const trimmedIdentity = form.identityNumber.trim();
+    if (trimmedIdentity && !/^[A-Za-z0-9]{9,12}$/.test(trimmedIdentity)) {
+      setError('Số CCCD/Passport không hợp lệ (gồm 9 đến 12 ký tự chữ hoặc số).');
+      return;
+    }
+
     if (form.password.length < 8) {
       setError('Mật khẩu phải có ít nhất 8 ký tự.');
       return;
@@ -33,16 +45,20 @@ export const RegisterPage = () => {
     setLoading(true);
     try {
       await authApi.register({
-        fullName: form.fullName,
-        email: form.email,
-        phone: form.phone,
-        identityNumber: form.identityNumber,
+        fullName: form.fullName.trim(),
+        email: form.email.trim(),
+        phone: trimmedPhone,
+        identityNumber: trimmedIdentity || null,
         password: form.password,
       });
       setSuccessMsg('Đăng ký tài khoản thành công! Đang chuyển sang trang đăng nhập...');
       setTimeout(() => navigate('/login'), 1500);
     } catch (err) {
-      setError(err.response?.data?.message || 'Có lỗi xảy ra khi đăng ký tài khoản.');
+      const validationMsg = err.response?.data?.validationErrors
+        ?.map((v) => v.message)
+        .filter(Boolean)
+        .join('; ');
+      setError(validationMsg || err.response?.data?.message || 'Có lỗi xảy ra khi đăng ký tài khoản.');
     } finally {
       setLoading(false);
     }
@@ -127,7 +143,7 @@ export const RegisterPage = () => {
           <div>
             <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Số CCCD / Passport</label>
             <input
-              placeholder="001200012345"
+              placeholder="9 - 12 ký tự (VD: 001200012345)"
               value={form.identityNumber}
               onChange={(e) => setForm({ ...form, identityNumber: e.target.value })}
               style={inputStyle}
