@@ -56,7 +56,7 @@ export function PublicLayout() {
         <Outlet />
       </main>
       <footer className="bg-dark text-secondary py-3 text-center small mt-5">
-        HMS - Hotel Management System © 2026 | SBA301 Group Project (FPT University)
+        HMS - Hotel Management System © 2026 | SBA301 Group 1's Project (FPT University)
       </footer>
     </div>
   );

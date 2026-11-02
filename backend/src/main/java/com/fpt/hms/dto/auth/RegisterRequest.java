@@ -21,7 +21,7 @@ public class RegisterRequest {
     @Pattern(regexp = "^(0|\\+84)\\d{9}$", message = "Số điện thoại Việt Nam không hợp lệ (10 chữ số)")
     private String phone;
 
-    @Size(max = 30, message = "Số CCCD/Passport tối đa 30 ký tự")
+    @Pattern(regexp = "^$|^[A-Za-z0-9]{9,12}$", message = "Số CCCD/Passport không hợp lệ (gồm 9 đến 12 ký tự chữ hoặc số)")
     private String identityNumber;
 
     @NotBlank(message = "Mật khẩu không được để trống")

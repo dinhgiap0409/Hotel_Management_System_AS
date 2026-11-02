@@ -3,32 +3,20 @@ import { authApi } from '../../services/authApi';
 import { useAuth } from '../../context/AuthContext';
 import { DataTable } from '../../components/common/DataTable';
 import { StatusBadge } from '../../components/common/StatusBadge';
+import { getRoleLabel, getDepartmentLabel, getStatusLabel } from '../../config/constants';
 
 /**
  * Mapping chuẩn giữa Phòng ban (Department) và các Vai trò (Roles) thuộc phòng ban đó
  * theo đúng cấu trúc tổ chức khách sạn trong tài liệu SRS & SDD.
  */
 const DEPARTMENT_ROLES_MAP = {
-  1: ['ADMIN'],                                    // IT & Technical Department
-  2: ['GENERAL_MANAGER'],                          // Executive Management Board
-  3: ['SALES_MANAGER'],                            // Sales & Marketing Department
-  4: ['HOUSEKEEPING_MANAGER', 'HOUSEKEEPING'],     // Housekeeping Department
-  5: ['SERVICE_MANAGER', 'SERVICE_STAFF'],         // Services & Ancillary Division
-  6: ['ACCOUNTANT'],                               // Accounting & Finance Department
-  7: ['FRONT_DESK'],                               // Front Office Department
-};
-
-const ROLE_LABELS = {
-  ADMIN: 'ADMIN — Quản trị viên CNTT',
-  GENERAL_MANAGER: 'GENERAL_MANAGER — Tổng Quản lý',
-  SALES_MANAGER: 'SALES_MANAGER — Trưởng phòng Kinh doanh & Marketing',
-  HOUSEKEEPING_MANAGER: 'HOUSEKEEPING_MANAGER — Trưởng bộ phận Buồng phòng',
-  HOUSEKEEPING: 'HOUSEKEEPING — Nhân viên Buồng phòng',
-  SERVICE_MANAGER: 'SERVICE_MANAGER — Trưởng bộ phận Dịch vụ',
-  SERVICE_STAFF: 'SERVICE_STAFF — Nhân viên Dịch vụ',
-  ACCOUNTANT: 'ACCOUNTANT — Kế toán',
-  FRONT_DESK: 'FRONT_DESK — Nhân viên Lễ tân',
-  CUSTOMER: 'CUSTOMER — Khách hàng',
+  1: ['ADMIN'],                                    // Phòng Công nghệ Thông tin & Kỹ thuật
+  2: ['GENERAL_MANAGER'],                          // Ban Giám đốc Điều hành
+  3: ['SALES_MANAGER'],                            // Phòng Kinh doanh & Tiếp thị
+  4: ['HOUSEKEEPING_MANAGER', 'HOUSEKEEPING'],     // Bộ phận Buồng phòng
+  5: ['SERVICE_MANAGER', 'SERVICE_STAFF'],         // Bộ phận Dịch vụ & Tiện ích
+  6: ['ACCOUNTANT'],                               // Phòng Tài chính - Kế toán
+  7: ['FRONT_DESK'],                               // Bộ phận Tiền sảnh & Lễ tân
 };
 
 export const UserManagementPage = () => {
@@ -68,8 +56,8 @@ export const UserManagementPage = () => {
   };
 
   const loadMetadata = () => {
-    authApi.getRoles().then((res) => setRoles(res.data || [])).catch(() => { });
-    authApi.getDepartments().then((res) => setDepartments(res.data || [])).catch(() => { });
+    authApi.getRoles().then((res) => setRoles(res.data || [])).catch(() => {});
+    authApi.getDepartments().then((res) => setDepartments(res.data || [])).catch(() => {});
   };
 
   const fetchUsers = () => {
@@ -124,7 +112,7 @@ export const UserManagementPage = () => {
     setError(null);
     try {
       await authApi.updateAccountStatus(account.accountId, nextStatus);
-      setFeedback(`Đã cập nhật trạng thái tài khoản ${account.email} sang ${nextStatus}.`);
+      setFeedback(`Đã chuyển trạng thái tài khoản ${account.email} sang "${getStatusLabel(nextStatus)}".`);
       fetchUsers();
     } catch (err) {
       setError(err.response?.data?.message || 'Không thể thay đổi trạng thái tài khoản.');
@@ -137,7 +125,7 @@ export const UserManagementPage = () => {
     setError(null);
     try {
       await authApi.assignUserRole(account.accountId, newRoleName, account.departmentId);
-      setFeedback(`Đã phân quyền ${newRoleName} cho tài khoản ${account.email}.`);
+      setFeedback(`Đã phân quyền "${getRoleLabel(newRoleName)}" cho tài khoản ${account.email}.`);
       fetchUsers();
     } catch (err) {
       setError(err.response?.data?.message || 'Không thể cập nhật vai trò.');
@@ -153,7 +141,7 @@ export const UserManagementPage = () => {
         ...createForm,
         departmentId: Number(createForm.departmentId),
       });
-      setFeedback(`Đã tạo mới tài khoản nhân sự ${createForm.email} (${createForm.roleName}).`);
+      setFeedback(`Đã tạo mới tài khoản nhân sự ${createForm.email} (${getRoleLabel(createForm.roleName)}).`);
       setShowCreateModal(false);
       setCreateForm({
         email: '',
@@ -297,15 +285,15 @@ export const UserManagementPage = () => {
           <option value="">-- Tất cả Vai trò --</option>
           {roles.map((r) => (
             <option key={r.roleName} value={r.roleName}>
-              {r.roleName}
+              {getRoleLabel(r.roleName)}
             </option>
           ))}
         </select>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={inputStyle}>
           <option value="">-- Tất cả Trạng thái --</option>
-          <option value="ACTIVE">ACTIVE (Đang hoạt động)</option>
-          <option value="LOCKED">LOCKED (Đang bị khóa)</option>
-          <option value="INACTIVE">INACTIVE (Ngừng hoạt động)</option>
+          <option value="ACTIVE">Đang hoạt động</option>
+          <option value="LOCKED">Đang bị khóa</option>
+          <option value="INACTIVE">Ngừng hoạt động</option>
         </select>
         <button
           type="submit"
@@ -358,7 +346,11 @@ export const UserManagementPage = () => {
               <div>
                 <div>{u.phone || '-'}</div>
                 <div style={{ fontSize: 12, color: '#64748b' }}>
-                  {u.departmentName || (u.role === 'CUSTOMER' ? 'Khách hàng bên ngoài' : '-')}
+                  {u.departmentId || u.departmentName
+                    ? getDepartmentLabel(u.departmentId || u.departmentName)
+                    : u.role === 'CUSTOMER'
+                      ? 'Khách hàng bên ngoài'
+                      : '-'}
                 </div>
               </div>
             ),
@@ -367,7 +359,6 @@ export const UserManagementPage = () => {
             header: 'Vai trò',
             render: (u) => {
               const deptRoles = u.departmentId ? getAllowedRolesForDepartment(u.departmentId) : [u.role];
-              // Chỉ hiển thị dropdown chọn nhanh nếu phòng ban của nhân sự đó có nhiều hơn 1 vai trò (ví dụ: Buồng phòng hoặc Dịch vụ)
               if (isAdmin && u.role !== 'CUSTOMER' && u.accountId !== currentUser?.accountId && deptRoles.length > 1) {
                 return (
                   <select
@@ -377,7 +368,7 @@ export const UserManagementPage = () => {
                   >
                     {deptRoles.map((rName) => (
                       <option key={rName} value={rName}>
-                        {rName}
+                        {getRoleLabel(rName)}
                       </option>
                     ))}
                   </select>
@@ -538,7 +529,7 @@ export const UserManagementPage = () => {
                   >
                     {departments.map((d) => (
                       <option key={d.departmentId} value={d.departmentId}>
-                        {d.departmentName}
+                        {getDepartmentLabel(d.departmentId || d.departmentName)}
                       </option>
                     ))}
                   </select>
@@ -553,7 +544,7 @@ export const UserManagementPage = () => {
                   >
                     {createModalAllowedRoles.map((rName) => (
                       <option key={rName} value={rName}>
-                        {ROLE_LABELS[rName] || rName}
+                        {getRoleLabel(rName)}
                       </option>
                     ))}
                   </select>
@@ -626,7 +617,7 @@ export const UserManagementPage = () => {
                     >
                       {departments.map((d) => (
                         <option key={d.departmentId} value={d.departmentId}>
-                          {d.departmentName}
+                          {getDepartmentLabel(d.departmentId || d.departmentName)}
                         </option>
                       ))}
                     </select>
@@ -641,7 +632,7 @@ export const UserManagementPage = () => {
                     >
                       {editModalAllowedRoles.map((rName) => (
                         <option key={rName} value={rName}>
-                          {ROLE_LABELS[rName] || rName}
+                          {getRoleLabel(rName)}
                         </option>
                       ))}
                     </select>

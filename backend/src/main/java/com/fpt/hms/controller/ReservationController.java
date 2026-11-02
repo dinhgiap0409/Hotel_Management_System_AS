@@ -1,8 +1,9 @@
 package com.fpt.hms.controller;
 
 import com.fpt.hms.dto.booking.CreateReservationRequest;
+import com.fpt.hms.dto.booking.PublicRoomCategoryDto;
 import com.fpt.hms.dto.booking.ReservationDto;
-import com.fpt.hms.dto.room.RoomTypeDto;
+import com.fpt.hms.dto.booking.RoomCategoryDetailDto;
 import com.fpt.hms.security.UserPrincipal;
 import com.fpt.hms.service.ReservationService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -19,7 +20,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * Module 3A (Owner: GiapND) - Room Availability Search & Online Booking Controller (UC-21 to UC-25).
+ * Module 3A (Owner: GiapND) - Public Catalog, Room Search & Online Reservation Controller (UC-14, UC-21 to UC-25).
  */
 @RestController
 @RequestMapping("/api/v1")
@@ -29,13 +30,28 @@ public class ReservationController {
 
     private final ReservationService reservationService;
 
+    @GetMapping("/public/room-types")
+    @Operation(summary = "UC-14: View Room Categories - Displays public catalog of active accommodation categories, photos, descriptions, capacities, and base rates")
+    public ResponseEntity<List<PublicRoomCategoryDto>> viewRoomCategories() {
+        return ResponseEntity.ok(reservationService.getActiveRoomCategories());
+    }
+
     @GetMapping("/public/rooms/search")
-    @Operation(summary = "UC-21: Search available room types by check-in/out dates and guest count")
-    public ResponseEntity<List<RoomTypeDto>> searchAvailableRooms(
+    @Operation(summary = "UC-21: Search available room types by check-in/out dates and guest count, excluding booked/occupied/maintenance units and computing estimated totals")
+    public ResponseEntity<List<PublicRoomCategoryDto>> searchAvailableRooms(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkInDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkOutDate,
             @RequestParam(defaultValue = "1") int guests) {
         return ResponseEntity.ok(reservationService.searchAvailableRoomTypes(checkInDate, checkOutDate, guests));
+    }
+
+    @GetMapping("/public/room-types/{roomTypeId}")
+    @Operation(summary = "UC-22: View Room Details - Displays specifications, photo galleries, bed layouts, amenity checklists, rates, and verified reviews for a selected room type")
+    public ResponseEntity<RoomCategoryDetailDto> viewRoomTypeDetails(
+            @PathVariable Integer roomTypeId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkInDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkOutDate) {
+        return ResponseEntity.ok(reservationService.getRoomCategoryDetails(roomTypeId, checkInDate, checkOutDate));
     }
 
     @PostMapping("/reservations")
