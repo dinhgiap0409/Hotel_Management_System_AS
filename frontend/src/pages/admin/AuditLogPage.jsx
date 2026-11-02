@@ -4,6 +4,21 @@ import { useAuth } from '../../context/AuthContext';
 import { DataTable } from '../../components/common/DataTable';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { formatDateTime } from '../../lib/datetime';
+import { AUDIT_ACTION_LABELS, getAuditActionLabel } from '../../config/constants';
+
+const ENTITY_LABELS = {
+  Account: 'Tài khoản',
+  AuditConfig: 'Cấu hình Audit',
+  Reservation: 'Đặt phòng',
+  Room: 'Phòng',
+  RoomType: 'Hạng phòng',
+  Folio: 'Hóa đơn lưu trú',
+  ServiceOrder: 'Đơn dịch vụ',
+  HousekeepingTask: 'Công việc buồng phòng',
+  MaintenanceLog: 'Bảo trì',
+  Review: 'Đánh giá',
+  Voucher: 'Khuyến mãi',
+};
 
 export const AuditLogPage = () => {
   const { user } = useAuth();
@@ -18,7 +33,7 @@ export const AuditLogPage = () => {
     logOperationalEvents: true,
     retentionDays: 365,
     updatedAt: null,
-    updatedBy: 'SYSTEM',
+    updatedBy: 'Hệ thống',
   });
 
   const [keyword, setKeyword] = useState('');
@@ -131,7 +146,7 @@ export const AuditLogPage = () => {
             }}
           >
             <input
-              placeholder="Tìm theo email người thực hiện, lý do, giá trị thay đổi, traceId..."
+              placeholder="Tìm theo email người thực hiện, lý do, giá trị thay đổi, mã truy vết..."
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               style={{ flex: 1, padding: '8px 12px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 13 }}
@@ -142,17 +157,11 @@ export const AuditLogPage = () => {
               style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 13 }}
             >
               <option value="">-- Tất cả Hành động --</option>
-              <option value="LOGIN_SUCCESS">LOGIN_SUCCESS</option>
-              <option value="LOGIN_LOCKED">LOGIN_LOCKED</option>
-              <option value="LOGOUT">LOGOUT</option>
-              <option value="REGISTER_ACCOUNT">REGISTER_ACCOUNT</option>
-              <option value="CREATE_USER">CREATE_USER</option>
-              <option value="UPDATE_USER">UPDATE_USER</option>
-              <option value="USER_STATUS_CHANGE">USER_STATUS_CHANGE</option>
-              <option value="ROLE_CHANGE">ROLE_CHANGE</option>
-              <option value="CHANGE_PASSWORD">CHANGE_PASSWORD</option>
-              <option value="UPDATE_PROFILE">UPDATE_PROFILE</option>
-              <option value="UPDATE_AUDIT_CONFIG">UPDATE_AUDIT_CONFIG</option>
+              {Object.entries(AUDIT_ACTION_LABELS).map(([code, label]) => (
+                <option key={code} value={code}>
+                  {label}
+                </option>
+              ))}
             </select>
             <button
               type="submit"
@@ -165,7 +174,7 @@ export const AuditLogPage = () => {
           <DataTable
             keyField="auditLogId"
             data={logs}
-            emptyMessage="Chưa có bản ghi Audit Log nào."
+            emptyMessage="Chưa có bản ghi Nhật ký Kiểm toán nào."
             columns={[
               { header: 'ID', render: (l) => `#${l.auditLogId}` },
               { header: 'Thời gian', render: (l) => formatDateTime(l.performedAt) },
@@ -173,13 +182,23 @@ export const AuditLogPage = () => {
                 header: 'Người thực hiện',
                 render: (l) => (
                   <div>
-                    <div style={{ fontWeight: 600 }}>{l.actorEmail}</div>
+                    <div style={{ fontWeight: 600 }}>{l.actorEmail === 'SYSTEM' ? 'Hệ thống' : l.actorEmail}</div>
                     <StatusBadge status={l.actorType} />
                   </div>
                 ),
               },
-              { header: 'Hành động', render: (l) => <code>{l.action}</code> },
-              { header: 'Đối tượng', render: (l) => `${l.entityName} #${l.recordId}` },
+              {
+                header: 'Hành động',
+                render: (l) => (
+                  <span style={{ fontWeight: 600, color: '#0f172a', fontSize: 13 }}>
+                    {getAuditActionLabel(l.action)}
+                  </span>
+                ),
+              },
+              {
+                header: 'Đối tượng',
+                render: (l) => `${ENTITY_LABELS[l.entityName] || l.entityName} #${l.recordId}`,
+              },
               {
                 header: 'Chi tiết Thay đổi',
                 render: (l) => (
@@ -224,7 +243,7 @@ export const AuditLogPage = () => {
                   checked={config.logSecurityEvents}
                   onChange={(e) => setConfig({ ...config, logSecurityEvents: e.target.checked })}
                 />
-                Ghi nhận sự kiện Bảo mật & Phân quyền (Đăng nhập, Khóa TK, Đổi Role, Đổi mật khẩu)
+                Ghi nhận sự kiện Bảo mật & Phân quyền (Đăng nhập, Khóa TK, Đổi Vai trò, Đổi mật khẩu)
               </label>
             </div>
 
@@ -236,7 +255,7 @@ export const AuditLogPage = () => {
                   checked={config.logOperationalEvents}
                   onChange={(e) => setConfig({ ...config, logOperationalEvents: e.target.checked })}
                 />
-                Ghi nhận sự kiện Vận hành Nghiệp vụ (Đặt phòng, Check-in/out, Hóa đơn, Giá phòng)
+                Ghi nhận sự kiện Vận hành Nghiệp vụ (Đặt phòng, Nhận/Trả phòng, Hóa đơn, Giá phòng)
               </label>
             </div>
 
@@ -256,7 +275,7 @@ export const AuditLogPage = () => {
             </div>
 
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 16 }}>
-              Cập nhật lần cuối bởi: <strong>{config.updatedBy}</strong> ({formatDateTime(config.updatedAt)})
+              Cập nhật lần cuối bởi: <strong>{config.updatedBy === 'SYSTEM' ? 'Hệ thống' : config.updatedBy}</strong> ({formatDateTime(config.updatedAt)})
             </div>
 
             {isAdmin ? (
@@ -267,7 +286,7 @@ export const AuditLogPage = () => {
                 Lưu Cấu hình Audit
               </button>
             ) : (
-              <div style={{ color: '#64748b', fontSize: 13 }}>Chỉ vai trò ADMIN mới được thay đổi tham số cấu hình Audit.</div>
+              <div style={{ color: '#64748b', fontSize: 13 }}>Chỉ vai trò Quản trị viên Hệ thống mới được thay đổi tham số cấu hình Audit.</div>
             )}
           </form>
         </div>
@@ -281,9 +300,9 @@ export const AuditLogPage = () => {
           emptyMessage="Hệ thống vận hành ổn định — không có lỗi hệ thống nào được ghi nhận."
           columns={[
             { header: 'ID', render: (e) => `#${e.id}` },
-            { header: 'Trace ID', render: (e) => <code>{e.traceId}</code> },
+            { header: 'Mã Truy vết', render: (e) => <code>{e.traceId}</code> },
             { header: 'Thời gian', render: (e) => formatDateTime(e.occurredAt) },
-            { header: 'Endpoint', render: (e) => `${e.httpMethod || ''} ${e.endpoint || ''}` },
+            { header: 'Đường dẫn API', render: (e) => `${e.httpMethod || ''} ${e.endpoint || ''}` },
             { header: 'Mã lỗi / Nội dung', render: (e) => `${e.errorCode}: ${e.message}` },
             { header: 'Trạng thái', render: (e) => <StatusBadge status={e.status} /> },
             {

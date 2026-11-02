@@ -1,6 +1,6 @@
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ROLE_DEFAULT_ROUTES } from '../config/constants';
+import { ROLE_DEFAULT_ROUTES, getRoleLabel } from '../config/constants';
 
 export const CustomerLayout = () => {
   const { isAuthenticated, user, logout } = useAuth();
@@ -80,7 +80,7 @@ export const CustomerLayout = () => {
                     fontWeight: 600,
                   }}
                 >
-                  Cổng Nội bộ ({user.role})
+                  Cổng Nội bộ ({getRoleLabel(user.role)})
                 </Link>
               )}
               <Link to="/profile" style={{ color: '#E8E6DC', textDecoration: 'none', fontSize: 13.5 }}>

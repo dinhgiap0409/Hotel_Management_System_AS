@@ -64,6 +64,11 @@ public class AuthenticationServiceImpl implements AuthenticationService {
             throw new BusinessException("BR-02", "Email này đã được đăng ký trên hệ thống.", HttpStatus.CONFLICT);
         }
 
+        String trimmedIdentity = StringUtils.hasText(request.getIdentityNumber()) ? request.getIdentityNumber().trim() : null;
+        if (trimmedIdentity != null && customerRepository.existsByIdentityNumberIgnoreCase(trimmedIdentity)) {
+            throw new BusinessException("VAL-ID", "Số CCCD/Passport này đã được đăng ký trên hệ thống.", HttpStatus.CONFLICT);
+        }
+
         Role customerRole = roleRepository.findByRoleName(RoleName.CUSTOMER.name())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò CUSTOMER"));
 
@@ -348,7 +353,11 @@ public class AuthenticationServiceImpl implements AuthenticationService {
             customer.setFullName(request.getFullName().trim());
             customer.setPhone(request.getPhone().trim());
             if (request.getIdentityNumber() != null) {
-                customer.setIdentityNumber(request.getIdentityNumber().trim());
+                String trimmedId = request.getIdentityNumber().trim();
+                if (!trimmedId.isEmpty() && customerRepository.existsByIdentityNumberIgnoreCaseAndCustomerIdNot(trimmedId, customer.getCustomerId())) {
+                    throw new BusinessException("VAL-ID", "Số CCCD/Passport này đã thuộc về một khách hàng khác.", HttpStatus.CONFLICT);
+                }
+                customer.setIdentityNumber(trimmedId.isEmpty() ? null : trimmedId);
             }
             customerRepository.save(customer);
         } else {
@@ -696,7 +705,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
                 .sorted(Comparator.comparing(Department::getDepartmentId))
                 .map(d -> DepartmentDto.builder()
                         .departmentId(d.getDepartmentId())
-                        .departmentName(d.getDepartmentName())
+                        .departmentName(translateDepartmentName(d.getDepartmentId(), d.getDepartmentName()))
                         .description(d.getDescription())
                         .managerId(d.getManager() != null ? d.getManager().getStaffId() : null)
                         .managerName(d.getManager() != null ? d.getManager().getFullName() : "Chưa bổ nhiệm")
@@ -780,12 +789,28 @@ public class AuthenticationServiceImpl implements AuthenticationService {
                         .employmentStatus(staff.getEmploymentStatus());
                 if (staff.getDepartment() != null) {
                     builder.departmentId(staff.getDepartment().getDepartmentId())
-                            .departmentName(staff.getDepartment().getDepartmentName());
+                            .departmentName(translateDepartmentName(staff.getDepartment().getDepartmentId(), staff.getDepartment().getDepartmentName()));
                 }
             }
         }
 
         return builder.build();
+    }
+
+    private String translateDepartmentName(Integer deptId, String rawName) {
+        if (deptId != null) {
+            return switch (deptId) {
+                case 1 -> "Phòng Công nghệ Thông tin & Kỹ thuật";
+                case 2 -> "Ban Giám đốc Điều hành";
+                case 3 -> "Phòng Kinh doanh & Tiếp thị";
+                case 4 -> "Bộ phận Buồng phòng";
+                case 5 -> "Bộ phận Dịch vụ & Tiện ích";
+                case 6 -> "Phòng Tài chính - Kế toán";
+                case 7 -> "Bộ phận Tiền sảnh & Lễ tân";
+                default -> rawName;
+            };
+        }
+        return rawName;
     }
 
     private Integer resolveDefaultDepartmentId(String roleName) {

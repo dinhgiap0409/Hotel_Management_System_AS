@@ -1,6 +1,6 @@
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ROLES } from '../config/constants';
+import { ROLES, getRoleLabel } from '../config/constants';
 
 const MENU_ITEMS = [
   {
@@ -88,9 +88,9 @@ export const StaffLayout = () => {
           <div style={{ background: '#1e293b', padding: 12, borderRadius: 8, marginBottom: 18, fontSize: 13 }}>
             <div style={{ color: '#94a3b8' }}>Xin chào,</div>
             <div style={{ fontWeight: 600, color: '#f8fafc', marginTop: 2 }}>{user.fullName}</div>
-            <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ background: '#0284c7', color: '#fff', padding: '2px 8px', borderRadius: 4, fontSize: 11 }}>
-                {user.role}
+                {getRoleLabel(user.role)}
               </span>
               <Link to="/profile" style={{ color: '#38bdf8', fontSize: 12, textDecoration: 'none' }}>
                 Hồ sơ cá nhân

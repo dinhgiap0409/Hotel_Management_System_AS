@@ -147,7 +147,7 @@ export const LoginPage = () => {
               }}
             >
               Không gian nghỉ dưỡng <br />
-              <em style={{ fontStyle: 'italic', color: '#F5E6D3' }}>thanh lịch</em> &amp; trọn vẹn.
+              <em style={{ fontStyle: 'italic', color: '#F5E6D3' }}>thanh lịch</em> &amp; <em style={{ fontStyle: 'italic', color: '#F5E6D3' }}>trọn vẹn</em>.
             </h1>
 
             <p

@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { authApi } from '../../services/authApi';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { formatDateTime } from '../../lib/datetime';
+import { getDepartmentLabel } from '../../config/constants';
 
 export const ProfilePage = () => {
   const { user, updateSavedUser } = useAuth();
@@ -52,11 +53,24 @@ export const ProfilePage = () => {
     e.preventDefault();
     setProfileMsg(null);
     setProfileErr(null);
+
+    const trimmedPhone = form.phone.trim();
+    if (!/^(0|\+84)\d{9}$/.test(trimmedPhone)) {
+      setProfileErr('Số điện thoại Việt Nam không hợp lệ (10 chữ số, bắt đầu bằng 0 hoặc +84).');
+      return;
+    }
+
+    const trimmedIdentity = (form.identityNumber || '').trim();
+    if (isCustomer && trimmedIdentity && !/^[A-Za-z0-9]{9,12}$/.test(trimmedIdentity)) {
+      setProfileErr('Số CCCD/Passport không hợp lệ (gồm 9 đến 12 ký tự chữ hoặc số).');
+      return;
+    }
+
     try {
       const res = await authApi.updateProfile({
-        fullName: form.fullName,
-        phone: form.phone,
-        identityNumber: form.identityNumber || null,
+        fullName: form.fullName.trim(),
+        phone: trimmedPhone,
+        identityNumber: trimmedIdentity || null,
         gender: form.gender || null,
         dateOfBirth: form.dateOfBirth || null,
         address: form.address || null,
@@ -65,7 +79,11 @@ export const ProfilePage = () => {
       updateSavedUser(res.data);
       setProfileMsg('Cập nhật hồ sơ cá nhân thành công!');
     } catch (err) {
-      setProfileErr(err.response?.data?.message || 'Không thể cập nhật thông tin hồ sơ.');
+      const validationMsg = err.response?.data?.validationErrors
+        ?.map((v) => v.message)
+        .filter(Boolean)
+        .join('; ');
+      setProfileErr(validationMsg || err.response?.data?.message || 'Không thể cập nhật thông tin hồ sơ.');
     }
   };
 
@@ -86,7 +104,11 @@ export const ProfilePage = () => {
       setPwdMsg('Đổi mật khẩu thành công!');
       setPwdForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
     } catch (err) {
-      setPwdErr(err.response?.data?.message || 'Đổi mật khẩu thất bại.');
+      const validationMsg = err.response?.data?.validationErrors
+        ?.map((v) => v.message)
+        .filter(Boolean)
+        .join('; ');
+      setPwdErr(validationMsg || err.response?.data?.message || 'Đổi mật khẩu thất bại.');
     }
   };
 
@@ -119,7 +141,7 @@ export const ProfilePage = () => {
             </div>
             {profile.departmentName && (
               <div style={{ marginBottom: 4 }}>
-                <strong>Phòng ban:</strong> {profile.departmentName}
+                <strong>Phòng ban:</strong> {getDepartmentLabel(profile.departmentId || profile.departmentName)}
               </div>
             )}
             <div style={{ color: '#64748b' }}>
@@ -167,11 +189,11 @@ export const ProfilePage = () => {
 
             {isCustomer ? (
               <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Số CCCD / Passport</label>
+                <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Số CCCD / Passport (9 - 12 ký tự chữ hoặc số)</label>
                 <input
                   value={form.identityNumber}
                   onChange={(e) => setForm({ ...form, identityNumber: e.target.value })}
-                  placeholder="Nhập số CCCD hoặc Passport..."
+                  placeholder="Nhập số CCCD (12 số) hoặc Passport..."
                   style={inputStyle}
                 />
               </div>
