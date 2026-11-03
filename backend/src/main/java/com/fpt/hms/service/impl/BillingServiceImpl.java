@@ -1,7 +1,9 @@
 package com.fpt.hms.service.impl;
 
 import com.fpt.hms.common.MessageResolver;
+import com.fpt.hms.dto.billing_report.HotelServiceRequest;
 import com.fpt.hms.dto.billing_report.InvoiceDto;
+import com.fpt.hms.dto.billing_report.ServiceOrderDto;
 import com.fpt.hms.dto.billing_report.ServiceOrderRequest;
 import com.fpt.hms.entity.*;
 import com.fpt.hms.enums.GuestStayStatus;
@@ -13,6 +15,8 @@ import com.fpt.hms.exception.ResourceNotFoundException;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.BillingService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +33,10 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class BillingServiceImpl implements BillingService {
 
+    private static final String SERVICE_ACTIVE = "ACTIVE";
+    private static final String SERVICE_INACTIVE = "INACTIVE";
+    private static final String FOLIO_CLOSED = "CLOSED";
+
     private final HotelServiceRepository hotelServiceRepository;
     private final GuestStayRepository guestStayRepository;
     private final ServiceOrderRepository serviceOrderRepository;
@@ -36,46 +44,215 @@ public class BillingServiceImpl implements BillingService {
     private final VoucherRepository voucherRepository;
     private final InvoiceRepository invoiceRepository;
     private final PaymentRepository paymentRepository;
+    private final StaffRepository staffRepository;
     private final MessageResolver messageResolver;
+
+    // ------------------------------------------------------------------ UC-31..34
 
     @Override
     @Transactional(readOnly = true)
     public List<HotelService> getActiveServices() {
-        return hotelServiceRepository.findByStatus("ACTIVE");
+        return hotelServiceRepository.findByStatus(SERVICE_ACTIVE);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<HotelService> getAllServices() {
+        return hotelServiceRepository.findAll(Sort.by("category", "serviceName"));
     }
 
     @Override
     @Transactional
-    public void orderServiceToFolio(ServiceOrderRequest request) {
-        GuestStay stay = guestStayRepository.findById(request.getStayId())
-                .orElseThrow(() -> new ResourceNotFoundException("Stay not found"));
+    public HotelService createService(HotelServiceRequest request) {
+        HotelService service = HotelService.builder()
+                .serviceName(request.getServiceName().trim())
+                .category(request.getCategory().trim().toUpperCase())
+                .billingUnit(request.getBillingUnit().trim().toUpperCase())
+                .unitPrice(request.getUnitPrice())
+                .description(request.getDescription())
+                .status(SERVICE_ACTIVE)
+                .build();
+        return hotelServiceRepository.save(service);
+    }
 
+    @Override
+    @Transactional
+    public HotelService updateService(Integer serviceId, HotelServiceRequest request) {
+        HotelService service = findService(serviceId);
+        // BR-27: existing ServiceOrder rows keep their own snapshot unit_price, so a price change only affects new orders.
+        service.setServiceName(request.getServiceName().trim());
+        service.setCategory(request.getCategory().trim().toUpperCase());
+        service.setBillingUnit(request.getBillingUnit().trim().toUpperCase());
+        service.setUnitPrice(request.getUnitPrice());
+        service.setDescription(request.getDescription());
+        return hotelServiceRepository.save(service);
+    }
+
+    @Override
+    @Transactional
+    public HotelService updateServiceStatus(Integer serviceId, String status) {
+        String normalized = status == null ? "" : status.trim().toUpperCase();
+        if (!SERVICE_ACTIVE.equals(normalized) && !SERVICE_INACTIVE.equals(normalized)) {
+            throw new BusinessException("INVALID_SERVICE_STATUS", "Trạng thái dịch vụ chỉ được là ACTIVE hoặc INACTIVE.");
+        }
+        HotelService service = findService(serviceId);
+        service.setStatus(normalized);
+        return hotelServiceRepository.save(service);
+    }
+
+    // ------------------------------------------------------------------ UC-35 / UC-36
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ServiceOrderDto> getServiceOrders(Integer stayId, Integer callerAccountId, String callerRole) {
+        List<ServiceOrder> orders = stayId != null
+                ? serviceOrderRepository.findByGuestStay_StayIdOrderByOrderTimeDesc(stayId)
+                : serviceOrderRepository.findAll(Sort.by(Sort.Direction.DESC, "orderTime"));
+        boolean isCustomer = "CUSTOMER".equals(callerRole);
+        return orders.stream()
+                .filter(o -> !isCustomer || isStayOwner(o.getGuestStay(), callerAccountId))
+                .map(this::toDto)
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public ServiceOrderDto orderServiceToFolio(ServiceOrderRequest request, Integer callerAccountId, String callerRole) {
+        GuestStay stay = guestStayRepository.findById(request.getStayId())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy lượt lưu trú."));
+
+        if ("CUSTOMER".equals(callerRole) && !isStayOwner(stay, callerAccountId)) {
+            throw new BusinessException("AUTH_FORBIDDEN", messageResolver.resolve("AUTH_FORBIDDEN"),
+                    org.springframework.http.HttpStatus.FORBIDDEN);
+        }
         if (!GuestStayStatus.ACTIVE.name().equalsIgnoreCase(stay.getStatus())) {
             throw new BusinessException("MSG11", messageResolver.resolve("MSG11"));
         }
 
-        HotelService service = hotelServiceRepository.findById(request.getServiceId())
-                .orElseThrow(() -> new ResourceNotFoundException("Hotel service not found"));
+        HotelService service = findService(request.getServiceId());
+        if (!SERVICE_ACTIVE.equalsIgnoreCase(service.getStatus())) {
+            throw new BusinessException("SERVICE_INACTIVE", "Dịch vụ này đã ngừng cung cấp.");
+        }
 
-        // BR-27: Snapshot unit_price at ordering time
+        // BR-27: snapshot unit_price at ordering time. Folio is charged when the order is COMPLETED.
         ServiceOrder order = ServiceOrder.builder()
                 .guestStay(stay)
                 .hotelService(service)
+                .recordedByStaff(findStaff(callerAccountId))
                 .orderTime(Instant.now())
                 .quantity(request.getQuantity())
                 .unitPrice(service.getUnitPrice())
-                .status(ServiceOrderStatus.COMPLETED.name())
-                .completedAt(Instant.now())
+                .status(ServiceOrderStatus.ORDERED.name())
                 .build();
-        serviceOrderRepository.save(order);
-
-        Folio folio = folioRepository.findByGuestStay_StayId(stay.getStayId())
-                .orElseThrow(() -> new ResourceNotFoundException("Folio not found"));
-
-        BigDecimal lineAmount = service.getUnitPrice().multiply(BigDecimal.valueOf(request.getQuantity()));
-        folio.setTotalAmount(folio.getTotalAmount().add(lineAmount));
-        folioRepository.save(folio);
+        return toDto(serviceOrderRepository.save(order));
     }
+
+    @Override
+    @Transactional
+    public ServiceOrderDto completeServiceOrder(Integer orderId, Integer callerAccountId) {
+        ServiceOrder order = findOrder(orderId);
+        if (!ServiceOrderStatus.ORDERED.name().equals(order.getStatus())) {
+            throw new BusinessException("SERVICE_ORDER_STATE", "Chỉ đơn dịch vụ đang chờ cung cấp mới có thể hoàn thành.");
+        }
+        Folio folio = folioRepository.findByGuestStay_StayId(order.getGuestStay().getStayId())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Folio của lượt lưu trú."));
+        if (FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
+            throw new BusinessException("FOLIO_CLOSED", "Folio đã đóng, không thể ghi thêm phí dịch vụ.");
+        }
+
+        order.setStatus(ServiceOrderStatus.COMPLETED.name());
+        order.setCompletedAt(Instant.now());
+        if (order.getRecordedByStaff() == null) {
+            order.setRecordedByStaff(findStaff(callerAccountId));
+        }
+        folio.setTotalAmount(folio.getTotalAmount().add(lineAmount(order)));
+        try {
+            folioRepository.saveAndFlush(folio);
+        } catch (OptimisticLockingFailureException ex) {
+            throw new BusinessException("FOLIO_CONFLICT", "Folio vừa được cập nhật bởi người khác. Vui lòng thử lại.",
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
+        return toDto(serviceOrderRepository.save(order));
+    }
+
+    @Override
+    @Transactional
+    public ServiceOrderDto voidServiceOrder(Integer orderId, String cancelReason, Integer callerAccountId) {
+        if (cancelReason == null || cancelReason.isBlank()) {
+            throw new BusinessException("CANCEL_REASON_REQUIRED", "Vui lòng nhập lý do hủy dịch vụ.");
+        }
+        ServiceOrder order = findOrder(orderId);
+        // UC-36: only services that have not been provided yet can be voided.
+        if (!ServiceOrderStatus.ORDERED.name().equals(order.getStatus())) {
+            throw new BusinessException("SERVICE_ORDER_STATE", "Chỉ được hủy dịch vụ chưa cung cấp.");
+        }
+        order.setStatus(ServiceOrderStatus.VOIDED.name());
+        order.setCancelledAt(Instant.now());
+        order.setCancelReason(cancelReason.trim());
+        order.setCancelledByStaff(findStaff(callerAccountId));
+        return toDto(serviceOrderRepository.save(order));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Voucher> getAllVouchers() {
+        return voucherRepository.findAll(Sort.by(Sort.Direction.DESC, "voucherId"));
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    private HotelService findService(Integer serviceId) {
+        return hotelServiceRepository.findById(serviceId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy dịch vụ."));
+    }
+
+    private ServiceOrder findOrder(Integer orderId) {
+        return serviceOrderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn dịch vụ."));
+    }
+
+    private Staff findStaff(Integer accountId) {
+        return accountId == null ? null : staffRepository.findByAccount_AccountId(accountId).orElse(null);
+    }
+
+    private boolean isStayOwner(GuestStay stay, Integer accountId) {
+        Customer customer = stay.getReservation().getCustomer();
+        return customer != null && customer.getAccount() != null
+                && customer.getAccount().getAccountId().equals(accountId);
+    }
+
+    private BigDecimal lineAmount(ServiceOrder order) {
+        return order.getUnitPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
+    }
+
+    private ServiceOrderDto toDto(ServiceOrder o) {
+        GuestStay stay = o.getGuestStay();
+        Reservation reservation = stay.getReservation();
+        HotelService svc = o.getHotelService();
+        String guestName = reservation.getContactName() != null
+                ? reservation.getContactName()
+                : (reservation.getCustomer() != null ? reservation.getCustomer().getFullName() : null);
+        return ServiceOrderDto.builder()
+                .serviceOrderId(o.getServiceOrderId())
+                .stayId(stay.getStayId())
+                .reservationCode(reservation.getReservationCode())
+                .guestName(guestName)
+                .serviceId(svc.getServiceId())
+                .serviceName(svc.getServiceName())
+                .category(svc.getCategory())
+                .billingUnit(svc.getBillingUnit())
+                .quantity(o.getQuantity())
+                .unitPrice(o.getUnitPrice())
+                .totalAmount(lineAmount(o))
+                .orderTime(o.getOrderTime())
+                .completedAt(o.getCompletedAt())
+                .cancelledAt(o.getCancelledAt())
+                .cancelReason(o.getCancelReason())
+                .status(o.getStatus())
+                .build();
+    }
+
+    // ------------------------------------------------------------------ UC-37..40 (unchanged, Feature 2)
 
     @Override
     @Transactional

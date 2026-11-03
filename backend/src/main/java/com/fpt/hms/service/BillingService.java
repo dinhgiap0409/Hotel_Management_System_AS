@@ -1,13 +1,31 @@
 package com.fpt.hms.service;
 
+import com.fpt.hms.dto.billing_report.HotelServiceRequest;
 import com.fpt.hms.dto.billing_report.InvoiceDto;
+import com.fpt.hms.dto.billing_report.ServiceOrderDto;
 import com.fpt.hms.dto.billing_report.ServiceOrderRequest;
 import com.fpt.hms.entity.HotelService;
+import com.fpt.hms.entity.Voucher;
 
 import java.util.List;
 
 public interface BillingService {
+    // UC-34 / UC-31..33
     List<HotelService> getActiveServices();
-    void orderServiceToFolio(ServiceOrderRequest request);
+    List<HotelService> getAllServices();
+    HotelService createService(HotelServiceRequest request);
+    HotelService updateService(Integer serviceId, HotelServiceRequest request);
+    HotelService updateServiceStatus(Integer serviceId, String status);
+
+    // UC-35 / UC-36
+    List<ServiceOrderDto> getServiceOrders(Integer stayId, Integer callerAccountId, String callerRole);
+    ServiceOrderDto orderServiceToFolio(ServiceOrderRequest request, Integer callerAccountId, String callerRole);
+    ServiceOrderDto completeServiceOrder(Integer orderId, Integer callerAccountId);
+    ServiceOrderDto voidServiceOrder(Integer orderId, String cancelReason, Integer callerAccountId);
+
+    // Read-only voucher list (CRUD arrives in Feature 2)
+    List<Voucher> getAllVouchers();
+
+    // UC-37..40 (existing, Feature 2)
     InvoiceDto compileAndSettleInvoice(Integer stayId, String voucherCode, String paymentMethod);
 }
