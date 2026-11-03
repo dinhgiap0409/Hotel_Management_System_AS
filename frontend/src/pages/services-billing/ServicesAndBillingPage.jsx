@@ -78,6 +78,8 @@ export const ServicesAndBillingPage = () => {
 
   const [showOrderModal, setShowOrderModal] = useState(false);
   const [orderForm, setOrderForm] = useState(EMPTY_ORDER_FORM);
+  const [activeStays, setActiveStays] = useState([]);
+  const [roomSearchKeyword, setRoomSearchKeyword] = useState('');
 
   const [voidModalData, setVoidModalData] = useState(null); // { order: ..., reason: '' }
   const [busy, setBusy] = useState(false);
@@ -85,6 +87,16 @@ export const ServicesAndBillingPage = () => {
   // Filters
   const [serviceCategoryFilter, setServiceCategoryFilter] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('');
+
+  // Pagination states
+  const [servicePage, setServicePage] = useState(1);
+  const [servicePageSize, setServicePageSize] = useState(5);
+
+  const [orderPage, setOrderPage] = useState(1);
+  const [orderPageSize, setOrderPageSize] = useState(5);
+
+  const [voucherPage, setVoucherPage] = useState(1);
+  const [voucherPageSize, setVoucherPageSize] = useState(5);
 
   const loadServices = useCallback(() => {
     const call = CATALOG_VIEW_ALL.includes(role) ? billingApi.getAllServices : billingApi.getActiveServices;
@@ -167,7 +179,13 @@ export const ServicesAndBillingPage = () => {
   // 2. Quản lý Đơn Dịch Vụ
   const handleOpenCreateOrder = () => {
     setOrderForm(EMPTY_ORDER_FORM);
-    setShowOrderModal(true);
+    setRoomSearchKeyword('');
+    billingApi.getActiveStays().then((res) => {
+      setActiveStays(res.data || []);
+      setShowOrderModal(true);
+    }).catch(() => {
+      setShowOrderModal(true);
+    });
   };
 
   const handleOrderSubmit = (e) => {
@@ -219,16 +237,169 @@ export const ServicesAndBillingPage = () => {
     ? selectedServiceForOrder.unitPrice * (Number(orderForm.quantity) || 1)
     : 0;
 
+  // Lấy thông tin phòng đang chọn và danh sách phòng lọc theo từ khóa tìm kiếm
+  const selectedStay = activeStays.find((s) => s.stayId === Number(orderForm.stayId));
+  const matchingStays = activeStays.filter((s) => {
+    if (!roomSearchKeyword.trim()) return true;
+    const kw = roomSearchKeyword.toLowerCase().trim();
+    return (
+      (s.roomNumber && s.roomNumber.toLowerCase().includes(kw)) ||
+      (s.guestName && s.guestName.toLowerCase().includes(kw)) ||
+      (s.reservationCode && s.reservationCode.toLowerCase().includes(kw))
+    );
+  });
+
   // Dữ liệu hiển thị & Lọc
   const filteredServices = services.filter(
     (s) => !serviceCategoryFilter || s.category.toLowerCase() === serviceCategoryFilter.toLowerCase()
   );
+  const totalServicePages = Math.max(1, Math.ceil(filteredServices.length / servicePageSize));
+  const paginatedServices = filteredServices.slice(
+    (servicePage - 1) * servicePageSize,
+    servicePage * servicePageSize
+  );
 
   const filteredOrders = orders.filter((o) => !orderStatusFilter || o.status === orderStatusFilter);
+  const totalOrderPages = Math.max(1, Math.ceil(filteredOrders.length / orderPageSize));
+  const paginatedOrders = filteredOrders.slice(
+    (orderPage - 1) * orderPageSize,
+    orderPage * orderPageSize
+  );
+
+  const totalVoucherPages = Math.max(1, Math.ceil(vouchers.length / voucherPageSize));
+  const paginatedVouchers = vouchers.slice(
+    (voucherPage - 1) * voucherPageSize,
+    voucherPage * voucherPageSize
+  );
 
   const activeServicesCount = services.filter((s) => s.status === 'ACTIVE').length;
   const pendingOrdersCount = orders.filter((o) => o.status === 'ORDERED').length;
   const completedOrdersCount = orders.filter((o) => o.status === 'COMPLETED').length;
+
+  // Component thanh phân trang dùng chung
+  const renderPagination = (currentPage, totalPages, totalItems, pageSize, onPageChange, onPageSizeChange) => {
+    if (totalItems === 0) return null;
+    const startItem = (currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(currentPage * pageSize, totalItems);
+
+    const getPageNumbers = () => {
+      const pages = [];
+      for (let i = 1; i <= totalPages; i++) {
+        if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+          pages.push(i);
+        } else if (pages[pages.length - 1] !== '...') {
+          pages.push('...');
+        }
+      }
+      return pages;
+    };
+
+    const paginationBtnStyle = (isActive, isDisabled) => ({
+      padding: '5px 10px',
+      fontSize: 12.5,
+      fontWeight: isActive ? 700 : 500,
+      border: '1px solid #cbd5e1',
+      borderRadius: 6,
+      background: isActive ? '#0284c7' : '#fff',
+      color: isActive ? '#fff' : isDisabled ? '#94a3b8' : '#334155',
+      cursor: isDisabled ? 'not-allowed' : 'pointer',
+      opacity: isDisabled ? 0.6 : 1,
+    });
+
+    return (
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginTop: 14,
+          padding: '8px 4px',
+          flexWrap: 'wrap',
+          gap: 10,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 13, color: '#64748b' }}>
+          <span>
+            Hiển thị <strong>{startItem} - {endItem}</strong> trên tổng số <strong>{totalItems}</strong> dòng
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>Số dòng:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                onPageSizeChange(Number(e.target.value));
+                onPageChange(1);
+              }}
+              style={{
+                padding: '4px 8px',
+                borderRadius: 5,
+                border: '1px solid #cbd5e1',
+                fontSize: 12.5,
+                background: '#fff',
+              }}
+            >
+              <option value={5}>5 dòng</option>
+              <option value={10}>10 dòng</option>
+              <option value={20}>20 dòng</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+          <button
+            type="button"
+            disabled={currentPage === 1}
+            onClick={() => onPageChange(1)}
+            style={paginationBtnStyle(false, currentPage === 1)}
+          >
+            &laquo; Đầu
+          </button>
+          <button
+            type="button"
+            disabled={currentPage === 1}
+            onClick={() => onPageChange(currentPage - 1)}
+            style={paginationBtnStyle(false, currentPage === 1)}
+          >
+            &lsaquo; Trước
+          </button>
+
+          {getPageNumbers().map((p, idx) =>
+            p === '...' ? (
+              <span key={`dots-${idx}`} style={{ padding: '0 4px', color: '#94a3b8' }}>
+                ...
+              </span>
+            ) : (
+              <button
+                key={`page-${p}`}
+                type="button"
+                onClick={() => onPageChange(p)}
+                style={paginationBtnStyle(currentPage === p, false)}
+              >
+                {p}
+              </button>
+            )
+          )}
+
+          <button
+            type="button"
+            disabled={currentPage === totalPages}
+            onClick={() => onPageChange(currentPage + 1)}
+            style={paginationBtnStyle(false, currentPage === totalPages)}
+          >
+            Sau &rsaquo;
+          </button>
+          <button
+            type="button"
+            disabled={currentPage === totalPages}
+            onClick={() => onPageChange(totalPages)}
+            style={paginationBtnStyle(false, currentPage === totalPages)}
+          >
+            Cuối &raquo;
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={{ maxWidth: 1240, margin: '0 auto' }}>
@@ -382,7 +553,10 @@ export const ServicesAndBillingPage = () => {
               <span style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Lọc theo nhóm:</span>
               <select
                 value={serviceCategoryFilter}
-                onChange={(e) => setServiceCategoryFilter(e.target.value)}
+                onChange={(e) => {
+                  setServiceCategoryFilter(e.target.value);
+                  setServicePage(1);
+                }}
                 style={{ ...inputStyle, width: 180 }}
               >
                 <option value="">Tất cả các nhóm</option>
@@ -400,7 +574,7 @@ export const ServicesAndBillingPage = () => {
 
           <DataTable
             keyField="serviceId"
-            data={filteredServices}
+            data={paginatedServices}
             emptyMessage="Không tìm thấy dịch vụ nào phù hợp."
             columns={[
               {
@@ -495,6 +669,14 @@ export const ServicesAndBillingPage = () => {
                 : []),
             ]}
           />
+          {renderPagination(
+            servicePage,
+            totalServicePages,
+            filteredServices.length,
+            servicePageSize,
+            setServicePage,
+            setServicePageSize
+          )}
         </div>
       )}
 
@@ -507,7 +689,10 @@ export const ServicesAndBillingPage = () => {
               <span style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Lọc trạng thái:</span>
               <select
                 value={orderStatusFilter}
-                onChange={(e) => setOrderStatusFilter(e.target.value)}
+                onChange={(e) => {
+                  setOrderStatusFilter(e.target.value);
+                  setOrderPage(1);
+                }}
                 style={{ ...inputStyle, width: 200 }}
               >
                 <option value="">Tất cả trạng thái</option>
@@ -523,7 +708,7 @@ export const ServicesAndBillingPage = () => {
 
           <DataTable
             keyField="serviceOrderId"
-            data={filteredOrders}
+            data={paginatedOrders}
             emptyMessage="Chưa có đơn gọi dịch vụ nào."
             columns={[
               {
@@ -531,16 +716,27 @@ export const ServicesAndBillingPage = () => {
                 render: (o) => <code style={{ color: '#0284c7', fontWeight: 600 }}>#{o.serviceOrderId}</code>,
               },
               {
-                header: 'Lượt Lưu Trú (Stay)',
+                header: 'Phòng & Khách Lưu Trú',
                 render: (o) => (
                   <div>
-                    <strong style={{ color: '#0f172a' }}>Stay #{o.stayId}</strong>
-                    {o.guestName && (
-                      <div style={{ fontSize: 12, color: '#475569' }}>Khách: {o.guestName}</div>
-                    )}
-                    {o.reservationCode && (
-                      <div style={{ fontSize: 11, color: '#94a3b8' }}>Mã đặt: {o.reservationCode}</div>
-                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span
+                        style={{
+                          background: '#0284c7',
+                          color: '#fff',
+                          fontWeight: 700,
+                          fontSize: 12,
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                        }}
+                      >
+                        Phòng {o.roomNumber || '—'}
+                      </span>
+                      <strong style={{ color: '#0f172a' }}>{o.guestName || 'Khách vãng lai'}</strong>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 3 }}>
+                      Stay #{o.stayId} {o.reservationCode ? `• Mã đặt: ${o.reservationCode}` : ''}
+                    </div>
                   </div>
                 ),
               },
@@ -663,6 +859,14 @@ export const ServicesAndBillingPage = () => {
                 : []),
             ]}
           />
+          {renderPagination(
+            orderPage,
+            totalOrderPages,
+            filteredOrders.length,
+            orderPageSize,
+            setOrderPage,
+            setOrderPageSize
+          )}
         </div>
       )}
 
@@ -674,7 +878,7 @@ export const ServicesAndBillingPage = () => {
           </div>
           <DataTable
             keyField="voucherId"
-            data={vouchers}
+            data={paginatedVouchers}
             emptyMessage="Không có mã khuyến mãi nào."
             columns={[
               {
@@ -715,6 +919,19 @@ export const ServicesAndBillingPage = () => {
               },
             ]}
           />
+          {renderPagination(
+            voucherPage,
+            totalVoucherPages,
+            vouchers.length,
+            voucherPageSize,
+            setVoucherPage,
+            setVoucherPageSize
+          )}
+            filteredServices.length,
+            servicePageSize,
+            setServicePage,
+            setServicePageSize
+          )}
         </div>
       )}
 
@@ -898,20 +1115,184 @@ export const ServicesAndBillingPage = () => {
             </div>
 
             <form onSubmit={handleOrderSubmit}>
-              <div style={{ marginBottom: 14 }}>
-                <label style={labelStyle}>Mã Lượt Lưu Trú (Stay ID) *</label>
-                <input
-                  required
-                  type="number"
-                  min="1"
-                  style={inputStyle}
-                  placeholder="Nhập Stay ID đang lưu trú (VD: 1, 2...)"
-                  value={orderForm.stayId}
-                  onChange={(e) => setOrderForm({ ...orderForm, stayId: e.target.value })}
-                />
-                <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>
-                  Lưu ý: Chỉ áp dụng cho các lượt lưu trú đang có khách Check-in (Status: ACTIVE).
-                </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={labelStyle}>Phòng Đang Lưu Trú Của Khách *</label>
+
+                {/* Nếu đã chọn phòng: Hiển thị Thẻ Xác Nhận */}
+                {selectedStay ? (
+                  <div
+                    style={{
+                      background: '#f0f9ff',
+                      border: '1.5px solid #0284c7',
+                      borderRadius: 8,
+                      padding: '10px 14px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span
+                          style={{
+                            background: '#0284c7',
+                            color: '#fff',
+                            fontWeight: 700,
+                            fontSize: 13,
+                            padding: '3px 8px',
+                            borderRadius: 4,
+                          }}
+                        >
+                          Phòng {selectedStay.roomNumber}
+                        </span>
+                        <strong style={{ color: '#0f172a', fontSize: 14 }}>
+                          {selectedStay.guestName}
+                        </strong>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                        Mã đặt: <code>{selectedStay.reservationCode || 'N/A'}</code> • Stay #{selectedStay.stayId}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setOrderForm({ ...orderForm, stayId: '' })}
+                      style={{
+                        background: '#fee2e2',
+                        color: '#dc2626',
+                        border: '1px solid #fecaca',
+                        borderRadius: 6,
+                        padding: '5px 10px',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                      }}
+                    >
+                      ✕ Đổi phòng
+                    </button>
+                  </div>
+                ) : (
+                  /* Nếu chưa chọn: Hộp Tìm Kiếm Nhanh */
+                  <div>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type="text"
+                        style={{
+                          ...inputStyle,
+                          paddingLeft: 34,
+                          borderColor: matchingStays.length === 0 && roomSearchKeyword ? '#fca5a5' : '#cbd5e1',
+                        }}
+                        placeholder="Gõ số phòng (VD: 101, 201...) hoặc tên khách..."
+                        value={roomSearchKeyword}
+                        onChange={(e) => setRoomSearchKeyword(e.target.value)}
+                        autoFocus
+                      />
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: 10,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          fontSize: 15,
+                          color: '#94a3b8',
+                        }}
+                      >
+                        🔍
+                      </span>
+                      {roomSearchKeyword && (
+                        <button
+                          type="button"
+                          onClick={() => setRoomSearchKeyword('')}
+                          style={{
+                            position: 'absolute',
+                            right: 10,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            background: 'none',
+                            border: 'none',
+                            color: '#94a3b8',
+                            cursor: 'pointer',
+                            fontSize: 14,
+                          }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Danh sách kết quả gợi ý */}
+                    <div
+                      style={{
+                        marginTop: 6,
+                        maxHeight: 180,
+                        overflowY: 'auto',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 8,
+                        background: '#fff',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+                      }}
+                    >
+                      {activeStays.length === 0 ? (
+                        <div style={{ padding: 12, textAlign: 'center', fontSize: 13, color: '#dc2626' }}>
+                          ⚠️ Hiện tại khách sạn không có phòng nào đang lưu trú (Check-in).
+                        </div>
+                      ) : matchingStays.length === 0 ? (
+                        <div style={{ padding: 12, textAlign: 'center', fontSize: 13, color: '#64748b' }}>
+                          Không tìm thấy phòng nào khớp với "{roomSearchKeyword}".
+                        </div>
+                      ) : (
+                        matchingStays.map((s) => (
+                          <div
+                            key={s.stayId}
+                            onClick={() => {
+                              setOrderForm({ ...orderForm, stayId: s.stayId });
+                              setRoomSearchKeyword('');
+                            }}
+                            style={{
+                              padding: '8px 12px',
+                              borderBottom: '1px solid #f1f5f9',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              transition: 'background 0.15s',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = '#fff')}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span
+                                style={{
+                                  background: '#e0f2fe',
+                                  color: '#0369a1',
+                                  fontWeight: 700,
+                                  fontSize: 12,
+                                  padding: '2px 8px',
+                                  borderRadius: 4,
+                                }}
+                              >
+                                Phòng {s.roomNumber}
+                              </span>
+                              <span style={{ fontSize: 13.5, color: '#0f172a', fontWeight: 500 }}>
+                                {s.guestName}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: 12, color: '#64748b' }}>
+                              {s.reservationCode ? `Mã: ${s.reservationCode}` : `Stay #${s.stayId}`}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    {/* Thẻ input ẩn để form HTML5 bắt validate required */}
+                    <input
+                      tabIndex={-1}
+                      required
+                      style={{ opacity: 0, height: 0, width: 0, position: 'absolute' }}
+                      value={orderForm.stayId}
+                      onChange={() => {}}
+                    />
+                  </div>
+                )}
               </div>
 
               <div style={{ marginBottom: 14 }}>

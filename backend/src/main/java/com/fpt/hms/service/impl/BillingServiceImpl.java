@@ -93,7 +93,7 @@ public class BillingServiceImpl implements BillingService {
     public HotelService updateServiceStatus(Integer serviceId, String status) {
         String normalized = status == null ? "" : status.trim().toUpperCase();
         if (!SERVICE_ACTIVE.equals(normalized) && !SERVICE_INACTIVE.equals(normalized)) {
-            throw new BusinessException("INVALID_SERVICE_STATUS", "Trạng thái dịch vụ chỉ được là ACTIVE hoặc INACTIVE.");
+            throw new BusinessException("INVALID_SERVICE_STATUS", "Tráº¡ng thÃ¡i dá»‹ch vá»¥ chá»‰ Ä‘Æ°á»£c lÃ  ACTIVE hoáº·c INACTIVE.");
         }
         HotelService service = findService(serviceId);
         service.setStatus(normalized);
@@ -101,6 +101,37 @@ public class BillingServiceImpl implements BillingService {
     }
 
     // ------------------------------------------------------------------ UC-35 / UC-36
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto> getActiveStaysForSelect() {
+        return guestStayRepository.findByStatus(GuestStayStatus.ACTIVE.name()).stream()
+                .map(stay -> {
+                    String roomNumber = "Chưa gán phòng";
+                    if (stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty()) {
+                        roomNumber = stay.getRoomAssignments().get(stay.getRoomAssignments().size() - 1)
+                                .getRoom().getRoomNumber();
+                    }
+                    String guestName = "Khách vãng lai";
+                    String resCode = "";
+                    if (stay.getReservation() != null) {
+                        resCode = stay.getReservation().getReservationCode();
+                        if (stay.getReservation().getContactName() != null) {
+                            guestName = stay.getReservation().getContactName();
+                        } else if (stay.getReservation().getCustomer() != null) {
+                            guestName = stay.getReservation().getCustomer().getFullName();
+                        }
+                    }
+                    return com.fpt.hms.dto.billing_report.ActiveStaySelectDto.builder()
+                            .stayId(stay.getStayId())
+                .roomNumber(stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty() ? stay.getRoomAssignments().get(stay.getRoomAssignments().size() - 1).getRoom().getRoomNumber() : "Chưa gán phòng")
+                            .roomNumber(roomNumber)
+                            .guestName(guestName)
+                            .reservationCode(resCode)
+                            .build();
+                })
+                .toList();
+    }
 
     @Override
     @Transactional(readOnly = true)
@@ -119,7 +150,7 @@ public class BillingServiceImpl implements BillingService {
     @Transactional
     public ServiceOrderDto orderServiceToFolio(ServiceOrderRequest request, Integer callerAccountId, String callerRole) {
         GuestStay stay = guestStayRepository.findById(request.getStayId())
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy lượt lưu trú."));
+                .orElseThrow(() -> new ResourceNotFoundException("KhÃ´ng tÃ¬m tháº¥y lÆ°á»£t lÆ°u trÃº."));
 
         if ("CUSTOMER".equals(callerRole) && !isStayOwner(stay, callerAccountId)) {
             throw new BusinessException("AUTH_FORBIDDEN", messageResolver.resolve("AUTH_FORBIDDEN"),
@@ -131,7 +162,7 @@ public class BillingServiceImpl implements BillingService {
 
         HotelService service = findService(request.getServiceId());
         if (!SERVICE_ACTIVE.equalsIgnoreCase(service.getStatus())) {
-            throw new BusinessException("SERVICE_INACTIVE", "Dịch vụ này đã ngừng cung cấp.");
+            throw new BusinessException("SERVICE_INACTIVE", "Dá»‹ch vá»¥ nÃ y Ä‘Ã£ ngá»«ng cung cáº¥p.");
         }
 
         // BR-27: snapshot unit_price at ordering time. Folio is charged when the order is COMPLETED.
@@ -152,12 +183,12 @@ public class BillingServiceImpl implements BillingService {
     public ServiceOrderDto completeServiceOrder(Integer orderId, Integer callerAccountId) {
         ServiceOrder order = findOrder(orderId);
         if (!ServiceOrderStatus.ORDERED.name().equals(order.getStatus())) {
-            throw new BusinessException("SERVICE_ORDER_STATE", "Chỉ đơn dịch vụ đang chờ cung cấp mới có thể hoàn thành.");
+            throw new BusinessException("SERVICE_ORDER_STATE", "Chá»‰ Ä‘Æ¡n dá»‹ch vá»¥ Ä‘ang chá» cung cáº¥p má»›i cÃ³ thá»ƒ hoÃ n thÃ nh.");
         }
         Folio folio = folioRepository.findByGuestStay_StayId(order.getGuestStay().getStayId())
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Folio của lượt lưu trú."));
+                .orElseThrow(() -> new ResourceNotFoundException("KhÃ´ng tÃ¬m tháº¥y Folio cá»§a lÆ°á»£t lÆ°u trÃº."));
         if (FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
-            throw new BusinessException("FOLIO_CLOSED", "Folio đã đóng, không thể ghi thêm phí dịch vụ.");
+            throw new BusinessException("FOLIO_CLOSED", "Folio Ä‘Ã£ Ä‘Ã³ng, khÃ´ng thá»ƒ ghi thÃªm phÃ­ dá»‹ch vá»¥.");
         }
 
         order.setStatus(ServiceOrderStatus.COMPLETED.name());
@@ -169,7 +200,7 @@ public class BillingServiceImpl implements BillingService {
         try {
             folioRepository.saveAndFlush(folio);
         } catch (OptimisticLockingFailureException ex) {
-            throw new BusinessException("FOLIO_CONFLICT", "Folio vừa được cập nhật bởi người khác. Vui lòng thử lại.",
+            throw new BusinessException("FOLIO_CONFLICT", "Folio vá»«a Ä‘Æ°á»£c cáº­p nháº­t bá»Ÿi ngÆ°á»i khÃ¡c. Vui lÃ²ng thá»­ láº¡i.",
                     org.springframework.http.HttpStatus.CONFLICT);
         }
         return toDto(serviceOrderRepository.save(order));
@@ -179,12 +210,12 @@ public class BillingServiceImpl implements BillingService {
     @Transactional
     public ServiceOrderDto voidServiceOrder(Integer orderId, String cancelReason, Integer callerAccountId) {
         if (cancelReason == null || cancelReason.isBlank()) {
-            throw new BusinessException("CANCEL_REASON_REQUIRED", "Vui lòng nhập lý do hủy dịch vụ.");
+            throw new BusinessException("CANCEL_REASON_REQUIRED", "Vui lÃ²ng nháº­p lÃ½ do há»§y dá»‹ch vá»¥.");
         }
         ServiceOrder order = findOrder(orderId);
         // UC-36: only services that have not been provided yet can be voided.
         if (!ServiceOrderStatus.ORDERED.name().equals(order.getStatus())) {
-            throw new BusinessException("SERVICE_ORDER_STATE", "Chỉ được hủy dịch vụ chưa cung cấp.");
+            throw new BusinessException("SERVICE_ORDER_STATE", "Chá»‰ Ä‘Æ°á»£c há»§y dá»‹ch vá»¥ chÆ°a cung cáº¥p.");
         }
         order.setStatus(ServiceOrderStatus.VOIDED.name());
         order.setCancelledAt(Instant.now());
@@ -203,12 +234,12 @@ public class BillingServiceImpl implements BillingService {
 
     private HotelService findService(Integer serviceId) {
         return hotelServiceRepository.findById(serviceId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy dịch vụ."));
+                .orElseThrow(() -> new ResourceNotFoundException("KhÃ´ng tÃ¬m tháº¥y dá»‹ch vá»¥."));
     }
 
     private ServiceOrder findOrder(Integer orderId) {
         return serviceOrderRepository.findById(orderId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn dịch vụ."));
+                .orElseThrow(() -> new ResourceNotFoundException("KhÃ´ng tÃ¬m tháº¥y Ä‘Æ¡n dá»‹ch vá»¥."));
     }
 
     private Staff findStaff(Integer accountId) {

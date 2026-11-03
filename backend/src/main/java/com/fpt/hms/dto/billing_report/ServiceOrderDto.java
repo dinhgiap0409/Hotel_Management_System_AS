@@ -18,6 +18,7 @@ import java.time.Instant;
 public class ServiceOrderDto {
     private Integer serviceOrderId;
     private Integer stayId;
+    private String roomNumber;
     private String reservationCode;
     private String guestName;
     private Integer serviceId;

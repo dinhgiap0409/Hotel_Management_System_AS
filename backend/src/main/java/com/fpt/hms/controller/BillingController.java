@@ -70,6 +70,13 @@ public class BillingController {
 
     // ---------------------------------------------------------------- UC-35..36 Service orders
 
+    @GetMapping("/active-stays")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN')")
+    @Operation(summary = "UC-35: Get active in-house guest stays for room selection dropdown")
+    public ResponseEntity<List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto>> getActiveStaysForSelect() {
+        return ResponseEntity.ok(billingService.getActiveStaysForSelect());
+    }
+
     @GetMapping("/service-orders")
     @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ACCOUNTANT', 'GENERAL_MANAGER')")
     @Operation(summary = "List service orders, optionally by stay (customers only see their own)")

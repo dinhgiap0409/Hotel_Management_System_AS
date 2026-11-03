@@ -12,6 +12,7 @@ export const billingApi = {
   getDashboardKpi: () => http.get('/reports/kpi'),
 
   // --- Feature 1: UC-31..UC-36 ---
+  getActiveStays: () => http.get('/billing/active-stays'),
   getAllServices: () => http.get('/billing/services/all'),
   createService: (data) => http.post('/billing/services', data),
   updateService: (serviceId, data) => http.put(`/billing/services/${serviceId}`, data),

@@ -18,6 +18,7 @@ public interface BillingService {
     HotelService updateServiceStatus(Integer serviceId, String status);
 
     // UC-35 / UC-36
+    List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto> getActiveStaysForSelect();
     List<ServiceOrderDto> getServiceOrders(Integer stayId, Integer callerAccountId, String callerRole);
     ServiceOrderDto orderServiceToFolio(ServiceOrderRequest request, Integer callerAccountId, String callerRole);
     ServiceOrderDto completeServiceOrder(Integer orderId, Integer callerAccountId);
