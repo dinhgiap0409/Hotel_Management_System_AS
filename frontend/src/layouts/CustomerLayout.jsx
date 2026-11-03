@@ -55,11 +55,38 @@ export const CustomerLayout = () => {
             />
             HMS Luxury Hotel
           </Link>
-          <Link to="/" style={{ color: '#E8E6DC', textDecoration: 'none', fontSize: 13.5 }}>
+          <Link
+            to="/"
+            style={{
+              color: location.pathname === '/' ? '#FAF9F5' : '#E8E6DC',
+              fontWeight: location.pathname === '/' ? 600 : 400,
+              textDecoration: 'none',
+              fontSize: 13.5,
+            }}
+          >
+            Trang Chủ
+          </Link>
+          <Link
+            to="/rooms"
+            style={{
+              color: location.pathname.startsWith('/rooms') ? '#FAF9F5' : '#E8E6DC',
+              fontWeight: location.pathname.startsWith('/rooms') ? 600 : 400,
+              textDecoration: 'none',
+              fontSize: 13.5,
+            }}
+          >
             Tìm &amp; Đặt Phòng
           </Link>
           {isAuthenticated && user?.role === 'CUSTOMER' && (
-            <Link to="/my-bookings" style={{ color: '#E8E6DC', textDecoration: 'none', fontSize: 13.5 }}>
+            <Link
+              to="/my-bookings"
+              style={{
+                color: location.pathname.startsWith('/my-bookings') ? '#FAF9F5' : '#E8E6DC',
+                fontWeight: location.pathname.startsWith('/my-bookings') ? 600 : 400,
+                textDecoration: 'none',
+                fontSize: 13.5,
+              }}
+            >
               Đặt Phòng Của Tôi
             </Link>
           )}

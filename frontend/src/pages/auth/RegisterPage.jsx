@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, Navigate } from 'react-router-dom';
 import { authApi } from '../../services/authApi';
+import { useAuth } from '../../context/AuthContext';
 
 export const RegisterPage = () => {
+  const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({
     fullName: '',
@@ -15,6 +17,10 @@ export const RegisterPage = () => {
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
