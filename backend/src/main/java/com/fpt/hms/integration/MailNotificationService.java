@@ -20,8 +20,12 @@ public class MailNotificationService {
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
             msg.setTo(toEmail);
-            msg.setSubject("[HMS] Booking Confirmation - " + reservationCode);
-            msg.setText("Dear " + guestName + ",\nYour booking (" + reservationCode + ") has been confirmed.");
+            msg.setSubject("[HMS Luxury Hotel] Xác nhận đặt phòng thành công - Mã " + reservationCode);
+            msg.setText("Xin chào " + guestName + ",\n\n"
+                    + "Cảm ơn quý khách đã lựa chọn HMS Luxury Hotel.\n"
+                    + "Đơn đặt phòng của quý khách với mã [" + reservationCode + "] đã được ghi nhận trên hệ thống.\n"
+                    + "Quý khách có thể tra cứu trạng thái đơn đặt phòng tại mục 'Đặt phòng của tôi' trên website.\n\n"
+                    + "Trân trọng,\nBan Quản lý HMS Luxury Hotel");
             mailSender.send(msg);
         } catch (Exception ex) {
             log.warn("SMTP mail dispatch skipped/failed in local dev environment: {}", ex.getMessage());

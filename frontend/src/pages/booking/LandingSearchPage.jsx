@@ -77,12 +77,12 @@ export const LandingSearchPage = () => {
       return;
     }
     if (targetCheckIn < todayStr) {
-      setSearchValidationError('Ngày nhận phòng (Check-in) không được nằm trong quá khứ (BR-17).');
+      setSearchValidationError('Ngày nhận phòng (Check-in) không được nằm trong quá khứ.');
       return;
     }
     const nights = calculateNights(targetCheckIn, targetCheckOut);
     if (nights <= 0) {
-      setSearchValidationError('Ngày trả phòng (Check-out) phải sau Ngày nhận phòng ít nhất 1 đêm (BR-17).');
+      setSearchValidationError('Ngày trả phòng (Check-out) phải sau Ngày nhận phòng ít nhất 1 đêm.');
       return;
     }
     const guestsNum = Number(targetGuests || 1);
@@ -291,7 +291,14 @@ export const LandingSearchPage = () => {
       {/* 6. Quick Category Inspection Modal */}
       <RoomCategoryModal
         selectedCategory={selectedCategory}
-        onClose={() => setSelectedCategory(null)}
+        onClose={() => {
+          setSelectedCategory(null);
+          // Auto refresh real-time room availability counts when modal closes
+          loadRoomCategories();
+        }}
+        onBookingSuccess={() => {
+          loadRoomCategories();
+        }}
         isSearchActive={isSearchActive}
         activeSearchMeta={activeSearchMeta}
       />
