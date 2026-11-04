@@ -63,6 +63,19 @@ http.interceptors.response.use(
 
     const message = data?.message || error.message || 'Đã xảy ra lỗi kết nối máy chủ.';
 
+    // Expired / invalid access token (15 min lifetime): clear session and ask the user to log in again
+    const requestUrl = error.config?.url || '';
+    const isAuthEndpoint = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/register');
+    if (status === 401 && !isAuthEndpoint && inMemoryAccessToken) {
+      setAccessToken(null);
+      localStorage.removeItem('hms_user');
+      notifyToast({ type: 'WARNING', message: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.' });
+      if (window.location.pathname !== '/login') {
+        setTimeout(() => window.location.assign('/login'), 800);
+      }
+      return Promise.reject(error);
+    }
+
     if (!status || status >= 500) {
       notifyToast({ type: 'SYSTEM_ERROR', message, traceId });
     } else if (status === 403) {

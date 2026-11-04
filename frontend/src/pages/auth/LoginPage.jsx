@@ -1,18 +1,25 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { ROLE_DEFAULT_ROUTES } from '../../config/constants';
 
 export const LoginPage = () => {
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => location.state?.email || '');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [resetBanner, setResetBanner] = useState(() => location.state?.resetSuccessMessage || null);
   const [touched, setTouched] = useState({ email: false, password: false });
   const [fieldErrors, setFieldErrors] = useState({ email: '', password: '' });
   const [serverError, setServerError] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  if (isAuthenticated && !loading) {
+    return <Navigate to="/" replace />;
+  }
 
   const validateEmail = (val) => {
     if (!val.trim()) return 'Vui lòng nhập địa chỉ email.';
@@ -60,11 +67,12 @@ export const LoginPage = () => {
     if (emailErr || pwdErr) return;
 
     setLoading(true);
+    setResetBanner(null);
     try {
-      const payload = await login({ email, password });
+      const payload = await login({ email: email.trim(), password });
       const role = payload?.user?.role;
       const target = ROLE_DEFAULT_ROUTES[role] || '/';
-      navigate(target);
+      navigate(target, { replace: true });
     } catch (err) {
       setServerError(err.response?.data?.message || 'Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.');
     } finally {
@@ -235,6 +243,23 @@ export const LoginPage = () => {
             </div>
           </div>
 
+          {resetBanner && !serverError && (
+            <div
+              role="status"
+              style={{
+                background: '#DCFCE7',
+                color: '#166534',
+                padding: '10px 12px',
+                borderRadius: 6,
+                marginBottom: 16,
+                fontSize: 13,
+                border: '1px solid #BBF7D0',
+              }}
+            >
+              {resetBanner}
+            </div>
+          )}
+
           {serverError && (
             <div
               role="alert"
@@ -356,7 +381,7 @@ export const LoginPage = () => {
                 <input
                   id="login-password"
                   name="password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => handlePasswordChange(e.target.value)}
@@ -375,6 +400,34 @@ export const LoginPage = () => {
                     background: 'transparent',
                   }}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: '4px 0 4px 8px',
+                    cursor: 'pointer',
+                    color: '#5E5D59',
+                    display: 'flex',
+                    alignItems: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  {showPassword ? (
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                  ) : (
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
               </div>
               {fieldErrors.password && (
                 <div

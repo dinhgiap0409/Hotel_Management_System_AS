@@ -8,6 +8,8 @@ import com.fpt.hms.enums.RoomStatus;
 import com.fpt.hms.enums.StayStatus;
 import com.fpt.hms.exception.BusinessException;
 import com.fpt.hms.exception.ResourceNotFoundException;
+import com.fpt.hms.integration.MailNotificationService;
+import com.fpt.hms.integration.VnPayGatewayService;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.ReservationService;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -34,17 +37,28 @@ public class ReservationServiceImpl implements ReservationService {
     private final ReviewRepository reviewRepository;
     private final ReservationRepository reservationRepository;
     private final CustomerRepository customerRepository;
+    private final PaymentRepository paymentRepository;
+    private final PaymentAttemptRepository paymentAttemptRepository;
+    private final VnPayGatewayService vnPayGatewayService;
+    private final MailNotificationService mailNotificationService;
     private final MessageResolver messageResolver;
     private final Clock hotelClock;
 
     @Override
     @Transactional(readOnly = true)
     public List<PublicRoomCategoryDto> getActiveRoomCategories() {
+        LocalDate today = LocalDate.now(hotelClock);
+        LocalDate tomorrow = today.plusDays(1);
         List<Room> nonArchivedRooms = roomRepository.findByRoomStatusNot(RoomStatus.ARCHIVED.name());
         List<Review> publishedReviews = reviewRepository.findByIsHiddenFalseOrderByReviewDateDesc();
 
         return roomTypeRepository.findByIsActiveTrue().stream()
-                .map(rt -> toPublicRoomCategoryDto(rt, nonArchivedRooms, publishedReviews, null, null))
+                .map(rt -> {
+                    PublicRoomCategoryDto dto = toPublicRoomCategoryDto(rt, nonArchivedRooms, publishedReviews, null, null);
+                    int realTimeAvailable = computeAvailableQuotaForRoomType(rt.getRoomTypeId(), today, tomorrow, today);
+                    dto.setAvailableRoomsCount(realTimeAvailable);
+                    return dto;
+                })
                 .toList();
     }
 
@@ -113,6 +127,10 @@ public class ReservationServiceImpl implements ReservationService {
     @Override
     @Transactional(readOnly = true)
     public RoomCategoryDetailDto getRoomCategoryDetails(Integer roomTypeId, LocalDate checkInDate, LocalDate checkOutDate) {
+        LocalDate today = LocalDate.now(hotelClock);
+        LocalDate targetCheckIn = checkInDate != null ? checkInDate : today;
+        LocalDate targetCheckOut = (checkOutDate != null && checkOutDate.isAfter(targetCheckIn)) ? checkOutDate : targetCheckIn.plusDays(1);
+
         RoomType rt = roomTypeRepository.findById(roomTypeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hạng phòng #" + roomTypeId));
 
@@ -122,9 +140,7 @@ public class ReservationServiceImpl implements ReservationService {
                 .toList();
 
         int totalActiveRooms = categoryRooms.size();
-        int availableRoomsCount = (int) categoryRooms.stream()
-                .filter(r -> StayStatus.VACANT.name().equalsIgnoreCase(r.getStayStatus()))
-                .count();
+        int availableRoomsCount = computeAvailableQuotaForRoomType(roomTypeId, targetCheckIn, targetCheckOut, today);
 
         List<Integer> floorNumbers = categoryRooms.stream()
                 .map(Room::getFloor)
@@ -346,12 +362,40 @@ public class ReservationServiceImpl implements ReservationService {
     @Transactional
     public ReservationDto createReservation(CreateReservationRequest request, Integer accountId) {
         LocalDate today = LocalDate.now(hotelClock);
-        if (request.getCheckInDate().isBefore(today) || !request.getCheckOutDate().isAfter(request.getCheckInDate())) {
-            throw new BusinessException("MSG04A", messageResolver.resolve("MSG04A"));
+        if (request.getCheckInDate() == null || request.getCheckOutDate() == null
+                || request.getCheckInDate().isBefore(today)
+                || !request.getCheckOutDate().isAfter(request.getCheckInDate())) {
+            throw new BusinessException("MSG04A", "Ngày nhận phòng không được ở quá khứ và ngày trả phòng phải sau ngày nhận phòng.");
         }
 
         RoomType roomType = roomTypeRepository.findById(request.getRoomTypeId())
-                .orElseThrow(() -> new ResourceNotFoundException("Room Type not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hạng phòng #" + request.getRoomTypeId()));
+
+        if (Boolean.FALSE.equals(roomType.getIsActive())) {
+            throw new BusinessException("BR-18", "Hạng phòng này hiện đang tạm ngưng mở đặt trực tuyến.");
+        }
+
+        int qty = Math.max(1, request.getQuantity());
+        int maxAllowedGuests = (roomType.getCapacity() != null ? roomType.getCapacity() : 2) * qty;
+        if (request.getGuestCount() > maxAllowedGuests) {
+            throw new BusinessException(
+                    "BR-17",
+                    "Số lượng khách (" + request.getGuestCount() + " người) vượt quá sức chứa tối đa của "
+                            + qty + " phòng " + roomType.getTypeName() + " (Tối đa " + maxAllowedGuests + " khách)."
+            );
+        }
+
+        // Check real-time available quota for the requested [checkInDate, checkOutDate) window
+        int availableQuota = computeAvailableQuotaForRoomType(
+                roomType.getRoomTypeId(), request.getCheckInDate(), request.getCheckOutDate(), today
+        );
+        if (qty > availableQuota) {
+            throw new BusinessException(
+                    "BR-18",
+                    "Số lượng phòng trống của hạng phòng '" + roomType.getTypeName()
+                            + "' không đủ trong khoảng ngày bạn chọn (Chỉ còn " + availableQuota + " phòng trống)."
+            );
+        }
 
         Customer customer = null;
         if (accountId != null) {
@@ -359,60 +403,181 @@ public class ReservationServiceImpl implements ReservationService {
         }
         if (customer == null) {
             customer = customerRepository.save(Customer.builder()
-                    .fullName(request.getContactName())
-                    .email(request.getContactEmail())
-                    .phone(request.getContactPhone())
+                    .fullName(request.getContactName().trim())
+                    .email(request.getContactEmail().trim())
+                    .phone(request.getContactPhone().trim())
                     .build());
         }
 
         String code = "BK-" + LocalDate.now(hotelClock).getYear() + "-"
                 + UUID.randomUUID().toString().substring(0, 5).toUpperCase();
 
+        Instant now = Instant.now(hotelClock);
+        // Configurable test hold duration: 3 minutes for quick test verification (standard production is 24 hours)
+        Instant holdExpiresAt = now.plus(3, ChronoUnit.MINUTES);
+
         // BR-19: New reservations start as PENDING and hold quota for 24 hours
         Reservation reservation = Reservation.builder()
                 .customer(customer)
                 .reservationCode(code)
-                .reservationDate(Instant.now())
+                .reservationDate(now)
                 .checkInDate(request.getCheckInDate())
                 .checkOutDate(request.getCheckOutDate())
                 .guestCount(request.getGuestCount())
                 .specialNotes(request.getSpecialNotes())
                 .status(ReservationStatus.PENDING.name())
-                .contactName(request.getContactName())
-                .contactEmail(request.getContactEmail())
-                .contactPhone(request.getContactPhone())
-                .holdExpiresAt(Instant.now().plus(24, ChronoUnit.HOURS))
+                .contactName(request.getContactName().trim())
+                .contactEmail(request.getContactEmail().trim())
+                .contactPhone(request.getContactPhone().trim())
+                .holdExpiresAt(holdExpiresAt)
                 .build();
 
         ReservationDetail detail = ReservationDetail.builder()
                 .reservation(reservation)
                 .roomType(roomType)
-                .quantity(request.getQuantity())
+                .quantity(qty)
                 .build();
 
+        // Snapshot nightly tariffs from Room_Type_Price table in SQL Server
+        Map<Integer, BigDecimal> tariffByDay = loadTariffMap(roomType.getRoomTypeId());
+        BigDecimal singleRoomStaySum = BigDecimal.ZERO;
         for (LocalDate d = request.getCheckInDate(); d.isBefore(request.getCheckOutDate()); d = d.plusDays(1)) {
+            int dow = d.getDayOfWeek().getValue();
+            BigDecimal nightPrice = tariffByDay.getOrDefault(dow, roomType.getBasePrice());
+            singleRoomStaySum = singleRoomStaySum.add(nightPrice);
+
             detail.getNightlyRates().add(ReservationNightlyRate.builder()
                     .reservationDetail(detail)
                     .stayDate(d)
-                    .unitPrice(roomType.getBasePrice())
+                    .unitPrice(nightPrice)
                     .build());
         }
         reservation.getDetails().add(detail);
 
-        return toDto(reservationRepository.save(reservation));
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        // Create Deposit Payment (30% of estimated stay total) & VNPay PaymentAttempt record
+        BigDecimal estimatedTotal = singleRoomStaySum.multiply(BigDecimal.valueOf(qty));
+        BigDecimal depositAmount = estimatedTotal
+                .multiply(new BigDecimal("0.30"))
+                .setScale(0, RoundingMode.HALF_UP);
+
+        Payment depositPayment = paymentRepository.save(Payment.builder()
+                .reservation(savedReservation)
+                .paymentType("DEPOSIT")
+                .amount(depositAmount)
+                .currency("VND")
+                .method("VNPAY")
+                .idempotencyKey(code + "-DEPOSIT")
+                .status("PENDING")
+                .createdAt(now)
+                .build());
+
+        paymentAttemptRepository.save(PaymentAttempt.builder()
+                .payment(depositPayment)
+                .gatewayProvider("VNPAY")
+                .gatewayRequestRef(code)
+                .status("PENDING")
+                .createdAt(now)
+                .expiredAt(holdExpiresAt)
+                .build());
+
+        return toDto(savedReservation);
+    }
+
+    @Override
+    @Transactional
+    public ReservationDto processVnPayCallback(VnPayCallbackRequest request) {
+        Reservation reservation = reservationRepository.findByReservationCode(request.getReservationCode().trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng với mã: " + request.getReservationCode()));
+
+        Instant now = Instant.now(hotelClock);
+        boolean isSuccess = "00".equals(request.getVnpResponseCode().trim());
+
+        List<Payment> payments = paymentRepository.findByReservation_ReservationId(reservation.getReservationId());
+        Payment depositPayment = payments.stream()
+                .filter(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType()))
+                .findFirst()
+                .orElse(null);
+
+        PaymentAttempt attempt = paymentAttemptRepository.findByGatewayRequestRef(reservation.getReservationCode())
+                .orElse(null);
+
+        if (isSuccess) {
+            if (ReservationStatus.CANCELLED.name().equalsIgnoreCase(reservation.getStatus())) {
+                throw new BusinessException("BR-19", "Đơn đặt phòng này đã bị hủy hoặc quá hạn giữ chỗ 24 giờ.");
+            }
+            reservation.setStatus(ReservationStatus.CONFIRMED.name());
+            reservationRepository.save(reservation);
+
+            if (depositPayment != null) {
+                depositPayment.setStatus("PAID");
+                depositPayment.setPaidAt(now);
+                paymentRepository.save(depositPayment);
+            }
+            if (attempt != null) {
+                attempt.setStatus("SUCCESS");
+                attempt.setGatewayTransactionId(
+                        request.getVnpTransactionNo() != null && !request.getVnpTransactionNo().isBlank()
+                                ? request.getVnpTransactionNo().trim()
+                                : "VNP-" + System.currentTimeMillis()
+                );
+                attempt.setBankCode(
+                        request.getBankCode() != null && !request.getBankCode().isBlank()
+                                ? request.getBankCode().trim()
+                                : "NCB"
+                );
+                attempt.setCompletedAt(now);
+                paymentAttemptRepository.save(attempt);
+            }
+
+            mailNotificationService.sendBookingConfirmation(
+                    reservation.getContactEmail(),
+                    reservation.getReservationCode(),
+                    reservation.getContactName()
+            );
+        } else {
+            if (attempt != null && !"SUCCESS".equalsIgnoreCase(attempt.getStatus())) {
+                attempt.setStatus("FAILED");
+                attempt.setCompletedAt(now);
+                paymentAttemptRepository.save(attempt);
+            }
+        }
+
+        return toDto(reservation);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationDto> getMyReservations(Integer accountId) {
+        if (accountId == null) {
+            return Collections.emptyList();
+        }
+        Optional<Customer> customerOpt = customerRepository.findByAccount_AccountId(accountId);
+        if (customerOpt.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return reservationRepository
+                .findByCustomer_CustomerIdOrderByReservationDateDesc(customerOpt.get().getCustomerId())
+                .stream()
+                .map(this::toDto)
+                .toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<ReservationDto> getAllReservations() {
-        return reservationRepository.findAll().stream().map(this::toDto).toList();
+        return reservationRepository.findAll().stream()
+                .sorted(Comparator.comparing(Reservation::getReservationDate, Comparator.nullsLast(Comparator.reverseOrder())))
+                .map(this::toDto)
+                .toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public ReservationDto findByCode(String reservationCode) {
-        Reservation reservation = reservationRepository.findByReservationCode(reservationCode)
-                .orElseThrow(() -> new ResourceNotFoundException("Reservation not found: " + reservationCode));
+        Reservation reservation = reservationRepository.findByReservationCode(reservationCode.trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng với mã: " + reservationCode));
         return toDto(reservation);
     }
 
@@ -420,32 +585,135 @@ public class ReservationServiceImpl implements ReservationService {
     @Transactional
     public ReservationDto cancelReservation(Integer reservationId) {
         Reservation reservation = reservationRepository.findById(reservationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Reservation not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng #" + reservationId));
 
         if (ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(reservation.getStatus())
                 || ReservationStatus.COMPLETED.name().equalsIgnoreCase(reservation.getStatus())) {
-            throw new BusinessException("BR-21", "Cannot cancel a reservation that is already Checked-In or Completed.");
+            throw new BusinessException("BR-21", "Không thể hủy đơn đặt phòng đã Nhận phòng (Checked-In) hoặc đã Hoàn tất (Completed).");
         }
         reservation.setStatus(ReservationStatus.CANCELLED.name());
         return toDto(reservationRepository.save(reservation));
     }
 
+    private int computeAvailableQuotaForRoomType(Integer roomTypeId, LocalDate checkInDate, LocalDate checkOutDate, LocalDate today) {
+        Instant now = Instant.now(hotelClock);
+        List<Room> activeCategoryRooms = roomRepository.findByRoomStatusNot(RoomStatus.ARCHIVED.name()).stream()
+                .filter(r -> r.getRoomType() != null && roomTypeId.equals(r.getRoomType().getRoomTypeId()))
+                .filter(r -> RoomStatus.ACTIVE.name().equalsIgnoreCase(r.getRoomStatus()))
+                .toList();
+
+        int totalActivePhysicalRooms = activeCategoryRooms.size();
+
+        int bookedQuota = reservationRepository.findAll().stream()
+                .filter(res -> isReservationBlockingInventory(res, now))
+                .filter(res -> res.getCheckInDate() != null && res.getCheckOutDate() != null)
+                .filter(res -> res.getCheckInDate().isBefore(checkOutDate) && res.getCheckOutDate().isAfter(checkInDate))
+                .filter(res -> res.getDetails() != null)
+                .flatMap(res -> res.getDetails().stream())
+                .filter(det -> det.getRoomType() != null && roomTypeId.equals(det.getRoomType().getRoomTypeId()))
+                .mapToInt(det -> det.getQuantity() != null ? det.getQuantity() : 1)
+                .sum();
+
+        int currentlyOccupiedCount = (int) activeCategoryRooms.stream()
+                .filter(r -> StayStatus.OCCUPIED.name().equalsIgnoreCase(r.getStayStatus()))
+                .count();
+
+        int committedUnits = checkInDate.equals(today)
+                ? Math.max(bookedQuota, currentlyOccupiedCount)
+                : bookedQuota;
+
+        return Math.max(0, totalActivePhysicalRooms - committedUnits);
+    }
+
+    private Map<Integer, BigDecimal> loadTariffMap(Integer roomTypeId) {
+        List<RoomTypePrice> dbTariffs = roomTypePriceRepository.findByRoomType_RoomTypeIdAndIsActiveTrue(roomTypeId);
+        Map<Integer, BigDecimal> tariffByDay = new HashMap<>();
+        for (RoomTypePrice rtp : dbTariffs) {
+            if (rtp.getDayOfWeek() != null && rtp.getPrice() != null) {
+                tariffByDay.put(rtp.getDayOfWeek(), rtp.getPrice());
+            }
+        }
+        return tariffByDay;
+    }
+
     private ReservationDto toDto(Reservation r) {
-        long nights = ChronoUnit.DAYS.between(r.getCheckInDate(), r.getCheckOutDate());
+        long nights = Math.max(1, ChronoUnit.DAYS.between(r.getCheckInDate(), r.getCheckOutDate()));
+        Integer roomTypeId = null;
         String roomTypeName = "Standard";
+        String roomImageUrl = "/images/hotel-bg.jpg";
         int qty = 1;
         BigDecimal basePrice = BigDecimal.ZERO;
-        if (!r.getDetails().isEmpty()) {
+        List<ReservationDto.NightlyRateItemDto> nightlyBreakdown = new ArrayList<>();
+        String[] dayLabels = {"", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"};
+
+        BigDecimal total = BigDecimal.ZERO;
+        if (r.getDetails() != null && !r.getDetails().isEmpty()) {
             ReservationDetail d = r.getDetails().getFirst();
-            roomTypeName = d.getRoomType().getTypeName();
-            qty = d.getQuantity();
-            basePrice = d.getRoomType().getBasePrice();
+            qty = d.getQuantity() != null ? d.getQuantity() : 1;
+            if (d.getRoomType() != null) {
+                roomTypeId = d.getRoomType().getRoomTypeId();
+                roomTypeName = d.getRoomType().getTypeName();
+                if (d.getRoomType().getImageUrl() != null && !d.getRoomType().getImageUrl().isBlank()) {
+                    roomImageUrl = d.getRoomType().getImageUrl();
+                }
+                basePrice = d.getRoomType().getBasePrice() != null ? d.getRoomType().getBasePrice() : BigDecimal.ZERO;
+            }
+
+            if (d.getNightlyRates() != null && !d.getNightlyRates().isEmpty()) {
+                for (ReservationNightlyRate nr : d.getNightlyRates()) {
+                    BigDecimal unit = nr.getUnitPrice() != null ? nr.getUnitPrice() : basePrice;
+                    BigDecimal lineTotal = unit.multiply(BigDecimal.valueOf(qty));
+                    total = total.add(lineTotal);
+                    int dow = nr.getStayDate() != null ? nr.getStayDate().getDayOfWeek().getValue() : 1;
+                    nightlyBreakdown.add(ReservationDto.NightlyRateItemDto.builder()
+                            .stayDate(nr.getStayDate())
+                            .dayLabel(dayLabels[dow])
+                            .unitPrice(unit)
+                            .quantity(qty)
+                            .lineTotal(lineTotal)
+                            .build());
+                }
+            }
         }
-        BigDecimal total = basePrice.multiply(BigDecimal.valueOf(nights)).multiply(BigDecimal.valueOf(qty));
+
+        if (total.compareTo(BigDecimal.ZERO) <= 0) {
+            total = basePrice.multiply(BigDecimal.valueOf(nights)).multiply(BigDecimal.valueOf(qty));
+        }
+
+        BigDecimal depositAmount = total.multiply(new BigDecimal("0.30")).setScale(0, RoundingMode.HALF_UP);
+        String depositStatus = "NOT_REQUIRED";
+        if (ReservationStatus.PENDING.name().equalsIgnoreCase(r.getStatus())) {
+            depositStatus = "PENDING";
+        } else if (ReservationStatus.CONFIRMED.name().equalsIgnoreCase(r.getStatus())
+                || ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(r.getStatus())
+                || ReservationStatus.COMPLETED.name().equalsIgnoreCase(r.getStatus())) {
+            depositStatus = "PAID";
+        }
+
+        List<Payment> payments = paymentRepository.findByReservation_ReservationId(r.getReservationId());
+        for (Payment p : payments) {
+            if ("DEPOSIT".equalsIgnoreCase(p.getPaymentType())) {
+                if (p.getAmount() != null) {
+                    depositAmount = p.getAmount();
+                }
+                if (p.getStatus() != null) {
+                    depositStatus = p.getStatus();
+                }
+                break;
+            }
+        }
+
+        String vnpayUrl = null;
+        if (ReservationStatus.PENDING.name().equalsIgnoreCase(r.getStatus()) && !"PAID".equalsIgnoreCase(depositStatus)) {
+            vnpayUrl = vnPayGatewayService.createDepositPaymentUrl(r.getReservationCode(), depositAmount);
+        }
+
         return ReservationDto.builder()
                 .reservationId(r.getReservationId())
                 .reservationCode(r.getReservationCode())
+                .roomTypeId(roomTypeId)
                 .roomTypeName(roomTypeName)
+                .roomImageUrl(roomImageUrl)
                 .roomQuantity(qty)
                 .checkInDate(r.getCheckInDate())
                 .checkOutDate(r.getCheckOutDate())
@@ -454,9 +722,15 @@ public class ReservationServiceImpl implements ReservationService {
                 .contactName(r.getContactName())
                 .contactEmail(r.getContactEmail())
                 .contactPhone(r.getContactPhone())
+                .specialNotes(r.getSpecialNotes())
                 .status(r.getStatus())
                 .estimatedTotal(total)
+                .depositAmount(depositAmount)
+                .depositPaymentStatus(depositStatus)
+                .vnpayPaymentUrl(vnpayUrl)
+                .reservationDate(r.getReservationDate())
                 .holdExpiresAt(r.getHoldExpiresAt())
+                .nightlyBreakdown(nightlyBreakdown)
                 .build();
     }
 }

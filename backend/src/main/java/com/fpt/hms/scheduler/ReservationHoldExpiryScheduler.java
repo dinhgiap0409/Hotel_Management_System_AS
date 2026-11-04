@@ -1,7 +1,10 @@
 package com.fpt.hms.scheduler;
 
+import com.fpt.hms.entity.Payment;
 import com.fpt.hms.entity.Reservation;
 import com.fpt.hms.enums.ReservationStatus;
+import com.fpt.hms.repository.PaymentAttemptRepository;
+import com.fpt.hms.repository.PaymentRepository;
 import com.fpt.hms.repository.ReservationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,14 +24,36 @@ import java.util.List;
 public class ReservationHoldExpiryScheduler {
 
     private final ReservationRepository reservationRepository;
+    private final PaymentRepository paymentRepository;
+    private final PaymentAttemptRepository paymentAttemptRepository;
 
-    @Scheduled(fixedDelay = 300000) // Runs every 5 minutes
+    @Scheduled(fixedDelay = 15000) // Runs every 15 seconds to promptly release expired holds
     @Transactional
     public void cancelExpiredPendingReservations() {
+        Instant now = Instant.now();
         List<Reservation> expired = reservationRepository
-                .findByStatusAndHoldExpiresAtBefore(ReservationStatus.PENDING.name(), Instant.now());
+                .findByStatusAndHoldExpiresAtBefore(ReservationStatus.PENDING.name(), now);
         if (!expired.isEmpty()) {
-            expired.forEach(r -> r.setStatus(ReservationStatus.CANCELLED.name()));
+            for (Reservation r : expired) {
+                r.setStatus(ReservationStatus.CANCELLED.name());
+
+                List<Payment> payments = paymentRepository.findByReservation_ReservationId(r.getReservationId());
+                for (Payment p : payments) {
+                    if ("PENDING".equalsIgnoreCase(p.getStatus())) {
+                        p.setStatus("FAILED");
+                    }
+                }
+                paymentRepository.saveAll(payments);
+
+                paymentAttemptRepository.findByGatewayRequestRef(r.getReservationCode())
+                        .ifPresent(attempt -> {
+                            if ("PENDING".equalsIgnoreCase(attempt.getStatus())) {
+                                attempt.setStatus("EXPIRED");
+                                attempt.setExpiredAt(now);
+                                paymentAttemptRepository.save(attempt);
+                            }
+                        });
+            }
             reservationRepository.saveAll(expired);
             log.info("Auto-cancelled {} expired PENDING reservations (BR-19).", expired.size());
         }

@@ -11,8 +11,13 @@ import com.fpt.hms.repository.*;
 import com.fpt.hms.security.JwtTokenProvider;
 import com.fpt.hms.security.UserPrincipal;
 import com.fpt.hms.service.AuthenticationService;
+import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +35,7 @@ import java.util.stream.Collectors;
  * Module 1 (Owner: KhangND) - Implementation of Authentication, Profile, User Governance & Audit Logs.
  * Written clearly and modularly for easy reading and refactoring.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthenticationServiceImpl implements AuthenticationService {
@@ -47,6 +53,10 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final AuditService auditService;
+    private final JavaMailSender mailSender;
+
+    @Value("${spring.mail.username:}")
+    private String mailFrom;
 
     // In-memory store for 6-digit password reset codes (email -> ResetCodeEntry)
     private final Map<String, ResetCodeEntry> resetCodeStore = new ConcurrentHashMap<>();
@@ -114,11 +124,14 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     public LoginResponse login(LoginRequest request) {
         String normalizedEmail = request.getEmail().trim().toLowerCase();
         Account account = accountRepository.findByEmailIgnoreCase(normalizedEmail)
-                .orElseThrow(() -> new BusinessException(
-                        "AUTH-01",
-                        "Email hoặc mật khẩu không chính xác.",
-                        HttpStatus.UNAUTHORIZED
-                ));
+                .orElseThrow(() -> {
+                    log.warn("[AUTH-LOGIN] Không tìm thấy tài khoản với email: '{}'", normalizedEmail);
+                    return new BusinessException(
+                            "AUTH-01",
+                            "Email hoặc mật khẩu không chính xác.",
+                            HttpStatus.UNAUTHORIZED
+                    );
+                });
 
         // 1. Check if account is deactivated by Admin
         if ("INACTIVE".equalsIgnoreCase(account.getStatus())) {
@@ -161,12 +174,13 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         if (!passwordEncoder.matches(request.getPassword(), account.getPasswordHash())) {
             int attempts = (account.getFailedLoginAttempts() == null ? 0 : account.getFailedLoginAttempts()) + 1;
             account.setFailedLoginAttempts(attempts);
+            log.warn("[AUTH-LOGIN] Sai mật khẩu cho email '{}' (lần thử {}/{})", normalizedEmail, attempts, MAX_FAILED_ATTEMPTS);
 
             if (attempts >= MAX_FAILED_ATTEMPTS) {
                 Instant lockUntil = now.plus(LOCK_DURATION_MINUTES, ChronoUnit.MINUTES);
                 account.setLockedUntil(lockUntil);
                 account.setStatus("LOCKED");
-                accountRepository.save(account);
+                accountRepository.saveAndFlush(account);
 
                 auditService.recordAction(
                         account.getAccountId(),
@@ -186,7 +200,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
                 );
             }
 
-            accountRepository.save(account);
+            accountRepository.saveAndFlush(account);
             int remaining = MAX_FAILED_ATTEMPTS - attempts;
             throw new BusinessException(
                     "AUTH-01",
@@ -198,7 +212,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         // 4. Login successful -> reset failed counter & issue JWT + Refresh Token
         account.setFailedLoginAttempts(0);
         account.setLockedUntil(null);
-        accountRepository.save(account);
+        accountRepository.saveAndFlush(account);
 
         UserPrincipal principal = new UserPrincipal(account);
         String accessToken = jwtTokenProvider.generateAccessToken(principal);
@@ -262,7 +276,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     }
 
     // =========================================================================
-    // UC-04: FORGOT & RESET PASSWORD
+    // UC-04: FORGOT & RESET PASSWORD (WITH JAVAMAILSENDER SMTP)
     // =========================================================================
     @Override
     @Transactional
@@ -274,6 +288,8 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         String code = String.format("%06d", new Random().nextInt(900000) + 100000);
         resetCodeStore.put(normalizedEmail, new ResetCodeEntry(code, Instant.now().plus(15, ChronoUnit.MINUTES)));
 
+        boolean emailSent = sendPasswordResetEmail(normalizedEmail, code);
+
         auditService.recordAction(
                 account.getAccountId(),
                 account.getRole().getRoleName(),
@@ -281,15 +297,55 @@ public class AuthenticationServiceImpl implements AuthenticationService {
                 "Account",
                 account.getAccountId(),
                 null,
-                "resetCodeIssued=true",
-                "Yêu cầu mã khôi phục mật khẩu"
+                "emailSent=" + emailSent,
+                "Yêu cầu mã khôi phục mật khẩu qua email"
         );
 
         Map<String, String> result = new LinkedHashMap<>();
         result.put("email", normalizedEmail);
-        result.put("resetCode", code); // Returned for easy testing/demo
-        result.put("message", "Mã khôi phục mật khẩu (6 chữ số) có hiệu lực trong 15 phút.");
+        result.put("mailSent", String.valueOf(emailSent));
+        if (emailSent) {
+            result.put("message", "Mã xác nhận (6 chữ số) đã được gửi tới hộp thư " + normalizedEmail + ". Mã có hiệu lực trong 15 phút.");
+        } else {
+            result.put("resetCode", code);
+            result.put("message", "Hệ thống chưa cấu hình tài khoản SMTP Gmail thật trong application.yml nên hiển thị mã xác thực tại đây để kiểm thử (hiệu lực 15 phút).");
+        }
         return result;
+    }
+
+    private boolean sendPasswordResetEmail(String recipientEmail, String code) {
+        if (!StringUtils.hasText(mailFrom) || "your-email@gmail.com".equalsIgnoreCase(mailFrom.trim())) {
+            log.info("[HMS-MAIL-DEV] Chưa cấu hình MAIL_USERNAME thật. Mã OTP khôi phục mật khẩu cho {} là: {}", recipientEmail, code);
+            return false;
+        }
+        try {
+            MimeMessage mimeMessage = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, false, "UTF-8");
+            helper.setFrom(mailFrom);
+            helper.setTo(recipientEmail);
+            helper.setSubject("[HMS Luxury Hotel] Mã xác thực khôi phục mật khẩu");
+            String htmlContent = """
+                    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 10px; background: #faf9f5; color: #141413;">
+                        <h2 style="margin-top: 0; color: #16233b;">HMS Luxury Hotel — Khôi phục Mật khẩu</h2>
+                        <p>Xin chào,</p>
+                        <p>Hệ thống vừa nhận được yêu cầu đặt lại mật khẩu cho tài khoản gắn với địa chỉ email <strong>%s</strong>.</p>
+                        <p>Mã xác thực 6 chữ số của bạn là:</p>
+                        <div style="text-align: center; margin: 22px 0;">
+                            <span style="display: inline-block; padding: 12px 28px; font-size: 26px; font-weight: 700; letter-spacing: 6px; color: #faf9f5; background: #16233b; border-radius: 8px;">%s</span>
+                        </div>
+                        <p style="font-size: 13px; color: #5e5d59;">Mã này có hiệu lực trong vòng <strong>15 phút</strong>. Nếu bạn không thực hiện yêu cầu này, vui lòng bỏ qua email này.</p>
+                        <hr style="border: none; border-top: 1px solid #e8e6dc; margin: 20px 0;" />
+                        <p style="font-size: 12px; color: #64748b; margin: 0;">Trân trọng,<br/>Ban Quản trị Hệ thống HMS Luxury Hotel</p>
+                    </div>
+                    """.formatted(recipientEmail, code);
+            helper.setText(htmlContent, true);
+            mailSender.send(mimeMessage);
+            log.info("Đã gửi email khôi phục mật khẩu thành công tới {}", recipientEmail);
+            return true;
+        } catch (Exception ex) {
+            log.warn("Không thể gửi email qua SMTP tới {} ({}). Mã OTP dự phòng: {}", recipientEmail, ex.getMessage(), code);
+            return false;
+        }
     }
 
     @Override
@@ -308,14 +364,17 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         Account account = accountRepository.findByEmailIgnoreCase(normalizedEmail)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tài khoản"));
 
-        account.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        String encodedPassword = passwordEncoder.encode(request.getNewPassword());
+        account.setPasswordHash(encodedPassword);
         account.setFailedLoginAttempts(0);
         account.setLockedUntil(null);
         if ("LOCKED".equalsIgnoreCase(account.getStatus())) {
             account.setStatus(AccountStatus.ACTIVE.name());
         }
         account.setTokenVersion(account.getTokenVersion() + 1);
-        accountRepository.save(account);
+        accountRepository.saveAndFlush(account);
+        log.info("[AUTH-RESET] Đã cập nhật mật khẩu mới thành công cho email '{}' (accountId={}, tokenVersion={})",
+                normalizedEmail, account.getAccountId(), account.getTokenVersion());
 
         resetCodeStore.remove(normalizedEmail);
 

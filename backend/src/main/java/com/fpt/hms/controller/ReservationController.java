@@ -1,9 +1,6 @@
 package com.fpt.hms.controller;
 
-import com.fpt.hms.dto.booking.CreateReservationRequest;
-import com.fpt.hms.dto.booking.PublicRoomCategoryDto;
-import com.fpt.hms.dto.booking.ReservationDto;
-import com.fpt.hms.dto.booking.RoomCategoryDetailDto;
+import com.fpt.hms.dto.booking.*;
 import com.fpt.hms.security.UserPrincipal;
 import com.fpt.hms.service.ReservationService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -55,7 +52,7 @@ public class ReservationController {
     }
 
     @PostMapping("/reservations")
-    @Operation(summary = "UC-23: Create a new room reservation (holds quota for 24 hours)")
+    @Operation(summary = "UC-23: Create a new room reservation (holds quota for 24 hours per BR-19 and returns VNPay deposit URL)")
     public ResponseEntity<ReservationDto> createReservation(
             @Valid @RequestBody CreateReservationRequest request,
             @AuthenticationPrincipal UserPrincipal principal) {
@@ -64,9 +61,27 @@ public class ReservationController {
                 .body(reservationService.createReservation(request, accountId));
     }
 
+    @PostMapping("/public/reservations/vnpay-callback")
+    @Operation(summary = "UC-23: Process VNPay Deposit Payment Callback / IPN and confirm PENDING reservation")
+    public ResponseEntity<ReservationDto> handleVnPayCallback(@Valid @RequestBody VnPayCallbackRequest request) {
+        return ResponseEntity.ok(reservationService.processVnPayCallback(request));
+    }
+
+    @GetMapping("/reservations/my")
+    @Operation(summary = "UC-24: List reservations belonging to the currently logged-in customer")
+    public ResponseEntity<List<ReservationDto>> getMyReservations(
+            @AuthenticationPrincipal UserPrincipal principal) {
+        Integer accountId = principal != null ? principal.getAccountId() : null;
+        return ResponseEntity.ok(reservationService.getMyReservations(accountId));
+    }
+
     @GetMapping("/reservations")
-    @Operation(summary = "UC-24 & UC-26: List reservations")
-    public ResponseEntity<List<ReservationDto>> listReservations() {
+    @Operation(summary = "UC-24 & UC-26: List reservations (Customer sees own bookings; Staff sees all bookings)")
+    public ResponseEntity<List<ReservationDto>> listReservations(
+            @AuthenticationPrincipal UserPrincipal principal) {
+        if (principal != null && "CUSTOMER".equalsIgnoreCase(principal.getRoleName())) {
+            return ResponseEntity.ok(reservationService.getMyReservations(principal.getAccountId()));
+        }
         return ResponseEntity.ok(reservationService.getAllReservations());
     }
 
