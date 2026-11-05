@@ -215,6 +215,13 @@ public class HousekeepingController {
     // 4. HOUSEKEEPING TASKS (UC-51)
     // =========================================================================
 
+    @GetMapping("/housekeeping/staff")
+    @PreAuthorize("hasAnyRole('HOUSEKEEPING', 'HOUSEKEEPING_MANAGER', 'ADMIN')")
+    @Operation(summary = "UC-51: Get list of housekeeping staff for task allocation")
+    public ResponseEntity<List<StaffSimpleDto>> listHousekeepingStaff() {
+        return ResponseEntity.ok(roomHousekeepingService.getHousekeepingStaff());
+    }
+
     @GetMapping("/housekeeping/tasks")
     @PreAuthorize("hasAnyRole('HOUSEKEEPING', 'HOUSEKEEPING_MANAGER', 'GENERAL_MANAGER', 'ADMIN')")
     @Operation(summary = "UC-51: Get housekeeping tasks with filters (supports unpaged list or pagination)")

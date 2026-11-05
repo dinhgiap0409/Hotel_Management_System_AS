@@ -21,12 +21,12 @@ const MENU_ITEMS = [
   {
     label: 'Buồng Phòng & Bảo Trì',
     to: '/staff/housekeeping',
-    allowedRoles: [ROLES.HOUSEKEEPING, ROLES.HOUSEKEEPING_MANAGER, ROLES.GENERAL_MANAGER, ROLES.ADMIN],
+    allowedRoles: [ROLES.HOUSEKEEPING, ROLES.HOUSEKEEPING_MANAGER, ROLES.ADMIN],
   },
   {
     label: 'Hạng Phòng & Sơ Đồ Phòng',
     to: '/staff/rooms',
-    allowedRoles: [ROLES.SALES_MANAGER, ROLES.HOUSEKEEPING_MANAGER, ROLES.GENERAL_MANAGER, ROLES.ADMIN],
+    allowedRoles: [ROLES.SALES_MANAGER, ROLES.HOUSEKEEPING_MANAGER, ROLES.ADMIN],
   },
   {
     label: 'Dịch Vụ, Hóa Đơn & Khuyến Mãi',

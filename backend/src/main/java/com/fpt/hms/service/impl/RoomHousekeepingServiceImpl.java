@@ -369,6 +369,25 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
 
     @Override
     @Transactional(readOnly = true)
+    public List<StaffSimpleDto> getHousekeepingStaff() {
+        return staffRepository.findAll().stream()
+                .filter(s -> {
+                    if (s.getAccount() == null || s.getAccount().getRole() == null) return false;
+                    String role = s.getAccount().getRole().getRoleName();
+                    return "HOUSEKEEPING".equalsIgnoreCase(role) || "HOUSEKEEPING_MANAGER".equalsIgnoreCase(role);
+                })
+                .map(s -> StaffSimpleDto.builder()
+                        .staffId(s.getStaffId())
+                        .staffCode(s.getStaffCode())
+                        .fullName(s.getFullName())
+                        .email(s.getEmail())
+                        .roleName(s.getAccount() != null && s.getAccount().getRole() != null ? s.getAccount().getRole().getRoleName() : "")
+                        .build())
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public PageResponse<HousekeepingTaskDto> getTasks(Integer staffId, Integer roomId, String status,
                                                       String taskType, int page, int size) {
         Specification<HousekeepingTask> spec = (root, query, cb) -> {

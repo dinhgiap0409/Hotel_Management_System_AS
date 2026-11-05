@@ -37,6 +37,7 @@ public interface RoomHousekeepingService {
     RoomDto endRoomMaintenance(Integer roomId, EndMaintenanceRequest request);
 
     // --- UC-51: Housekeeping Task Assignment ---
+    List<StaffSimpleDto> getHousekeepingStaff();
     PageResponse<HousekeepingTaskDto> getTasks(Integer staffId, Integer roomId, String status,
                                                String taskType, int page, int size);
     HousekeepingTaskDto getTaskById(Integer taskId);

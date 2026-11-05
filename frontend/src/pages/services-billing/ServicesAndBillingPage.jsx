@@ -927,11 +927,6 @@ export const ServicesAndBillingPage = () => {
             setVoucherPage,
             setVoucherPageSize
           )}
-            filteredServices.length,
-            servicePageSize,
-            setServicePage,
-            setServicePageSize
-          )}
         </div>
       )}
 
