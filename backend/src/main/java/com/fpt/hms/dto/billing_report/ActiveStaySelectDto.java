@@ -17,5 +17,6 @@ public class ActiveStaySelectDto {
     private String roomNumber;
     private String guestName;
     private String reservationCode;
+    private String specialNotes;
 }
 

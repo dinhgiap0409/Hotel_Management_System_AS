@@ -13,6 +13,11 @@ export const billingApi = {
 
   // --- Feature 1: UC-31..UC-36 ---
   getActiveStays: () => http.get('/billing/active-stays'),
+  getMyConfirmedReservations: () => http.get('/billing/my-confirmed-reservations'),
+  getAllUpcomingPreOrders: () => http.get('/billing/pre-orders'),
+  createPreOrder: (data) => http.post('/billing/pre-orders', data),
+  cancelPreOrder: (reservationId, serviceId) =>
+    http.delete('/billing/pre-orders', { params: { reservationId, serviceId } }),
   getAllServices: () => http.get('/billing/services/all'),
   createService: (data) => http.post('/billing/services', data),
   updateService: (serviceId, data) => http.put(`/billing/services/${serviceId}`, data),
