@@ -2,8 +2,10 @@ package com.fpt.hms.controller;
 
 import com.fpt.hms.dto.billing_report.HotelServiceRequest;
 import com.fpt.hms.dto.billing_report.InvoiceDto;
+import com.fpt.hms.dto.billing_report.PreOrderRequest;
 import com.fpt.hms.dto.billing_report.ServiceOrderDto;
 import com.fpt.hms.dto.billing_report.ServiceOrderRequest;
+import com.fpt.hms.dto.booking.ReservationDto;
 import com.fpt.hms.entity.HotelService;
 import com.fpt.hms.entity.Voucher;
 import com.fpt.hms.security.UserPrincipal;
@@ -73,8 +75,12 @@ public class BillingController {
     @GetMapping("/active-stays")
     @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN')")
     @Operation(summary = "UC-35: Get active in-house guest stays for room selection dropdown")
-    public ResponseEntity<List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto>> getActiveStaysForSelect() {
-        return ResponseEntity.ok(billingService.getActiveStaysForSelect());
+    public ResponseEntity<List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto>> getActiveStaysForSelect(
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.getActiveStaysForSelect(
+                principal != null ? principal.getAccountId() : null,
+                principal != null ? principal.getRoleName() : null
+        ));
     }
 
     @GetMapping("/service-orders")
@@ -95,7 +101,7 @@ public class BillingController {
     }
 
     @PatchMapping("/service-orders/{orderId}/complete")
-    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER')")
+    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'FRONT_DESK', 'ADMIN', 'GENERAL_MANAGER')")
     @Operation(summary = "UC-35: Mark service as provided and post the charge to the stay folio")
     public ResponseEntity<ServiceOrderDto> completeServiceOrder(@PathVariable Integer orderId,
                                                                 @AuthenticationPrincipal UserPrincipal principal) {
@@ -109,6 +115,53 @@ public class BillingController {
                                                             @RequestParam String cancelReason,
                                                             @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(billingService.voidServiceOrder(orderId, cancelReason, principal.getAccountId()));
+    }
+
+    // ---------------------------------------------------------------- Pre-orders before check-in
+
+    @PostMapping("/pre-orders")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER')")
+    @Operation(summary = "Khách hàng đặt trước dịch vụ cho kỳ nghỉ (Xe đón sân bay, Buffet, Spa, Setup phòng...)")
+    public ResponseEntity<String> savePreOrder(
+            @Valid @RequestBody PreOrderRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.savePreOrderToNotes(
+                request,
+                principal != null ? principal.getAccountId() : null,
+                principal != null ? principal.getRoleName() : null
+        ));
+    }
+
+    @DeleteMapping("/pre-orders")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ADMIN', 'GENERAL_MANAGER')")
+    @Operation(summary = "Hủy dịch vụ đặt trước của khách hàng (Xóa khỏi lịch hẹn trước)")
+    public ResponseEntity<String> cancelPreOrder(
+            @RequestParam Integer reservationId,
+            @RequestParam Integer serviceId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.cancelPreOrderFromNotes(
+                reservationId,
+                serviceId,
+                principal != null ? principal.getAccountId() : null,
+                principal != null ? principal.getRoleName() : null
+        ));
+    }
+
+    @GetMapping("/my-confirmed-reservations")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER')")
+    @Operation(summary = "Lấy danh sách các đơn đặt phòng CONFIRMED của khách hàng để đặt trước dịch vụ")
+    public ResponseEntity<List<ReservationDto>> getMyConfirmedReservations(
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.getMyConfirmedReservations(
+                principal != null ? principal.getAccountId() : null
+        ));
+    }
+
+    @GetMapping("/pre-orders")
+    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'FRONT_DESK', 'GENERAL_MANAGER', 'ADMIN')")
+    @Operation(summary = "UC-35: Lấy danh sách tất cả các đơn đặt phòng có lịch đặt trước dịch vụ (đưa đón sân bay, buffet, spa...)")
+    public ResponseEntity<List<ReservationDto>> getAllUpcomingPreOrders() {
+        return ResponseEntity.ok(billingService.getAllUpcomingPreOrders());
     }
 
     // ---------------------------------------------------------------- Vouchers (read-only for now)

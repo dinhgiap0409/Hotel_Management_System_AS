@@ -10,4 +10,5 @@ import java.util.Optional;
 @Repository
 public interface ServiceOrderRepository extends JpaRepository<ServiceOrder, Integer> {
     List<ServiceOrder> findByGuestStay_StayIdOrderByOrderTimeDesc(Integer stayId);
+    List<ServiceOrder> findByGuestStay_StayId(Integer stayId);
 }

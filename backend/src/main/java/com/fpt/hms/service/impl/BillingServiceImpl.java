@@ -3,8 +3,10 @@ package com.fpt.hms.service.impl;
 import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.dto.billing_report.HotelServiceRequest;
 import com.fpt.hms.dto.billing_report.InvoiceDto;
+import com.fpt.hms.dto.billing_report.PreOrderRequest;
 import com.fpt.hms.dto.billing_report.ServiceOrderDto;
 import com.fpt.hms.dto.billing_report.ServiceOrderRequest;
+import com.fpt.hms.dto.booking.ReservationDto;
 import com.fpt.hms.entity.*;
 import com.fpt.hms.enums.GuestStayStatus;
 import com.fpt.hms.enums.InvoiceStatus;
@@ -45,6 +47,8 @@ public class BillingServiceImpl implements BillingService {
     private final InvoiceRepository invoiceRepository;
     private final PaymentRepository paymentRepository;
     private final StaffRepository staffRepository;
+    private final ReservationRepository reservationRepository;
+    private final CustomerRepository customerRepository;
     private final MessageResolver messageResolver;
 
     // ------------------------------------------------------------------ UC-31..34
@@ -105,7 +109,15 @@ public class BillingServiceImpl implements BillingService {
     @Override
     @Transactional(readOnly = true)
     public List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto> getActiveStaysForSelect() {
+        return getActiveStaysForSelect(null, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto> getActiveStaysForSelect(Integer callerAccountId, String callerRole) {
+        boolean isCustomer = "CUSTOMER".equalsIgnoreCase(callerRole);
         return guestStayRepository.findByStatus(GuestStayStatus.ACTIVE.name()).stream()
+                .filter(stay -> !isCustomer || isStayOwner(stay, callerAccountId))
                 .map(stay -> {
                     String roomNumber = "Chưa gán phòng";
                     if (stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty()) {
@@ -124,10 +136,10 @@ public class BillingServiceImpl implements BillingService {
                     }
                     return com.fpt.hms.dto.billing_report.ActiveStaySelectDto.builder()
                             .stayId(stay.getStayId())
-                .roomNumber(stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty() ? stay.getRoomAssignments().get(stay.getRoomAssignments().size() - 1).getRoom().getRoomNumber() : "Chưa gán phòng")
                             .roomNumber(roomNumber)
                             .guestName(guestName)
                             .reservationCode(resCode)
+                            .specialNotes(stay.getReservation() != null ? stay.getReservation().getSpecialNotes() : null)
                             .build();
                 })
                 .toList();
@@ -247,9 +259,12 @@ public class BillingServiceImpl implements BillingService {
     }
 
     private boolean isStayOwner(GuestStay stay, Integer accountId) {
+        if (stay == null || stay.getReservation() == null || accountId == null) {
+            return false;
+        }
         Customer customer = stay.getReservation().getCustomer();
         return customer != null && customer.getAccount() != null
-                && customer.getAccount().getAccountId().equals(accountId);
+                && accountId.equals(customer.getAccount().getAccountId());
     }
 
     private BigDecimal lineAmount(ServiceOrder order) {
@@ -263,9 +278,15 @@ public class BillingServiceImpl implements BillingService {
         String guestName = reservation.getContactName() != null
                 ? reservation.getContactName()
                 : (reservation.getCustomer() != null ? reservation.getCustomer().getFullName() : null);
+        String roomNumber = "Chưa gán phòng";
+        if (stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty()) {
+            roomNumber = stay.getRoomAssignments().get(stay.getRoomAssignments().size() - 1)
+                    .getRoom().getRoomNumber();
+        }
         return ServiceOrderDto.builder()
                 .serviceOrderId(o.getServiceOrderId())
                 .stayId(stay.getStayId())
+                .roomNumber(roomNumber)
                 .reservationCode(reservation.getReservationCode())
                 .guestName(guestName)
                 .serviceId(svc.getServiceId())
@@ -363,6 +384,140 @@ public class BillingServiceImpl implements BillingService {
                 .voucherCode(appliedVoucher != null ? appliedVoucher.getCode() : null)
                 .status(savedInvoice.getStatus())
                 .issueDate(savedInvoice.getIssueDate())
+                .build();
+    }
+
+    // ------------------------------------------------------------------ Pre-order before check-in
+
+    @Override
+    @Transactional
+    public String savePreOrderToNotes(PreOrderRequest request, Integer callerAccountId, String callerRole) {
+        Reservation reservation = reservationRepository.findById(request.getReservationId())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng."));
+
+        if ("CUSTOMER".equals(callerRole)) {
+            Customer customer = reservation.getCustomer();
+            if (customer == null || customer.getAccount() == null
+                    || !customer.getAccount().getAccountId().equals(callerAccountId)) {
+                throw new BusinessException("AUTH_FORBIDDEN", "Quý khách không có quyền thao tác trên đơn đặt phòng này.");
+            }
+        }
+
+        HotelService service = findService(request.getServiceId());
+
+        String timeStr = request.getScheduledTime() != null && !request.getScheduledTime().isBlank()
+                ? request.getScheduledTime().trim() : "Trước khi nhận phòng";
+        String detailStr = request.getDetails() != null && !request.getDetails().isBlank()
+                ? request.getDetails().trim() : "Không";
+
+        String preOrderEntry = String.format("[ĐẶT TRƯỚC] %s (Mã DV: %d) | SL: %d | Thời gian: %s | Chi tiết: %s",
+                service.getServiceName(),
+                service.getServiceId(),
+                request.getQuantity(),
+                timeStr,
+                detailStr);
+
+        String oldNotes = reservation.getSpecialNotes();
+        if (oldNotes == null || oldNotes.isBlank()) {
+            reservation.setSpecialNotes(preOrderEntry);
+        } else {
+            reservation.setSpecialNotes(oldNotes + "\n" + preOrderEntry);
+        }
+
+        reservationRepository.save(reservation);
+        return reservation.getSpecialNotes();
+    }
+
+    @Override
+    @Transactional
+    public String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer callerAccountId, String callerRole) {
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng."));
+
+        if ("CUSTOMER".equals(callerRole)) {
+            Customer customer = reservation.getCustomer();
+            if (customer == null || customer.getAccount() == null
+                    || !customer.getAccount().getAccountId().equals(callerAccountId)) {
+                throw new BusinessException("AUTH_FORBIDDEN", "Quý khách không có quyền thao tác trên đơn đặt phòng này.");
+            }
+        }
+
+        // Kiểm tra xem dịch vụ này đã nạp vào phòng / tính vào Folio chưa
+        java.util.Optional<GuestStay> stayOpt = guestStayRepository.findByReservation_ReservationId(reservationId);
+        if (stayOpt.isPresent()) {
+            GuestStay stay = stayOpt.get();
+            boolean hasActiveOrCompletedOrder = serviceOrderRepository.findByGuestStay_StayIdOrderByOrderTimeDesc(stay.getStayId())
+                    .stream()
+                    .anyMatch(o -> o.getHotelService() != null
+                            && o.getHotelService().getServiceId().equals(serviceId)
+                            && ("ORDERED".equalsIgnoreCase(o.getStatus()) || "COMPLETED".equalsIgnoreCase(o.getStatus())));
+            if (hasActiveOrCompletedOrder) {
+                throw new BusinessException("PREORDER_ALREADY_CHARGED",
+                        "Dịch vụ này đã được nạp vào phòng / Folio của khách, không thể hủy từ danh sách đặt trước. Vui lòng hủy thông qua đơn gọi dịch vụ phòng.");
+            }
+        }
+
+        String notes = reservation.getSpecialNotes();
+        if (notes != null && !notes.isBlank()) {
+            String updatedNotes = java.util.Arrays.stream(notes.split("\n"))
+                    .filter(line -> !(line.contains("[ĐẶT TRƯỚC]") && line.contains("Mã DV: " + serviceId + ")")))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            reservation.setSpecialNotes(updatedNotes.trim().isEmpty() ? null : updatedNotes.trim());
+            reservationRepository.save(reservation);
+        }
+
+        return "Đã hủy dịch vụ đặt trước thành công.";
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationDto> getMyConfirmedReservations(Integer callerAccountId) {
+        if (callerAccountId == null) {
+            return java.util.Collections.emptyList();
+        }
+        Customer customer = customerRepository.findByAccount_AccountId(callerAccountId).orElse(null);
+        if (customer == null) {
+            return java.util.Collections.emptyList();
+        }
+
+        return reservationRepository.findByCustomer_CustomerIdOrderByReservationDateDesc(customer.getCustomerId())
+                .stream()
+                .filter(r -> "CONFIRMED".equalsIgnoreCase(r.getStatus()))
+                .map(this::toReservationDto)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationDto> getAllUpcomingPreOrders() {
+        return reservationRepository.findAll().stream()
+                .filter(r -> r.getSpecialNotes() != null && r.getSpecialNotes().contains("[ĐẶT TRƯỚC]"))
+                .filter(r -> !"CANCELLED".equalsIgnoreCase(r.getStatus()))
+                .sorted((r1, r2) -> {
+                    if (r1.getCheckInDate() == null || r2.getCheckInDate() == null) return 0;
+                    return r1.getCheckInDate().compareTo(r2.getCheckInDate());
+                })
+                .map(this::toReservationDto)
+                .toList();
+    }
+
+    private ReservationDto toReservationDto(Reservation r) {
+        String roomTypeName = "Phòng tiêu chuẩn";
+        if (r.getDetails() != null && !r.getDetails().isEmpty() && r.getDetails().get(0).getRoomType() != null) {
+            roomTypeName = r.getDetails().get(0).getRoomType().getTypeName();
+        }
+        return ReservationDto.builder()
+                .reservationId(r.getReservationId())
+                .reservationCode(r.getReservationCode())
+                .roomTypeName(roomTypeName)
+                .checkInDate(r.getCheckInDate())
+                .checkOutDate(r.getCheckOutDate())
+                .guestCount(r.getGuestCount())
+                .contactName(r.getContactName())
+                .contactEmail(r.getContactEmail())
+                .contactPhone(r.getContactPhone())
+                .specialNotes(r.getSpecialNotes())
+                .status(r.getStatus())
                 .build();
     }
 }
