@@ -142,6 +142,13 @@ public class ReservationServiceImpl implements ReservationService {
         RoomType rt = roomTypeRepository.findById(roomTypeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hạng phòng #" + roomTypeId));
 
+        // UC-22: only an active room type may be viewed in detail (BR-18).
+        // Inactive types are hidden from the catalog and must not be reachable
+        // by direct URL either.
+        if (Boolean.FALSE.equals(rt.getIsActive())) {
+            throw new BusinessException("BR-18", "Hạng phòng này hiện đang tạm ngưng, không xem được chi tiết.");
+        }
+
         List<Room> categoryRooms = roomRepository.findByRoomStatusNot(RoomStatus.ARCHIVED.name()).stream()
                 .filter(r -> r.getRoomType() != null && roomTypeId.equals(r.getRoomType().getRoomTypeId()))
                 .filter(r -> RoomStatus.ACTIVE.name().equalsIgnoreCase(r.getRoomStatus()))
@@ -689,9 +696,9 @@ public class ReservationServiceImpl implements ReservationService {
 
         // UC-24/UC-25: a customer may only cancel their own booking. Front-desk
         // staff cancel on the guest's behalf (SRS screen 10.4).
-        boolean isStaff = roleName != null && ("FRONT_DESK".equalsIgnoreCase(roleName)
-                || "GENERAL_MANAGER".equalsIgnoreCase(roleName)
-                || "ADMIN".equalsIgnoreCase(roleName));
+        // UC-25 actors are Customer and Front-Desk Staff only; the controller
+        // already restricts this endpoint to those two roles.
+        boolean isStaff = roleName != null && "FRONT_DESK".equalsIgnoreCase(roleName);
         if (accountId != null && !isStaff && reservation.getCustomer() != null
                 && reservation.getCustomer().getAccount() != null
                 && !accountId.equals(reservation.getCustomer().getAccount().getAccountId())) {
