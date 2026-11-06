@@ -746,6 +746,10 @@ public class ReservationServiceImpl implements ReservationService {
         reservation.setStatus(ReservationStatus.CANCELLED.name());
         Reservation saved = reservationRepository.save(reservation);
 
+        // Quy tac tien coc khi huy (UC-25, user chot 06/11/2026, giu nguyen):
+        // huy KHONG hoan coc da tra — khoan coc da PAID giu nguyen trang thai,
+        // khong co lenh hoan tien VNPay (huy thi mat coc). Chi cac payment dang
+        // PENDING (chua tra coc) moi bi danh FAILED de giai phong giu cho.
         // Release the unpaid deposit hold so the room quota frees immediately
         // instead of waiting for the hold-expiry scheduler.
         List<Payment> payments = paymentRepository.findByReservation_ReservationId(reservation.getReservationId());

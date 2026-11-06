@@ -13,6 +13,8 @@ export const MyBookingsPage = () => {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [cancellingId, setCancellingId] = useState(null);
 
   const loadBookings = () => {
     setLoading(true);
@@ -32,6 +34,36 @@ export const MyBookingsPage = () => {
   useEffect(() => {
     loadBookings();
   }, []);
+
+  // UC-25: Huy dat phong. Chi hien nut Huy voi booking con huy duoc
+  // (PENDING hoac CONFIRMED); backend chan huy khi da CHECKED_IN hoac
+  // COMPLETED. Quy tac coc (user chot 06/11/2026, giu nguyen): huy thi
+  // MAT coc da tra, khong hoan tien; booking chua tra coc thi huy khong
+  // mat tien. Khong co component xac nhan dung chung trong app nen dung
+  // window.confirm.
+  const handleCancelBooking = (b) => {
+    if (!b) return;
+    const isPaid = b.depositPaymentStatus === 'PAID' || b.status === 'CONFIRMED';
+    const message = isPaid
+      ? `Hủy đơn đặt phòng ${b.reservationCode}? Tiền cọc đã trả ${formatVND(b.depositAmount)} sẽ bị mất, không được hoàn lại.`
+      : `Hủy đơn đặt phòng ${b.reservationCode}? Booking chưa trả cọc nên hủy không mất tiền.`;
+    if (!window.confirm(message)) return;
+    setCancellingId(b.reservationId);
+    setError(null);
+    setSuccess(null);
+    // Backend khong nhan query param reason (controller chi nhan
+    // reservationId) nen goi khong truyen reason.
+    bookingApi
+      .cancelReservation(b.reservationId)
+      .then(() => {
+        setSuccess(`Đã hủy đơn đặt phòng ${b.reservationCode}.`);
+        loadBookings();
+      })
+      .catch((err) => {
+        setError(err.response?.data?.message || 'Không thể hủy đơn đặt phòng. Vui lòng thử lại.');
+      })
+      .finally(() => setCancellingId(null));
+  };
 
   const handlePayDeposit = (b) => {
     if (!b?.vnpayPaymentUrl) return;
@@ -61,6 +93,12 @@ export const MyBookingsPage = () => {
       {error && (
         <Alert variant="danger" className="rounded-3 small">
           {error}
+        </Alert>
+      )}
+
+      {success && (
+        <Alert variant="success" className="rounded-3 small">
+          {success}
         </Alert>
       )}
 
@@ -152,6 +190,17 @@ export const MyBookingsPage = () => {
                         >
                           <i className="bi bi-credit-card me-1"></i>
                           Đặt cọc VNPay
+                        </Button>
+                      )}
+                      {(b.status === 'PENDING' || b.status === 'CONFIRMED') && (
+                        <Button
+                          size="sm"
+                          variant="outline-danger"
+                          disabled={cancellingId === b.reservationId}
+                          onClick={() => handleCancelBooking(b)}
+                        >
+                          <i className="bi bi-x-circle me-1"></i>
+                          {cancellingId === b.reservationId ? 'Đang hủy...' : 'Hủy đặt phòng'}
                         </Button>
                       )}
                     </div>
