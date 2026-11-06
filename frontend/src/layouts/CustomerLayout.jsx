@@ -78,17 +78,30 @@ export const CustomerLayout = () => {
             Tìm &amp; Đặt Phòng
           </Link>
           {isAuthenticated && user?.role === 'CUSTOMER' && (
-            <Link
-              to="/my-bookings"
-              style={{
-                color: location.pathname.startsWith('/my-bookings') ? '#FAF9F5' : '#E8E6DC',
-                fontWeight: location.pathname.startsWith('/my-bookings') ? 600 : 400,
-                textDecoration: 'none',
-                fontSize: 13.5,
-              }}
-            >
-              Đặt Phòng Của Tôi
-            </Link>
+            <>
+              <Link
+                to="/my-bookings"
+                style={{
+                  color: location.pathname.startsWith('/my-bookings') ? '#FAF9F5' : '#E8E6DC',
+                  fontWeight: location.pathname.startsWith('/my-bookings') ? 600 : 400,
+                  textDecoration: 'none',
+                  fontSize: 13.5,
+                }}
+              >
+                Đặt Phòng Của Tôi
+              </Link>
+              <Link
+                to="/customer/room-service"
+                style={{
+                  color: location.pathname.startsWith('/customer/room-service') || location.pathname.startsWith('/services') ? '#FAF9F5' : '#E8E6DC',
+                  fontWeight: location.pathname.startsWith('/customer/room-service') || location.pathname.startsWith('/services') ? 600 : 400,
+                  textDecoration: 'none',
+                  fontSize: 13.5,
+                }}
+              >
+                Dịch Vụ Khách Sạn
+              </Link>
+            </>
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>

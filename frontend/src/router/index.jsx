@@ -5,7 +5,7 @@ import { authPublicRoutes, authStaffRoutes } from './authRoutes';
 import { roomStaffRoutes } from './roomRoutes';
 import { bookingPublicRoutes } from './bookingRoutes';
 import { frontDeskStaffRoutes } from './frontDeskRoutes';
-import { billingStaffRoutes } from './billingRoutes';
+import { billingStaffRoutes, billingCustomerRoutes } from './billingRoutes';
 
 export const AppRouter = () => {
   return (
@@ -13,6 +13,7 @@ export const AppRouter = () => {
       <Route element={<CustomerLayout />}>
         {bookingPublicRoutes}
         {authPublicRoutes}
+        {billingCustomerRoutes}
       </Route>
       <Route element={<StaffLayout />}>
         {authStaffRoutes}
