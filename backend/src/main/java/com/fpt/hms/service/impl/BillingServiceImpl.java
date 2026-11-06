@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 8f4df71a13dc63bde26580f012b04d2058a5acc2)package com.fpt.hms.service.impl;
+package com.fpt.hms.service.impl;
 
 import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.dto.billing_report.HotelServiceRequest;

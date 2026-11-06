@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 7a1999606c7f6dbdf2af84acf569ff743b702932)package com.fpt.hms.dto.booking;
+package com.fpt.hms.dto.booking;
 
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;

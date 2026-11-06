@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 02f79da433cecb97cb41ffa2bc6168f42ac4b6e8)package com.fpt.hms.integration;
+package com.fpt.hms.integration;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;

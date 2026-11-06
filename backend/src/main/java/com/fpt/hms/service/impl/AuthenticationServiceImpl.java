@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: b75fea0bb18b9211f17041b0e6bba17ed095745a)package com.fpt.hms.service.impl;
+package com.fpt.hms.service.impl;
 
 import com.fpt.hms.common.AuditService;
 import com.fpt.hms.dto.auth.*;

@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 5420511fb3c38c8a5384296e6436117e13a1579a)package com.fpt.hms.repository;
+package com.fpt.hms.repository;
 
 import com.fpt.hms.entity.Customer;
 import org.springframework.data.jpa.repository.JpaRepository;

@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 7649eab9e48f12554d6d817ca979b2eb7c392c3c)package com.fpt.hms.controller;
+package com.fpt.hms.controller;
 
 import com.fpt.hms.dto.booking.*;
 import com.fpt.hms.security.UserPrincipal;

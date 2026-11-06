@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 9775c186f127cb88068fe73a2e9bf2bab066f07a)package com.fpt.hms.dto.room;
+package com.fpt.hms.dto.room;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;

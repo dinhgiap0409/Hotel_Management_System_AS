@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 878ca6bc765dcd3e4ff0ed1059b8fff00dc087ea)package com.fpt.hms.dto.billing_report;
+package com.fpt.hms.dto.billing_report;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

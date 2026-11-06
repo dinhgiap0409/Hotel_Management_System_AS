@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 4466351fb026cee0b626c8735113cd3ff5bf1e6f)package com.fpt.hms.controller;
+package com.fpt.hms.controller;
 
 import com.fpt.hms.dto.billing_report.HotelServiceRequest;
 import com.fpt.hms.dto.billing_report.InvoiceDto;

@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 9f01a4ab4e643d1c7ad2bad27bdd7428fecc6004)package com.fpt.hms.service.impl;
+package com.fpt.hms.service.impl;
 
 import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.common.PageResponse;

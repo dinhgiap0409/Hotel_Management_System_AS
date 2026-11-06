@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 60fb97e9a4df9a1ad9a7e918102d62e74187ac75)package com.fpt.hms.dto.room;
+package com.fpt.hms.dto.room;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
