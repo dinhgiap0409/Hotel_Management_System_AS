@@ -1,5 +1,6 @@
 import { useAuth } from '../../context/AuthContext';
 import { ROLES } from '../../config/constants';
+import { ForbiddenPage } from './ForbiddenPage';
 
 // GiapND scope (UC-14, UC-21, UC-22) — public room catalog / search / detail.
 // Allowed: guests (not logged in), CUSTOMER and FRONT_DESK only. Every other
@@ -20,14 +21,7 @@ export const PublicBookingGuard = ({ children }) => {
     user.role !== ROLES.CUSTOMER &&
     user.role !== ROLES.FRONT_DESK
   ) {
-    return (
-      <div style={{ padding: 40, textAlign: 'center' }}>
-        <h2 style={{ color: '#dc2626' }}>403 — Không có quyền truy cập</h2>
-        <p style={{ color: '#64748b' }}>
-          Vai trò hiện tại của bạn (<strong>{user.role}</strong>) không được cấp quyền sử dụng chức năng này.
-        </p>
-      </div>
-    );
+    return <ForbiddenPage />;
   }
 
   return children;
