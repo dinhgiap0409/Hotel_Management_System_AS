@@ -1,4 +1,4 @@
-package com.fpt.hms.dto.room;
+successfully downloaded text file (SHA: 9775c186f127cb88068fe73a2e9bf2bab066f07a)package com.fpt.hms.dto.room;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
@@ -41,6 +41,9 @@ public class UpdateRoomTypeRequest {
 
     @Size(max = 500, message = "Đường dẫn ảnh tối đa 500 ký tự")
     private String imageUrl;
+
+    /** Extra detail-photo URLs, comma-separated (UC-22 gallery). */
+    private String galleryImages;
 
     private Boolean isActive;
 }

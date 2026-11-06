@@ -1,4 +1,4 @@
-package com.fpt.hms.dto.room;
+successfully downloaded text file (SHA: 60fb97e9a4df9a1ad9a7e918102d62e74187ac75)package com.fpt.hms.dto.room;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
@@ -20,6 +20,8 @@ public class RoomTypeDto {
     private String amenities;
     private String description;
     private String imageUrl;
+    /** Comma-separated extra detail-photo URLs (UC-22 gallery). */
+    private String galleryImages;
     private Boolean isActive;
 
     @JsonProperty("status")

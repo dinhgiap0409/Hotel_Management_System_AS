@@ -241,11 +241,17 @@ public class ReservationServiceImpl implements ReservationService {
                 })
                 .toList();
 
+        // UC-22 gallery: main photo + the room type's gallery_images, so the
+        // detail page shows 4 photos (overview, bed, bathroom, amenities)
+        // instead of the main photo plus a generic hotel placeholder.
         List<String> photoGallery = new ArrayList<>();
         if (rt.getImageUrl() != null && !rt.getImageUrl().isBlank()) {
             photoGallery.add(rt.getImageUrl().trim());
         }
-        photoGallery.add("/images/hotel-bg.jpg");
+        photoGallery.addAll(rt.getGalleryImageList());
+        if (photoGallery.isEmpty()) {
+            photoGallery.add("/images/hotel-bg.jpg");
+        }
 
         return RoomCategoryDetailDto.builder()
                 .roomTypeId(rt.getRoomTypeId())

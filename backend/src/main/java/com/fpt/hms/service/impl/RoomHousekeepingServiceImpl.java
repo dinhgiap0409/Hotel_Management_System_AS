@@ -91,6 +91,7 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
                 .amenities(request.getAmenities())
                 .description(request.getDescription())
                 .imageUrl(request.getImageUrl())
+                .galleryImages(request.getGalleryImages())
                 .isActive(true)
                 .build();
 
@@ -113,6 +114,9 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
         roomType.setAmenities(request.getAmenities());
         roomType.setDescription(request.getDescription());
         roomType.setImageUrl(request.getImageUrl());
+        if (request.getGalleryImages() != null) {
+            roomType.setGalleryImages(request.getGalleryImages());
+        }
         if (request.getIsActive() != null) {
             roomType.setIsActive(request.getIsActive());
         }
@@ -554,6 +558,7 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
                 .amenities(rt.getAmenities())
                 .description(rt.getDescription())
                 .imageUrl(rt.getImageUrl())
+                .galleryImages(rt.getGalleryImages())
                 .isActive(rt.getIsActive())
                 .build();
     }
