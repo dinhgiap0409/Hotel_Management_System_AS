@@ -1,4 +1,4 @@
-package com.fpt.hms.controller;
+successfully downloaded text file (SHA: 7649eab9e48f12554d6d817ca979b2eb7c392c3c)package com.fpt.hms.controller;
 
 import com.fpt.hms.dto.booking.*;
 import com.fpt.hms.security.UserPrincipal;
@@ -93,7 +93,11 @@ public class ReservationController {
 
     @PostMapping("/reservations/{reservationId}/cancel")
     @Operation(summary = "UC-25: Cancel an unfulfilled reservation")
-    public ResponseEntity<ReservationDto> cancelReservation(@PathVariable Integer reservationId) {
-        return ResponseEntity.ok(reservationService.cancelReservation(reservationId));
+    public ResponseEntity<ReservationDto> cancelReservation(
+            @PathVariable Integer reservationId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        Integer accountId = principal != null ? principal.getAccountId() : null;
+        String roleName = principal != null ? principal.getRoleName() : null;
+        return ResponseEntity.ok(reservationService.cancelReservation(reservationId, accountId, roleName));
     }
 }

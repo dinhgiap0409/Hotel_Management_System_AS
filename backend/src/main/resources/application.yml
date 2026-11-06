@@ -1,4 +1,4 @@
-server:
+successfully downloaded text file (SHA: 606019383d3407461505192d100faddc4f022be2)server:
   port: 8080
 
 spring:
@@ -45,6 +45,16 @@ app:
     timezone: Asia/Ho_Chi_Minh
     standard-check-in: "14:00"
     standard-check-out: "12:00"
+  # Module 3A (GiapND, BR-19): how long a PENDING online reservation holds its
+  # room quota before the scheduler auto-cancels it. Default 24h (SRS BR-19).
+  # Override with env BOOKING_HOLD_HOURS (e.g. 1 for a demo) — never hardcode
+  # a test value in the service code.
+  booking:
+    hold-hours: ${BOOKING_HOLD_HOURS:24}
+  # Billing tax rate (was hardcoded 0.08 in BillingServiceImpl). SRS v1.2 does
+  # not state a tax rate; 0.08 is the current business default, now configurable.
+  billing:
+    tax-rate: ${BILLING_TAX_RATE:0.08}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
   jwt:

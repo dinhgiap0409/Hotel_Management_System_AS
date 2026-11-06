@@ -1,4 +1,4 @@
-package com.fpt.hms.service;
+successfully downloaded text file (SHA: b62238d59c79a8235b49bbd0797b818f8389b1ff)package com.fpt.hms.service;
 
 import com.fpt.hms.dto.booking.*;
 
@@ -14,5 +14,5 @@ public interface ReservationService {
     List<ReservationDto> getMyReservations(Integer accountId);
     List<ReservationDto> getAllReservations();
     ReservationDto findByCode(String reservationCode);
-    ReservationDto cancelReservation(Integer reservationId);
+    ReservationDto cancelReservation(Integer reservationId, Integer accountId, String roleName);
 }
