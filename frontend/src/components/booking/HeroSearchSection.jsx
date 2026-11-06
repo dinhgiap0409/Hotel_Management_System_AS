@@ -21,7 +21,7 @@ export const HeroSearchSection = ({
         </div>
 
         <h1 className="hms-hero-title mb-2">
-          Danh Mục Hạng Phòng &amp; Tra Cứu Phòng Trống
+          Danh Mục <em>Hạng Phòng</em> &amp; Tra Cứu <em>Phòng Trống</em>
         </h1>
         <p className="hms-hero-subtitle mb-4">
           Khám phá các hạng phòng tiêu chuẩn quốc tế tại HMS Luxury Hotel hoặc nhập ngày nhận/trả phòng
