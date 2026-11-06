@@ -34,4 +34,19 @@ export const billingApi = {
   completeServiceOrder: (orderId) => http.patch(`/billing/service-orders/${orderId}/complete`),
   voidServiceOrder: (orderId, cancelReason) =>
     http.patch(`/billing/service-orders/${orderId}/void`, null, { params: { cancelReason } }),
+
+  // --- Feature 2: UC-37..UC-40 (Folio Breakdown, Vouchers, Settlement & Invoicing) ---
+  getFolioDetail: (stayId) => http.get(`/billing/stays/${stayId}/folio`),
+  addAdditionalCharge: (folioId, data) => http.post(`/billing/folios/${folioId}/additional-charges`, data),
+  deleteAdditionalCharge: (chargeId) => http.delete(`/billing/additional-charges/${chargeId}`),
+
+  createVoucher: (data) => http.post('/billing/vouchers', data),
+  updateVoucher: (voucherId, data) => http.put(`/billing/vouchers/${voucherId}`, data),
+  toggleVoucherStatus: (voucherId, status) =>
+    http.patch(`/billing/vouchers/${voucherId}/status`, null, { params: { status } }),
+  validateVoucher: (data) => http.post('/billing/vouchers/validate', data),
+
+  settleFolio: (stayId, data) => http.post(`/billing/stays/${stayId}/settle-folio`, data),
+  getInvoiceDetail: (invoiceId) => http.get(`/billing/invoices/${invoiceId}`),
+  getInvoiceByStay: (stayId) => http.get(`/billing/invoices/by-stay/${stayId}`),
 };

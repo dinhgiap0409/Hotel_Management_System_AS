@@ -125,6 +125,18 @@ export const StaffLayout = () => {
   const visibleMenu = MENU_ITEMS.filter((item) => user && item.allowedRoles.includes(user.role));
   const currentMenuItem = visibleMenu.find((item) => location.pathname.startsWith(item.to));
 
+  const getMenuItemLabel = (item, role) => {
+    if (!item) return '';
+    if (item.to === '/staff/services-billing') {
+      if (role === ROLES.FRONT_DESK) return 'Quyết Toán & Dịch Vụ';
+      if (role === ROLES.SALES_MANAGER) return 'Khuyến Mãi & Dịch Vụ';
+      if (role === ROLES.ACCOUNTANT) return 'Quyết Toán & Hóa Đơn';
+      if (role === ROLES.SERVICE_STAFF || role === ROLES.SERVICE_MANAGER) return 'Dịch Vụ & Đơn Phòng';
+      return 'Dịch Vụ, Hóa Đơn & Khuyến Mãi';
+    }
+    return item.label;
+  };
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', fontFamily: 'Inter, system-ui, sans-serif', background: '#f1f5f9' }}>
       {/* Sticky Full-Height Collapsible Sidebar */}
@@ -247,7 +259,7 @@ export const StaffLayout = () => {
               <Link
                 key={item.to}
                 to={item.to}
-                title={collapsed ? item.label : undefined}
+                title={collapsed ? getMenuItemLabel(item, user?.role) : undefined}
                 style={{
                   color: active ? '#fff' : '#cbd5e1',
                   textDecoration: 'none',
@@ -265,7 +277,7 @@ export const StaffLayout = () => {
                 }}
               >
                 <span style={{ display: 'inline-flex', flexShrink: 0 }}>{item.icon}</span>
-                {!collapsed && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>}
+                {!collapsed && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{getMenuItemLabel(item, user?.role)}</span>}
               </Link>
             );
           })}
@@ -289,7 +301,7 @@ export const StaffLayout = () => {
           }}
         >
           <span style={{ fontSize: 14.5, fontWeight: 600, color: '#0f172a' }}>
-            {currentMenuItem ? currentMenuItem.label : 'Cổng Quản Trị Nội Bộ'}
+            {currentMenuItem ? getMenuItemLabel(currentMenuItem, user?.role) : 'Cổng Quản Trị Nội Bộ'}
           </span>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>

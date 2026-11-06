@@ -5,7 +5,18 @@ export const DataTable = ({ columns, data, keyField = 'id', emptyMessage = 'Khô
         <thead>
           <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
             {columns.map((col, idx) => (
-              <th key={idx} style={{ padding: '12px 16px', fontWeight: 600, color: '#334155' }}>
+              <th
+                key={idx}
+                style={{
+                  padding: '12px 16px',
+                  fontWeight: 600,
+                  color: '#334155',
+                  width: col.width,
+                  minWidth: col.minWidth,
+                  whiteSpace: 'nowrap',
+                  ...(col.headerStyle || col.style || {}),
+                }}
+              >
                 {col.header}
               </th>
             ))}
@@ -22,7 +33,17 @@ export const DataTable = ({ columns, data, keyField = 'id', emptyMessage = 'Khô
             data.map((row, rowIdx) => (
               <tr key={row[keyField] ?? rowIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                 {columns.map((col, colIdx) => (
-                  <td key={colIdx} style={{ padding: '12px 16px', color: '#1e293b' }}>
+                  <td
+                    key={colIdx}
+                    style={{
+                      padding: '12px 16px',
+                      color: '#1e293b',
+                      width: col.width,
+                      minWidth: col.minWidth,
+                      whiteSpace: col.whiteSpace || (col.nowrap ? 'nowrap' : undefined),
+                      ...(col.cellStyle || col.style || {}),
+                    }}
+                  >
                     {col.render ? col.render(row) : row[col.accessor]}
                   </td>
                 ))}

@@ -1,10 +1,6 @@
 package com.fpt.hms.controller;
 
-import com.fpt.hms.dto.billing_report.HotelServiceRequest;
-import com.fpt.hms.dto.billing_report.InvoiceDto;
-import com.fpt.hms.dto.billing_report.PreOrderRequest;
-import com.fpt.hms.dto.billing_report.ServiceOrderDto;
-import com.fpt.hms.dto.billing_report.ServiceOrderRequest;
+import com.fpt.hms.dto.billing_report.*;
 import com.fpt.hms.dto.booking.ReservationDto;
 import com.fpt.hms.entity.HotelService;
 import com.fpt.hms.entity.Voucher;
@@ -146,7 +142,7 @@ public class BillingController {
     }
 
     @DeleteMapping("/pre-orders")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ADMIN', 'GENERAL_MANAGER')")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ACCOUNTANT', 'ADMIN', 'GENERAL_MANAGER')")
     @Operation(summary = "Hủy dịch vụ đặt trước của khách hàng (Hỗ trợ hủy 1 phần hoặc hủy theo từng lượt đặt)")
     public ResponseEntity<String> cancelPreOrder(
             @RequestParam Integer reservationId,
@@ -175,30 +171,139 @@ public class BillingController {
     }
 
     @GetMapping("/pre-orders")
-    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'FRONT_DESK', 'GENERAL_MANAGER', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN')")
     @Operation(summary = "UC-35: Lấy danh sách tất cả các đơn đặt phòng có lịch đặt trước dịch vụ (đưa đón sân bay, buffet, spa...)")
     public ResponseEntity<List<ReservationDto>> getAllUpcomingPreOrders() {
         return ResponseEntity.ok(billingService.getAllUpcomingPreOrders());
     }
 
-    // ---------------------------------------------------------------- Vouchers (read-only for now)
+    // ---------------------------------------------------------------- UC-38: Voucher Management (SALES_MANAGER) & Validation
 
     @GetMapping("/vouchers")
-    @PreAuthorize("hasAnyRole('SALES_MANAGER', 'FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER')")
-    @Operation(summary = "List vouchers (read-only; CRUD for SALES_MANAGER arrives in Feature 2)")
+    @PreAuthorize("hasAnyRole('SALES_MANAGER', 'FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN')")
+    @Operation(summary = "UC-38: Danh sách các mã khuyến mãi (SALES_MANAGER, FRONT_DESK, ACCOUNTANT, GENERAL_MANAGER, ADMIN)")
     public ResponseEntity<List<Voucher>> listVouchers() {
         return ResponseEntity.ok(billingService.getAllVouchers());
     }
 
-    // ---------------------------------------------------------------- UC-37..39 (existing, refined in Feature 2)
+    @PostMapping("/vouchers")
+    @PreAuthorize("hasAnyRole('SALES_MANAGER', 'ADMIN')")
+    @Operation(summary = "UC-38: Tạo mã khuyến mãi mới (SALES_MANAGER, ADMIN)")
+    public ResponseEntity<Voucher> createVoucher(@Valid @RequestBody VoucherRequest request) {
+        return ResponseEntity.ok(billingService.createVoucher(request));
+    }
+
+    @PutMapping("/vouchers/{voucherId}")
+    @PreAuthorize("hasAnyRole('SALES_MANAGER', 'ADMIN')")
+    @Operation(summary = "UC-38: Cập nhật thông tin mã khuyến mãi (SALES_MANAGER, ADMIN)")
+    public ResponseEntity<Voucher> updateVoucher(@PathVariable Integer voucherId,
+                                                @Valid @RequestBody VoucherRequest request) {
+        return ResponseEntity.ok(billingService.updateVoucher(voucherId, request));
+    }
+
+    @PatchMapping("/vouchers/{voucherId}/status")
+    @PreAuthorize("hasAnyRole('SALES_MANAGER', 'ADMIN')")
+    @Operation(summary = "UC-38: Bật/Tắt trạng thái hoạt động của mã khuyến mãi (SALES_MANAGER, ADMIN)")
+    public ResponseEntity<Voucher> toggleVoucherStatus(@PathVariable Integer voucherId,
+                                                       @RequestParam String status) {
+        return ResponseEntity.ok(billingService.toggleVoucherStatus(voucherId, status));
+    }
+
+    @PostMapping("/vouchers/validate")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'SALES_MANAGER', 'GENERAL_MANAGER', 'ADMIN', 'CUSTOMER')")
+    @Operation(summary = "UC-38: Kiểm tra tính hợp lệ & tính tiền giảm giá của Voucher")
+    public ResponseEntity<VoucherValidateResponse> validateVoucher(@Valid @RequestBody VoucherValidateRequest request) {
+        return ResponseEntity.ok(billingService.validateVoucher(request));
+    }
+
+    // ---------------------------------------------------------------- UC-37: Folio Breakdown & Additional Charges
+
+    @GetMapping("/stays/{stayId}/folio")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN', 'CUSTOMER')")
+    @Operation(summary = "UC-37: Xem chi tiết bảng kê hóa đơn phòng (tiền phòng, dịch vụ, phụ thu, trừ cọc)")
+    public ResponseEntity<FolioDetailDto> getFolioDetail(@PathVariable Integer stayId,
+                                                        @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.getFolioDetail(
+                stayId,
+                principal != null ? principal.getAccountId() : null,
+                principal != null ? principal.getRoleName() : null
+        ));
+    }
+
+    @PostMapping("/folios/{folioId}/additional-charges")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'ADMIN')")
+    @Operation(summary = "UC-37: Thêm phụ thu (minibar, đền bù hư hại, trả muộn...) vào hóa đơn phòng (FRONT_DESK, ACCOUNTANT)")
+    public ResponseEntity<AdditionalChargeDto> addAdditionalCharge(@PathVariable Integer folioId,
+                                                                  @Valid @RequestBody AdditionalChargeRequest request,
+                                                                  @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.addAdditionalCharge(
+                folioId,
+                request,
+                principal != null ? principal.getAccountId() : null
+        ));
+    }
+
+    @DeleteMapping("/additional-charges/{chargeId}")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'ADMIN')")
+    @Operation(summary = "UC-37: Xóa phụ thu nhập nhầm khi Folio còn OPEN (FRONT_DESK, ACCOUNTANT)")
+    public ResponseEntity<Void> deleteAdditionalCharge(@PathVariable Integer chargeId,
+                                                       @AuthenticationPrincipal UserPrincipal principal) {
+        billingService.deleteAdditionalCharge(
+                chargeId,
+                principal != null ? principal.getAccountId() : null,
+                principal != null ? principal.getRoleName() : null
+        );
+        return ResponseEntity.noContent().build();
+    }
+
+    // ---------------------------------------------------------------- UC-39: Folio Settlement & Payment Recording
 
     @PostMapping("/stays/{stayId}/settle")
     @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT')")
-    @Operation(summary = "UC-37, UC-38 & UC-39: Compile itemized invoice, apply voucher, and record payment settlement (FRONT_DESK & ACCOUNTANT)")
+    @Operation(summary = "UC-37, UC-38 & UC-39: Compile itemized invoice, apply voucher, and record payment settlement (Backward compatibility)")
     public ResponseEntity<InvoiceDto> compileAndSettleInvoice(
             @PathVariable Integer stayId,
             @RequestParam(required = false) String voucherCode,
             @RequestParam(defaultValue = "CASH") String paymentMethod) {
         return ResponseEntity.ok(billingService.compileAndSettleInvoice(stayId, voucherCode, paymentMethod));
+    }
+
+    @PostMapping("/stays/{stayId}/settle-folio")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN')")
+    @Operation(summary = "UC-39: Quyết toán hóa đơn phòng, áp dụng voucher, thu tiền, đóng Folio & sinh Invoice PAID (FRONT_DESK, ACCOUNTANT, ADMIN)")
+    public ResponseEntity<InvoiceDetailDto> settleFolio(@PathVariable Integer stayId,
+                                                        @Valid @RequestBody FolioSettlementRequest request,
+                                                        @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.settleFolio(
+                stayId,
+                request,
+                principal != null ? principal.getAccountId() : null
+        ));
+    }
+
+    // ---------------------------------------------------------------- UC-40: Printable VAT Invoice Details
+
+    @GetMapping("/invoices/{invoiceId}")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN', 'CUSTOMER')")
+    @Operation(summary = "UC-40: Lấy chi tiết hóa đơn thanh toán chuẩn VAT phục vụ in ấn/xuất phiếu thu")
+    public ResponseEntity<InvoiceDetailDto> getInvoiceDetail(@PathVariable Integer invoiceId,
+                                                            @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.getInvoiceDetail(
+                invoiceId,
+                principal != null ? principal.getAccountId() : null,
+                principal != null ? principal.getRoleName() : null
+        ));
+    }
+
+    @GetMapping("/invoices/by-stay/{stayId}")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN', 'CUSTOMER')")
+    @Operation(summary = "UC-40: Lấy hóa đơn thanh toán theo lượt lưu trú (stayId)")
+    public ResponseEntity<InvoiceDetailDto> getInvoiceDetailByStay(@PathVariable Integer stayId,
+                                                                  @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.getInvoiceDetailByStay(
+                stayId,
+                principal != null ? principal.getAccountId() : null,
+                principal != null ? principal.getRoleName() : null
+        ));
     }
 }
