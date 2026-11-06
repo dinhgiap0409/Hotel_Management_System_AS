@@ -101,8 +101,15 @@ public class ReservationServiceImpl implements ReservationService {
         return roomTypeRepository.findByIsActiveTrue().stream()
                 .filter(rt -> rt.getCapacity() != null && rt.getCapacity() >= guests)
                 .map(rt -> {
+                    // UC-21: one single price rule everywhere — the stay total is
+                    // the sum of the nightly Room_Type_Price tariffs for the
+                    // requested dates (weekend surcharge included), exactly as
+                    // getRoomCategoryDetails and createReservation charge it.
+                    // Never basePrice * nights here, or the card total would
+                    // differ from the detail/modal/deposit totals.
                     PublicRoomCategoryDto dto = toPublicRoomCategoryDto(
-                            rt, nonArchivedRooms, publishedReviews, nights, rt.getBasePrice().multiply(BigDecimal.valueOf(nights))
+                            rt, nonArchivedRooms, publishedReviews, nights,
+                            calculateNightlyTotal(rt, checkInDate, checkOutDate)
                     );
 
                     int totalActivePhysicalRooms = dto.getTotalActiveRooms() != null ? dto.getTotalActiveRooms() : 0;
@@ -177,38 +184,16 @@ public class ReservationServiceImpl implements ReservationService {
                         .toList()
                 : Collections.emptyList();
 
-        // Day-of-week tariffs from Room_Type_Price table in SQL Server
-        List<RoomTypePrice> dbTariffs = roomTypePriceRepository.findByRoomType_RoomTypeIdAndIsActiveTrue(roomTypeId);
-        Map<Integer, BigDecimal> tariffByDay = new HashMap<>();
-        for (RoomTypePrice rtp : dbTariffs) {
-            if (rtp.getDayOfWeek() != null && rtp.getPrice() != null) {
-                tariffByDay.put(rtp.getDayOfWeek(), rtp.getPrice());
-            }
-        }
-
-        String[] dayLabels = {"", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"};
-        List<DayOfWeekRateDto> dayOfWeekRates = new ArrayList<>();
-        for (int dow = 1; dow <= 7; dow++) {
-            BigDecimal rate = tariffByDay.getOrDefault(dow, rt.getBasePrice());
-            dayOfWeekRates.add(DayOfWeekRateDto.builder()
-                    .dayOfWeek(dow)
-                    .dayLabel(dayLabels[dow])
-                    .price(rate)
-                    .isWeekendSurcharge(rate.compareTo(rt.getBasePrice()) > 0)
-                    .build());
-        }
+        // Day-of-week tariffs from Room_Type_Price table in SQL Server.
+        // Shared helper with search/createReservation: one price rule.
+        List<DayOfWeekRateDto> dayOfWeekRates = buildDayOfWeekRates(rt);
 
         // Compute stay nights & estimated total if dates are provided
         Long nights = null;
         BigDecimal estimatedTotal = null;
         if (checkInDate != null && checkOutDate != null && checkOutDate.isAfter(checkInDate)) {
             nights = ChronoUnit.DAYS.between(checkInDate, checkOutDate);
-            BigDecimal sum = BigDecimal.ZERO;
-            for (LocalDate d = checkInDate; d.isBefore(checkOutDate); d = d.plusDays(1)) {
-                int dow = d.getDayOfWeek().getValue();
-                sum = sum.add(tariffByDay.getOrDefault(dow, rt.getBasePrice()));
-            }
-            estimatedTotal = sum;
+            estimatedTotal = calculateNightlyTotal(rt, checkInDate, checkOutDate);
         }
 
         // Verified Reviews from Review table in SQL Server
@@ -364,7 +349,46 @@ public class ReservationServiceImpl implements ReservationService {
                 .reviewCount(reviewCount)
                 .nights(nights)
                 .estimatedTotal(estimatedTotal)
+                .dayOfWeekRates(buildDayOfWeekRates(rt))
                 .build();
+    }
+
+    /**
+     * THE single price rule for the whole booking flow (UC-14, UC-21..23):
+     * the stay total is the sum of one nightly Room_Type_Price tariff per
+     * night of the stay (day-of-week price, weekend surcharge included).
+     * A weekday with no tariff row falls back to basePrice for that night
+     * only — the same rule getRoomCategoryDetails and createReservation use.
+     * Never basePrice * nights: that under-prices weekend stays and makes
+     * the card total differ from the detail/modal/deposit totals.
+     */
+    private BigDecimal calculateNightlyTotal(RoomType rt, LocalDate checkInDate, LocalDate checkOutDate) {
+        if (checkInDate == null || checkOutDate == null || !checkOutDate.isAfter(checkInDate)) {
+            return null;
+        }
+        Map<Integer, BigDecimal> tariffByDay = loadTariffMap(rt.getRoomTypeId());
+        BigDecimal sum = BigDecimal.ZERO;
+        for (LocalDate d = checkInDate; d.isBefore(checkOutDate); d = d.plusDays(1)) {
+            sum = sum.add(tariffByDay.getOrDefault(d.getDayOfWeek().getValue(), rt.getBasePrice()));
+        }
+        return sum;
+    }
+
+    /** Day-of-week tariff table for one room type, from Room_Type_Price. */
+    private List<DayOfWeekRateDto> buildDayOfWeekRates(RoomType rt) {
+        Map<Integer, BigDecimal> tariffByDay = loadTariffMap(rt.getRoomTypeId());
+        String[] dayLabels = {"", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"};
+        List<DayOfWeekRateDto> dayOfWeekRates = new ArrayList<>();
+        for (int dow = 1; dow <= 7; dow++) {
+            BigDecimal rate = tariffByDay.getOrDefault(dow, rt.getBasePrice());
+            dayOfWeekRates.add(DayOfWeekRateDto.builder()
+                    .dayOfWeek(dow)
+                    .dayLabel(dayLabels[dow])
+                    .price(rate)
+                    .isWeekendSurcharge(rate.compareTo(rt.getBasePrice()) > 0)
+                    .build());
+        }
+        return dayOfWeekRates;
     }
 
     private boolean belongsToRoomType(Review rev, Integer roomTypeId) {

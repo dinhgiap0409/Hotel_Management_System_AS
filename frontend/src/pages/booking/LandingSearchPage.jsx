@@ -96,10 +96,11 @@ export const LandingSearchPage = () => {
       const res = await bookingApi.searchAvailableRoomTypes(targetCheckIn, targetCheckOut, guestsNum);
       const apiResults = Array.isArray(res.data) ? res.data : res.data?.data || [];
 
+      // Keep the backend total as-is: it is already the nightly
+      // Room_Type_Price sum for these dates. Never recompute it flat here.
       const computedResults = apiResults.map((rt) => ({
         ...rt,
         nights: rt.nights ?? nights,
-        estimatedTotal: rt.estimatedTotal ?? Number(rt.basePrice || 0) * nights,
       }));
 
       setRoomTypes(computedResults);

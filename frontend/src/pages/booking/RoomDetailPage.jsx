@@ -289,7 +289,7 @@ export const RoomDetailPage = () => {
               </Row>
 
               {/* Estimated Stay Box if dates selected */}
-              {stayNights > 0 && (
+              {stayNights > 0 && detail.estimatedTotal != null && (
                 <div className="hms-estimated-total-box mb-3 d-flex justify-content-between align-items-center">
                   <div>
                     <div className="small fw-bold text-dark">
@@ -300,9 +300,7 @@ export const RoomDetailPage = () => {
                     </div>
                   </div>
                   <div className="fs-4 fw-bold" style={{ color: '#B45309' }}>
-                    {formatVND(
-                      detail.estimatedTotal ?? Number(detail.basePrice || 0) * stayNights
-                    )}
+                    {formatVND(detail.estimatedTotal)}
                   </div>
                 </div>
               )}

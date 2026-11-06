@@ -156,7 +156,10 @@ export const RoomCategoryModal = ({
   // Calculate estimated stay total using day-of-week tariffs
   const computeStayTotal = () => {
     const qty = Math.max(1, Number(roomQuantity || 1));
-    if (stayNights <= 0) return Number(room.basePrice || 0) * qty;
+    // No valid night range => no stay total. Never price a 0-night stay
+    // at basePrice * qty; the nightly sum below is the single price rule
+    // (dayOfWeekRates from the backend, Room_Type_Price per night).
+    if (stayNights <= 0) return 0;
     const rateMap = {};
     dayOfWeekRates.forEach((r) => {
       rateMap[r.dayOfWeek] = Number(r.price || room.basePrice || 0);

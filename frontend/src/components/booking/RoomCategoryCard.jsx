@@ -11,9 +11,10 @@ export const RoomCategoryCard = ({
   const imageSrc = roomType.imageUrl || '/images/hotel-bg.jpg';
   const amenities = parseAmenities(roomType);
   const stayNights = roomType.nights || activeSearchMeta?.nights || 0;
-  const estimatedStayTotal =
-    roomType.estimatedTotal ||
-    (stayNights > 0 ? Number(roomType.basePrice || 0) * stayNights : null);
+  // Single price rule: the total comes from the backend, summed nightly
+  // from Room_Type_Price. Never basePrice * nights here — that under-prices
+  // weekend stays and disagrees with detail/modal/deposit totals.
+  const estimatedStayTotal = roomType.estimatedTotal ?? null;
 
   return (
     <Card className="hms-category-card h-100 overflow-hidden bg-white">
