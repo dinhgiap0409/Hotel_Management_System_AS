@@ -20,13 +20,20 @@ import java.util.List;
 /**
  * Module 3A (Owner: GiapND) - Public Catalog, Room Search & Online Reservation Controller (UC-14, UC-21 to UC-25).
  *
- * <p>Authorization (SRS v1.2, UC table §2.2) — public endpoints need no login
- * (UC-14/21/22 search & detail, UC-23 VNPay callback/IPN, Find Booking by code);
- * authenticated endpoints are role-checked below. Roles NOT listed on an
- * endpoint get 403: Housekeeping, Service Staff/Manager, Sales Manager,
- * Accountant and Administrator may NOT create bookings or view other
- * customers' My Bookings. Administrator may only view the room catalog
- * (UC-14) via the public endpoints.
+ * <p>Authorization — room catalog / search / detail (UC-14, UC-21, UC-22) are
+ * open to guests (not logged in), CUSTOMER and FRONT_DESK ONLY. Every other
+ * role — ADMIN, GENERAL_MANAGER, SALES_MANAGER, HOUSEKEEPING_MANAGER,
+ * SERVICE_MANAGER, ACCOUNTANT, HOUSEKEEPING, SERVICE_STAFF — gets 403 on
+ * these endpoints, even when they type the URL directly. This overrides the
+ * earlier reading under which Administrator could view the catalog (UC-14);
+ * per the owner's decision on 2026-11-06, staff/admin roles must use their
+ * own internal portals, not the public customer pages. Method security is on
+ * (@EnableMethodSecurity in SecurityConfig), so @PreAuthorize below is
+ * enforced even though SecurityConfig permitAll's /api/v1/public/** at the
+ * filter-chain level (permitAll only skips the login requirement; it does
+ * not disable method checks). VNPay callback/IPN and Find Booking by code
+ * stay public: VNPay redirects back without a login, and a guest looks a
+ * booking up by its code.
  *
  * <p>SRS contradiction, recorded not resolved silently: screen table §3.1.3
  * marks screens 3, 4, 6, 6.1, 8, 8.1 as Customer-only, while UC table §2.2
@@ -46,12 +53,14 @@ public class ReservationController {
     private final ReservationService reservationService;
 
     @GetMapping("/public/room-types")
+    @PreAuthorize("isAnonymous() or hasAnyRole('CUSTOMER', 'FRONT_DESK')")
     @Operation(summary = "UC-14: View Room Categories - Displays public catalog of active accommodation categories, photos, descriptions, capacities, and base rates")
     public ResponseEntity<List<PublicRoomCategoryDto>> viewRoomCategories() {
         return ResponseEntity.ok(reservationService.getActiveRoomCategories());
     }
 
     @GetMapping("/public/rooms/search")
+    @PreAuthorize("isAnonymous() or hasAnyRole('CUSTOMER', 'FRONT_DESK')")
     @Operation(summary = "UC-21: Search available room types by check-in/out dates and guest count, excluding booked/occupied/maintenance units and computing estimated totals")
     public ResponseEntity<List<PublicRoomCategoryDto>> searchAvailableRooms(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate checkInDate,
@@ -61,6 +70,7 @@ public class ReservationController {
     }
 
     @GetMapping("/public/room-types/{roomTypeId}")
+    @PreAuthorize("isAnonymous() or hasAnyRole('CUSTOMER', 'FRONT_DESK')")
     @Operation(summary = "UC-22: View Room Details - Displays specifications, photo galleries, bed layouts, amenity checklists, rates, and verified reviews for a selected room type")
     public ResponseEntity<RoomCategoryDetailDto> viewRoomTypeDetails(
             @PathVariable Integer roomTypeId,

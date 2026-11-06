@@ -11,6 +11,7 @@ import {
   Spinner,
   Alert,
 } from 'react-bootstrap';
+import { useAuth } from '../../context/AuthContext';
 import { bookingApi } from '../../services/bookingApi';
 import { formatVND } from '../../lib/money';
 import { formatDateTime } from '../../lib/datetime';
@@ -27,6 +28,17 @@ export const RoomDetailPage = () => {
   const { roomTypeId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { isAuthenticated, user } = useAuth();
+  // GiapND scope (UC-14/21/22/23): only guests, CUSTOMER and FRONT_DESK may
+  // book from this page. Staff/admin roles (ADMIN, GENERAL_MANAGER,
+  // SALES_MANAGER, HOUSEKEEPING_MANAGER, SERVICE_MANAGER, ACCOUNTANT,
+  // HOUSEKEEPING, SERVICE_STAFF) never reach this page through the router
+  // (PublicBookingGuard shows 403), this is defence-in-depth for the button.
+  const isBlockedRole =
+    isAuthenticated &&
+    !!user &&
+    user.role !== 'CUSTOMER' &&
+    user.role !== 'FRONT_DESK';
 
   const checkInDate = searchParams.get('checkInDate') || '';
   const checkOutDate = searchParams.get('checkOutDate') || '';
@@ -290,23 +302,32 @@ export const RoomDetailPage = () => {
                 </div>
               )}
 
-              <div className="mt-auto pt-2 d-flex gap-2">
-                <Button
-                  className="btn-hms-accent flex-grow-1"
-                  disabled={detail.availableRoomsCount === 0}
-                  onClick={() => {
-                    const q = new URLSearchParams();
-                    q.set('roomTypeId', String(detail.roomTypeId));
-                    if (checkInDate) q.set('checkInDate', checkInDate);
-                    if (checkOutDate) q.set('checkOutDate', checkOutDate);
-                    if (guests) q.set('guests', guests);
-                    navigate(`/booking/checkout?${q.toString()}`);
-                  }}
-                >
-                  <i className="bi bi-calendar2-check me-2"></i>
-                  Đặt Hạng Phòng Này
-                </Button>
-              </div>
+              {!isBlockedRole && (
+                <div className="mt-auto pt-2 d-flex gap-2">
+                  <Button
+                    className="btn-hms-accent flex-grow-1"
+                    disabled={detail.availableRoomsCount === 0}
+                    onClick={() => {
+                      // Guests (not logged in) keep the button, but go to
+                      // /login first — booking itself requires CUSTOMER or
+                      // FRONT_DESK (backend POST /reservations enforces it).
+                      if (!isAuthenticated) {
+                        navigate('/login');
+                        return;
+                      }
+                      const q = new URLSearchParams();
+                      q.set('roomTypeId', String(detail.roomTypeId));
+                      if (checkInDate) q.set('checkInDate', checkInDate);
+                      if (checkOutDate) q.set('checkOutDate', checkOutDate);
+                      if (guests) q.set('guests', guests);
+                      navigate(`/booking/checkout?${q.toString()}`);
+                    }}
+                  >
+                    <i className="bi bi-calendar2-check me-2"></i>
+                    Đặt Hạng Phòng Này
+                  </Button>
+                </div>
+              )}
             </Card.Body>
           </Col>
         </Row>
