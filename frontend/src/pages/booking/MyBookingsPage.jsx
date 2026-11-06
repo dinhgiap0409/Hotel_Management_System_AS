@@ -38,15 +38,17 @@ export const MyBookingsPage = () => {
   // UC-25: Huy dat phong. Chi hien nut Huy voi booking con huy duoc
   // (PENDING hoac CONFIRMED); backend chan huy khi da CHECKED_IN hoac
   // COMPLETED. Quy tac coc (user chot 06/11/2026, giu nguyen): huy thi
-  // MAT coc da tra, khong hoan tien; booking chua tra coc thi huy khong
-  // mat tien. Khong co component xac nhan dung chung trong app nen dung
+  // MAT coc da tra, khong hoan tien. Chi truong hop da tra coc moi hien
+  // luu y mat coc; booking chua tra coc / chi moi giu cho thi huy khong
+  // mat gi nen chi hoi xac nhan binh thuong, khong ghi ve tien.
+  // Khong co component xac nhan dung chung trong app nen dung
   // window.confirm.
   const handleCancelBooking = (b) => {
     if (!b) return;
     const isPaid = b.depositPaymentStatus === 'PAID' || b.status === 'CONFIRMED';
     const message = isPaid
-      ? `Hủy đơn đặt phòng ${b.reservationCode}? Tiền cọc đã trả ${formatVND(b.depositAmount)} sẽ bị mất, không được hoàn lại.`
-      : `Hủy đơn đặt phòng ${b.reservationCode}? Booking chưa trả cọc nên hủy không mất tiền.`;
+      ? `Quý khách lưu ý: đơn đặt phòng ${b.reservationCode} đã được thanh toán đặt cọc ${formatVND(b.depositAmount)}. Nếu hủy đơn này, khoản đặt cọc sẽ không được hoàn lại. Quý khách có chắc chắn muốn hủy không?`
+      : `Quý khách có chắc chắn muốn hủy đơn đặt phòng ${b.reservationCode} không?`;
     if (!window.confirm(message)) return;
     setCancellingId(b.reservationId);
     setError(null);
