@@ -248,10 +248,7 @@ public class ReservationServiceImpl implements ReservationService {
         if (rt.getImageUrl() != null && !rt.getImageUrl().isBlank()) {
             photoGallery.add(rt.getImageUrl().trim());
         }
-        photoGallery.addAll(rt.getGalleryImageList());
-        if (photoGallery.isEmpty()) {
-            photoGallery.add("/images/hotel-bg.jpg");
-        }
+        photoGallery.add("/images/hotel-bg.jpg");
 
         return RoomCategoryDetailDto.builder()
                 .roomTypeId(rt.getRoomTypeId())

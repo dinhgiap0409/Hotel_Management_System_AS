@@ -1,6 +1,5 @@
 successfully downloaded text file (SHA: 8f4df71a13dc63bde26580f012b04d2058a5acc2)package com.fpt.hms.service.impl;
 
-import com.fpt.hms.common.AuditService;
 import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.dto.billing_report.HotelServiceRequest;
 import com.fpt.hms.dto.billing_report.InvoiceDto;
@@ -18,7 +17,6 @@ import com.fpt.hms.exception.ResourceNotFoundException;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.BillingService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -52,11 +50,6 @@ public class BillingServiceImpl implements BillingService {
     private final ReservationRepository reservationRepository;
     private final CustomerRepository customerRepository;
     private final MessageResolver messageResolver;
-    private final AuditService auditService;
-
-    /** Tax rate, configured in application.yml (app.billing.tax-rate, default 0.08). */
-    @Value("${app.billing.tax-rate:0.08}")
-    private BigDecimal billingTaxRate;
 
     // ------------------------------------------------------------------ UC-31..34
 
@@ -189,6 +182,12 @@ public class BillingServiceImpl implements BillingService {
         String userNotes = (request.getNotes() != null && !request.getNotes().trim().isEmpty())
                 ? "[GHI CHÚ] " + request.getNotes().trim()
                 : null;
+        String initialMeta;
+        if (isStaffCreator) {
+            initialMeta = userNotes != null ? "[ĐÃ XÁC NHẬN] " + userNotes : "[ĐÃ XÁC NHẬN]";
+        } else {
+            initialMeta = userNotes;
+        }
         ServiceOrder order = ServiceOrder.builder()
                 .guestStay(stay)
                 .hotelService(service)
@@ -196,8 +195,7 @@ public class BillingServiceImpl implements BillingService {
                 .orderTime(Instant.now())
                 .quantity(request.getQuantity())
                 .unitPrice(service.getUnitPrice())
-                .cancelReason(userNotes)
-                .staffConfirmed(isStaffCreator)
+                .cancelReason(initialMeta)
                 .status(ServiceOrderStatus.ORDERED.name())
                 .build();
         return toDto(serviceOrderRepository.save(order));
@@ -217,12 +215,11 @@ public class BillingServiceImpl implements BillingService {
         if (staff != null) {
             order.setRecordedByStaff(staff);
         }
-        order.setStaffConfirmed(true);
-        // Clean up the legacy marker if this row was created before the
-        // staff_confirmed column existed; cancel_reason keeps only real notes.
-        if (order.getCancelReason() != null) {
-            String cleaned = order.getCancelReason().replace("[ĐÃ XÁC NHẬN]", "").trim();
-            order.setCancelReason(cleaned.isEmpty() ? null : cleaned);
+        String currentRaw = order.getCancelReason();
+        if (currentRaw == null || currentRaw.isBlank()) {
+            order.setCancelReason("[ĐÃ XÁC NHẬN]");
+        } else if (!currentRaw.contains("[ĐÃ XÁC NHẬN]")) {
+            order.setCancelReason("[ĐÃ XÁC NHẬN] " + currentRaw.trim());
         }
         return toDto(serviceOrderRepository.save(order));
     }
@@ -342,9 +339,7 @@ public class BillingServiceImpl implements BillingService {
 
     private boolean isOrderConfirmedByStaff(ServiceOrder o) {
         if (o == null) return false;
-        if (Boolean.TRUE.equals(o.getStaffConfirmed())) return true;
         if (o.getRecordedByStaff() != null) return true;
-        // Legacy rows created before the staff_confirmed column existed.
         String raw = o.getCancelReason();
         return raw != null && raw.contains("[ĐÃ XÁC NHẬN]");
     }
@@ -443,22 +438,8 @@ public class BillingServiceImpl implements BillingService {
         }
 
         BigDecimal taxable = subtotal.subtract(discount).max(BigDecimal.ZERO);
-        BigDecimal tax = taxable.multiply(billingTaxRate).setScale(2, RoundingMode.HALF_UP);
-
-        // UC-23/UC-37: the 30% deposit already paid via VNPay must be deducted
-        // at settlement — the guest only owes the remainder (BR-33 partial
-        // payment). Previously the full amount was charged again as a new
-        // SETTLEMENT payment, so the deposit was paid twice.
-        Reservation reservation = folio.getGuestStay().getReservation();
-        BigDecimal depositPaid = BigDecimal.ZERO;
-        if (reservation != null) {
-            depositPaid = paymentRepository.findByReservation_ReservationId(reservation.getReservationId()).stream()
-                    .filter(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType())
-                            && "PAID".equalsIgnoreCase(p.getStatus()))
-                    .map(Payment::getAmount)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-        }
-        BigDecimal finalAmount = taxable.add(tax).subtract(depositPaid).max(BigDecimal.ZERO);
+        BigDecimal tax = taxable.multiply(new BigDecimal("0.08")).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal finalAmount = taxable.add(tax);
 
         Invoice invoice = invoiceRepository.findByFolio_FolioId(folio.getFolioId())
                 .orElseGet(() -> Invoice.builder()
@@ -475,27 +456,18 @@ public class BillingServiceImpl implements BillingService {
         invoice.setIssueDate(Instant.now());
         Invoice savedInvoice = invoiceRepository.save(invoice);
 
-        // Settle only the remainder. When the deposit already covers the whole
-        // bill (finalAmount == 0) no extra SETTLEMENT payment is created.
-        if (finalAmount.compareTo(BigDecimal.ZERO) > 0) {
-            Payment payment = Payment.builder()
-                    .invoice(savedInvoice)
-                    .reservation(folio.getGuestStay().getReservation())
-                    .paymentType("SETTLEMENT")
-                    .amount(finalAmount)
-                    .currency("VND")
-                    .method(paymentMethod != null ? paymentMethod.toUpperCase() : "CASH")
-                    .status(PaymentStatus.PAID.name())
-                    .createdAt(Instant.now())
-                    .paidAt(Instant.now())
-                    .build();
-            paymentRepository.save(payment);
-        }
-
-        auditService.recordAction(null, "FRONT_DESK", "INVOICE_SETTLED",
-                "Invoice", savedInvoice.getInvoiceId(),
-                "status=OPEN", "status=PAID;finalAmount=" + finalAmount + ";depositDeducted=" + depositPaid,
-                "Chot va thanh toan hoa don, tru dat coc VNPay (UC-37)");
+        Payment payment = Payment.builder()
+                .invoice(savedInvoice)
+                .reservation(folio.getGuestStay().getReservation())
+                .paymentType("SETTLEMENT")
+                .amount(finalAmount)
+                .currency("VND")
+                .method(paymentMethod != null ? paymentMethod.toUpperCase() : "CASH")
+                .status(PaymentStatus.PAID.name())
+                .createdAt(Instant.now())
+                .paidAt(Instant.now())
+                .build();
+        paymentRepository.save(payment);
 
         return InvoiceDto.builder()
                 .invoiceId(savedInvoice.getInvoiceId())
@@ -505,30 +477,10 @@ public class BillingServiceImpl implements BillingService {
                 .discountAmount(savedInvoice.getDiscountAmount())
                 .taxAmount(savedInvoice.getTaxAmount())
                 .finalAmount(savedInvoice.getFinalAmount())
-                .depositDeducted(depositPaid)
                 .voucherCode(appliedVoucher != null ? appliedVoucher.getCode() : null)
                 .status(savedInvoice.getStatus())
                 .issueDate(savedInvoice.getIssueDate())
                 .build();
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<InvoiceDto> getAllInvoices() {
-        return invoiceRepository.findAll(Sort.by(Sort.Direction.DESC, "invoiceId")).stream()
-                .map(inv -> InvoiceDto.builder()
-                        .invoiceId(inv.getInvoiceId())
-                        .invoiceCode(inv.getInvoiceCode())
-                        .folioId(inv.getFolio() != null ? inv.getFolio().getFolioId() : null)
-                        .totalAmount(inv.getTotalAmount())
-                        .discountAmount(inv.getDiscountAmount())
-                        .taxAmount(inv.getTaxAmount())
-                        .finalAmount(inv.getFinalAmount())
-                        .voucherCode(inv.getVoucher() != null ? inv.getVoucher().getCode() : null)
-                        .status(inv.getStatus())
-                        .issueDate(inv.getIssueDate())
-                        .build())
-                .toList();
     }
 
     // ------------------------------------------------------------------ Pre-order before check-in

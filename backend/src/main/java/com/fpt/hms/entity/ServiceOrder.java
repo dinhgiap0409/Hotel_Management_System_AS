@@ -56,13 +56,4 @@ public class ServiceOrder {
 
     @Column(name = "status", nullable = false, length = 30)
     private String status;
-
-    /**
-     * Set when staff confirm a customer service order (UC-35). Previously this
-     * state was hidden inside cancel_reason as the text marker "[ĐÃ XÁC NHẬN]";
-     * cancel_reason now only holds real cancellation reasons/notes. Rows created
-     * before this change are still recognised via the legacy marker.
-     */
-    @Column(name = "staff_confirmed", nullable = false)
-    private Boolean staffConfirmed = false;
 }

@@ -41,8 +41,5 @@ public class CreateRoomTypeRequest {
 
     @Size(max = 500, message = "Đường dẫn ảnh tối đa 500 ký tự")
     private String imageUrl;
-
-    /** Extra detail-photo URLs, comma-separated (UC-22 gallery). */
-    private String galleryImages;
 }
 

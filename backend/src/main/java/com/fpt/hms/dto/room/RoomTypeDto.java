@@ -20,8 +20,6 @@ public class RoomTypeDto {
     private String amenities;
     private String description;
     private String imageUrl;
-    /** Comma-separated extra detail-photo URLs (UC-22 gallery). */
-    private String galleryImages;
     private Boolean isActive;
 
     @JsonProperty("status")

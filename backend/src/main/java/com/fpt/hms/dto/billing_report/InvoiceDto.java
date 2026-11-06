@@ -20,8 +20,6 @@ public class InvoiceDto {
     private BigDecimal discountAmount;
     private BigDecimal taxAmount;
     private BigDecimal finalAmount;
-    /** Deposit already paid via VNPay (UC-23) and deducted at settlement (UC-37). */
-    private BigDecimal depositDeducted;
     private String voucherCode;
     private String status;
     private Instant issueDate;

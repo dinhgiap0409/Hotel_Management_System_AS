@@ -6,17 +6,10 @@ export const billingApi = {
   getServiceOrders: (stayId) =>
     http.get('/billing/service-orders', { params: stayId ? { stayId } : {} }),
   createServiceOrder: (data) => http.post('/billing/service-orders', data),
-  // GET /invoices did not exist on the backend — replaced by the real
-  // GET /billing/invoices endpoint added in this change.
-  getInvoices: () => http.get('/billing/invoices'),
+  getInvoices: () => http.get('/invoices'),
   getVouchers: () => http.get('/billing/vouchers'),
-  // GET /reviews did not exist — published reviews live at /reviews/published.
-  getReviews: () => http.get('/reviews/published'),
-  // GET /reports/kpi did not exist — the summary endpoint is /reports/summary
-  // and returns RevenueReportDto (totalRooms, occupiedRooms,
-  // occupancyPercentage, paidInvoicesCount, totalSettledRevenue,
-  // activeServicesCount). Kept the old name for callers.
-  getDashboardKpi: (params) => http.get('/reports/summary', { params }),
+  getReviews: () => http.get('/reviews'),
+  getDashboardKpi: () => http.get('/reports/kpi'),
 
   // --- Feature 1: UC-31..UC-36 ---
   getActiveStays: () => http.get('/billing/active-stays'),

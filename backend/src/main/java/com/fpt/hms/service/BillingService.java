@@ -39,5 +39,4 @@ public interface BillingService {
 
     // UC-37..40 (existing, Feature 2)
     InvoiceDto compileAndSettleInvoice(Integer stayId, String voucherCode, String paymentMethod);
-    List<InvoiceDto> getAllInvoices();
 }

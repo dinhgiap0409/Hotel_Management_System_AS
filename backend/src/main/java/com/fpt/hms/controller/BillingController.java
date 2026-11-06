@@ -192,13 +192,6 @@ public class BillingController {
 
     // ---------------------------------------------------------------- UC-37..39 (existing, refined in Feature 2)
 
-    @GetMapping("/invoices")
-    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER')")
-    @Operation(summary = "UC-40: List invoices (for receipt printing / re-print)")
-    public ResponseEntity<List<InvoiceDto>> listInvoices() {
-        return ResponseEntity.ok(billingService.getAllInvoices());
-    }
-
     @PostMapping("/stays/{stayId}/settle")
     @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT')")
     @Operation(summary = "UC-37, UC-38 & UC-39: Compile itemized invoice, apply voucher, and record payment settlement (FRONT_DESK & ACCOUNTANT)")

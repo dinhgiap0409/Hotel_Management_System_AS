@@ -307,19 +307,15 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         if (emailSent) {
             result.put("message", "Mã xác nhận (6 chữ số) đã được gửi tới hộp thư " + normalizedEmail + ". Mã có hiệu lực trong 15 phút.");
         } else {
-            // Security: the reset code is NEVER returned in the API response.
-            // Without a working SMTP sender the user must contact an admin for
-            // a password reset; returning the code here let anyone who knew an
-            // email take over the account.
-            result.put("message", "Hệ thống chưa gửi được email khôi phục mật khẩu (SMTP chưa cấu hình hoặc lỗi gửi). Vui lòng liên hệ quản trị viên để được hỗ trợ đặt lại mật khẩu.");
+            result.put("resetCode", code);
+            result.put("message", "Hệ thống chưa cấu hình tài khoản SMTP Gmail thật trong application.yml nên hiển thị mã xác thực tại đây để kiểm thử (hiệu lực 15 phút).");
         }
         return result;
     }
 
     private boolean sendPasswordResetEmail(String recipientEmail, String code) {
         if (!StringUtils.hasText(mailFrom) || "your-email@gmail.com".equalsIgnoreCase(mailFrom.trim())) {
-            // Security: never log the reset code, even in dev.
-            log.warn("[HMS-MAIL-DEV] Chưa cấu hình MAIL_USERNAME thật. Không thể gửi mã OTP khôi phục mật khẩu tới {}.", recipientEmail);
+            log.info("[HMS-MAIL-DEV] Chưa cấu hình MAIL_USERNAME thật. Mã OTP khôi phục mật khẩu cho {} là: {}", recipientEmail, code);
             return false;
         }
         try {
@@ -347,8 +343,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
             log.info("Đã gửi email khôi phục mật khẩu thành công tới {}", recipientEmail);
             return true;
         } catch (Exception ex) {
-            // Security: never log the reset code, even on SMTP failure.
-            log.warn("Không thể gửi email qua SMTP tới {} ({}).", recipientEmail, ex.getMessage());
+            log.warn("Không thể gửi email qua SMTP tới {} ({}). Mã OTP dự phòng: {}", recipientEmail, ex.getMessage(), code);
             return false;
         }
     }
