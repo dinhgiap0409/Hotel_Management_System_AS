@@ -138,6 +138,7 @@ BEGIN
         amenities    NVARCHAR(1000)    NULL,
         description  NVARCHAR(1000)    NULL,
         image_url    NVARCHAR(500)     NULL,
+        gallery_images NVARCHAR(MAX)    NULL, -- comma-separated extra photo URLs (detail gallery, UC-22)
         is_active    BIT               NOT NULL DEFAULT 1,
         CONSTRAINT PK_Room_Type PRIMARY KEY (room_type_id),
         CONSTRAINT UQ_Room_Type_Name UNIQUE (type_name),
