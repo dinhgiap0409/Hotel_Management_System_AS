@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { billingApi } from '../../services/billingApi';
 import { notifyToast } from '../../lib/http';
 import { useAuth } from '../../context/AuthContext';
@@ -7,6 +7,8 @@ import { DataTable } from '../../components/common/DataTable';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { formatVND } from '../../lib/money';
 import { formatDateTime, formatDate } from '../../lib/datetime';
+import { FolioBillingTab } from './FolioBillingTab';
+import { VoucherManagementTab } from './VoucherManagementTab';
 
 // Phân quyền theo ma trận nghiệp vụ SDD/SRS
 const CATALOG_MANAGERS = [ROLES.SERVICE_MANAGER, ROLES.ADMIN];
@@ -23,7 +25,9 @@ const ORDER_CREATORS = [ROLES.SERVICE_STAFF, ROLES.SERVICE_MANAGER, ROLES.FRONT_
 const ORDER_CONFIRMERS = [ROLES.FRONT_DESK, ROLES.SERVICE_STAFF, ROLES.SERVICE_MANAGER, ROLES.ADMIN, ROLES.GENERAL_MANAGER];
 const ORDER_COMPLETERS = [ROLES.SERVICE_STAFF, ROLES.SERVICE_MANAGER, ROLES.ADMIN, ROLES.GENERAL_MANAGER];
 const ORDER_VOIDERS = [ROLES.SERVICE_STAFF, ROLES.SERVICE_MANAGER, ROLES.FRONT_DESK, ROLES.ADMIN];
-const VOUCHER_VIEWERS = [ROLES.SALES_MANAGER, ROLES.FRONT_DESK, ROLES.ACCOUNTANT, ROLES.GENERAL_MANAGER, ROLES.ADMIN];
+const FOLIO_VIEWERS = [ROLES.FRONT_DESK, ROLES.ACCOUNTANT, ROLES.GENERAL_MANAGER, ROLES.ADMIN];
+// Tab 5 Quản lý Khuyến Mãi (Voucher) CHỈ hiển thị cho SALES_MANAGER, ADMIN, GENERAL_MANAGER (ẨN hoàn toàn với FRONT_DESK)
+const VOUCHER_VIEWERS = [ROLES.SALES_MANAGER, ROLES.ADMIN, ROLES.GENERAL_MANAGER];
 
 const EMPTY_SERVICE_FORM = {
   serviceName: '',
@@ -53,7 +57,7 @@ const parseAndGroupPreOrders = (notes) => {
       const qtyMatch = line.match(/SL:\s*(\d+)/);
       const timeMatch = line.match(/Thời gian:\s*([^|]+)/);
       const detailMatch = line.match(/Chi tiết:\s*(.+)$/);
-      const nameMatch = line.match(/\[ĐẶT TRƯỚC\]\s*(.*?)\s*\(Mã DV:/);
+      const nameMatch = line.match(/\[ĐẶT TRƯỚC\]\s*(.*?)\s*(\(Mã DV:|$|\|)/);
       return {
         id: idx,
         itemIndex: idx,
@@ -69,12 +73,14 @@ const parseAndGroupPreOrders = (notes) => {
 // Tạo chuỗi ghi chú chuẩn khi nạp dịch vụ đặt trước sang đơn phòng
 const buildPreOrderNote = (item) => {
   if (!item) return null;
+  const timeVal = item.time || item.scheduledTime;
+  const detailVal = item.detail || item.details;
   const parts = ['[Đặt trước]'];
-  if (item.time && item.time !== 'Không') {
-    parts.push(`Giờ hẹn: ${item.time}`);
+  if (timeVal && timeVal !== 'Không') {
+    parts.push(`Giờ hẹn: ${timeVal}`);
   }
-  if (item.detail && item.detail !== 'Không') {
-    parts.push(`Yêu cầu: ${item.detail}`);
+  if (detailVal && detailVal !== 'Không') {
+    parts.push(`Yêu cầu: ${detailVal}`);
   }
   return parts.length > 0 ? parts.join(' | ') : null;
 };
@@ -99,13 +105,18 @@ const matchPreOrderItemsToStayOrders = (items, stayOrders) => {
   // Bước 1: Ưu tiên khớp chính xác theo giờ hẹn & ghi chú hoặc thẻ [Đặt trước #idx] cũ trong notes của đơn
   result.forEach((it) => {
     const legacyTag = `[Đặt trước #${it.itemIndex + 1}]`;
-    const timeTag = it.time && it.time !== 'Không' ? `Giờ hẹn: ${it.time}` : null;
-    const detailTag = it.detail && it.detail !== 'Không' ? `Yêu cầu: ${it.detail}` : null;
+    const timeVal = it.time || it.scheduledTime;
+    const detailVal = it.detail || it.details;
+    const timeTag = timeVal && timeVal !== 'Không' ? `Giờ hẹn: ${timeVal}` : null;
+    const detailTag = detailVal && detailVal !== 'Không' ? `Yêu cầu: ${detailVal}` : null;
 
     const exactMatch = activeOrders.find((o) => {
-      if (usedOrderIds.has(o.serviceOrderId) || String(o.serviceId) !== String(it.serviceId) || !o.notes) {
-        return false;
-      }
+      if (usedOrderIds.has(o.serviceOrderId)) return false;
+      const isSameService =
+        (it.serviceId && String(o.serviceId) === String(it.serviceId)) ||
+        (o.serviceName && it.serviceName && o.serviceName.trim().toLowerCase() === it.serviceName.trim().toLowerCase());
+      if (!isSameService || !o.notes) return false;
+
       if (o.notes.includes(legacyTag)) return true;
       if (o.notes.includes('[Đặt trước]')) {
         const matchTime = !timeTag || o.notes.includes(timeTag);
@@ -126,11 +137,13 @@ const matchPreOrderItemsToStayOrders = (items, stayOrders) => {
   );
   result.forEach((it) => {
     if (!it.matchedOrder) {
-      const fallbackMatch = chronologicalOrders.find(
-        (o) =>
-          !usedOrderIds.has(o.serviceOrderId) &&
-          String(o.serviceId) === String(it.serviceId)
-      );
+      const fallbackMatch = chronologicalOrders.find((o) => {
+        if (usedOrderIds.has(o.serviceOrderId)) return false;
+        const isSameService =
+          (it.serviceId && String(o.serviceId) === String(it.serviceId)) ||
+          (o.serviceName && it.serviceName && o.serviceName.trim().toLowerCase() === it.serviceName.trim().toLowerCase());
+        return isSameService;
+      });
       if (fallbackMatch) {
         usedOrderIds.add(fallbackMatch.serviceOrderId);
         it.matchedOrder = fallbackMatch;
@@ -168,9 +181,22 @@ export const ServicesAndBillingPage = () => {
   const canConfirm = ORDER_CONFIRMERS.includes(role);
   const canComplete = ORDER_COMPLETERS.includes(role);
   const canVoid = ORDER_VOIDERS.includes(role);
+  const canViewFolios = FOLIO_VIEWERS.includes(role);
   const canViewVouchers = VOUCHER_VIEWERS.includes(role);
 
-  const [activeTab, setActiveTab] = useState('services'); // 'services' | 'orders' | 'vouchers'
+  const [activeTab, setActiveTab] = useState(() => {
+    if (role === ROLES.SALES_MANAGER) return 'vouchers';
+    if ([ROLES.FRONT_DESK, ROLES.ACCOUNTANT].includes(role)) return 'folios';
+    return 'services';
+  });
+
+  useEffect(() => {
+    if (role === ROLES.SALES_MANAGER) {
+      setActiveTab('vouchers');
+    } else if ([ROLES.FRONT_DESK, ROLES.ACCOUNTANT].includes(role)) {
+      setActiveTab('folios');
+    }
+  }, [role]);
   const [services, setServices] = useState([]);
   const [orders, setOrders] = useState([]);
   const [vouchers, setVouchers] = useState([]);
@@ -195,6 +221,10 @@ export const ServicesAndBillingPage = () => {
   // Filters
   const [serviceCategoryFilter, setServiceCategoryFilter] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState('');
+  const [orderSearchKeyword, setOrderSearchKeyword] = useState('');
+  const [preOrderSearchKeyword, setPreOrderSearchKeyword] = useState('');
+  const [preOrderCheckInFilter, setPreOrderCheckInFilter] = useState('ALL'); // 'ALL' | 'CHECKED_IN' | 'NOT_CHECKED_IN'
+  const [preOrderChargeFilter, setPreOrderChargeFilter] = useState('ALL'); // 'ALL' | 'HAS_UNCHARGED' | 'ALL_CHARGED'
 
   // Pagination states
   const [servicePage, setServicePage] = useState(1);
@@ -228,16 +258,25 @@ export const ServicesAndBillingPage = () => {
     return billingApi.getActiveStays().then((r) => setActiveStays(r.data || [])).catch(() => {});
   }, []);
 
+  const loadVouchers = useCallback(() => {
+    if (!canViewVouchers) return Promise.resolve();
+    return billingApi.getVouchers().then((r) => setVouchers(r.data || [])).catch(() => {});
+  }, [canViewVouchers]);
+
   useEffect(() => {
     if (!role) return;
     loadServices();
     loadOrders();
     loadUpcomingPreOrders();
     loadActiveStays();
-    if (canViewVouchers) {
-      billingApi.getVouchers().then((r) => setVouchers(r.data || [])).catch(() => {});
+    loadVouchers();
+  }, [role, canViewVouchers, loadServices, loadOrders, loadUpcomingPreOrders, loadActiveStays, loadVouchers]);
+
+  useEffect(() => {
+    if (activeTab === 'vouchers') {
+      loadVouchers();
     }
-  }, [role, canViewVouchers, loadServices, loadOrders, loadUpcomingPreOrders, loadActiveStays]);
+  }, [activeTab, loadVouchers]);
 
   const run = async (action, successMessage, after) => {
     setBusy(true);
@@ -339,7 +378,7 @@ export const ServicesAndBillingPage = () => {
         return res;
       },
       shouldComplete
-        ? 'Đã nạp dịch vụ vào phòng, hoàn thành đơn và cộng tiền vào Folio thành công!'
+        ? 'Đã nạp dịch vụ vào phòng, hoàn thành đơn và cộng tiền vào hóa đơn phòng thành công!'
         : 'Đã tạo đơn dịch vụ cho phòng (Trạng thái: Đã xác nhận - Chờ phục vụ).',
       async () => {
         setShowOrderModal(false);
@@ -349,9 +388,16 @@ export const ServicesAndBillingPage = () => {
     );
   };
 
-  // Hoàn thành 1 dịch vụ đặt trước khi khách đã sử dụng (Tạo đơn và chuyển thẳng sang COMPLETED + cộng Folio ngay)
+  // Hoàn thành 1 dịch vụ đặt trước khi khách đã sử dụng (Tạo đơn và chuyển thẳng sang COMPLETED + cộng tiền phòng ngay)
   const handleQuickLoadAndComplete = (matchedStay, item) => {
-    if (!matchedStay || !item?.serviceId || !canComplete) return;
+    if (!matchedStay) {
+      notifyToast({
+        type: 'WARNING',
+        message: 'Khách hàng chưa làm thủ tục nhận phòng. Vui lòng chờ khách check-in để tạo lượt lưu trú trước khi tính vào tiền phòng.',
+      });
+      return;
+    }
+    if (!item?.serviceId || !canComplete) return;
     const payload = {
       stayId: Number(matchedStay.stayId),
       serviceId: Number(item.serviceId),
@@ -367,7 +413,7 @@ export const ServicesAndBillingPage = () => {
         }
         return res;
       },
-      `Đã hoàn thành dịch vụ đặt trước "${item.serviceName}" (SL: ${item.quantity || 1}) cho Phòng ${matchedStay.roomNumber} và cộng tiền vào Folio!`,
+      `Đã hoàn thành dịch vụ đặt trước "${item.serviceName}" (SL: ${item.quantity || 1}) cho Phòng ${matchedStay.roomNumber} và tính vào hóa đơn phòng!`,
       async () => {
         setShowOrderModal(false);
         await Promise.all([loadOrders(), loadUpcomingPreOrders(), loadActiveStays()]);
@@ -375,7 +421,7 @@ export const ServicesAndBillingPage = () => {
     );
   };
 
-  // Nạp & hoàn thành toàn bộ dịch vụ đặt trước chưa sử dụng của đơn lưu trú vào Folio trong 1 click
+  // Nạp & hoàn thành toàn bộ dịch vụ đặt trước chưa sử dụng của đơn lưu trú vào hóa đơn phòng trong 1 click
   const handleQuickLoadAllPreOrders = async (reservation, matchedStay, items) => {
     if (!matchedStay || !items || items.length === 0 || !canComplete) return;
     const stayOrders = orders.filter((o) => String(o.stayId) === String(matchedStay.stayId));
@@ -383,7 +429,7 @@ export const ServicesAndBillingPage = () => {
     const unchargedItems = matchedList.filter((it) => !it.matchedOrder);
 
     if (unchargedItems.length === 0) {
-      notifyToast({ type: 'INFO', message: 'Tất cả các dịch vụ đặt trước của khách đã được hoàn thành & tính vào Folio rồi.' });
+      notifyToast({ type: 'INFO', message: 'Tất cả các dịch vụ đặt trước của khách đã được hoàn thành & tính vào tiền phòng rồi.' });
       return;
     }
 
@@ -403,13 +449,13 @@ export const ServicesAndBillingPage = () => {
       }
       notifyToast({
         type: 'SUCCESS',
-        message: `Đã hoàn thành ${unchargedItems.length} lượt dịch vụ đặt trước của Phòng ${matchedStay.roomNumber} và cộng tiền vào Folio!`,
+        message: `Đã hoàn thành ${unchargedItems.length} lượt dịch vụ đặt trước của Phòng ${matchedStay.roomNumber} và tính vào hóa đơn phòng!`,
       });
       await Promise.all([loadOrders(), loadUpcomingPreOrders(), loadActiveStays()]);
     } catch (err) {
       notifyToast({
         type: 'DANGER',
-        message: err.response?.data?.message || 'Có lỗi khi hoàn thành & nạp dịch vụ vào Folio.',
+        message: err.response?.data?.message || 'Có lỗi khi hoàn thành & tính dịch vụ vào hóa đơn phòng.',
       });
     } finally {
       setBusy(false);
@@ -484,13 +530,13 @@ export const ServicesAndBillingPage = () => {
   const completeOrder = (o) =>
     run(
       () => billingApi.completeServiceOrder(o.serviceOrderId),
-      `Đã hoàn thành đơn #${o.serviceOrderId} và ghi nhận vào Folio lưu trú.`,
+      `Đã hoàn thành đơn #${o.serviceOrderId} và ghi nhận vào tiền phòng lưu trú.`,
       async () => {
         await Promise.all([loadOrders(), loadUpcomingPreOrders(), loadActiveStays()]);
       }
     );
 
-  // 4. Modal Xác Nhận Hoàn Thành Đơn / Nạp Vào Folio
+  // 4. Modal Xác Nhận Hoàn Thành Đơn / Nạp Vào Hóa Đơn Phòng
   const handleOpenCompleteOrderConfirm = (o) => {
     if (!o?.serviceOrderId) return;
     setConfirmActionModal({
@@ -498,7 +544,7 @@ export const ServicesAndBillingPage = () => {
       message: `Bạn có chắc chắn muốn xác nhận hoàn thành đơn dịch vụ #${o.serviceOrderId}?`,
       details: `${o.serviceName || 'Dịch vụ'} (SL: ${o.quantity || 1}) - Phòng ${o.roomNumber || ''}`,
       extra: `${o.totalAmount ? `Tổng tiền: ${formatVND(o.totalAmount)}` : ''}${o.notes ? ` • Ghi chú: ${formatOrderNotes(o.notes)}` : ''}`,
-      confirmLabel: 'Xác nhận hoàn thành & nạp Folio',
+      confirmLabel: 'Xác nhận hoàn thành & tính tiền phòng',
       onConfirm: async () => {
         await completeOrder(o);
       },
@@ -506,16 +552,23 @@ export const ServicesAndBillingPage = () => {
   };
 
   const handleOpenQuickLoadAndCompleteConfirm = (matchedStay, item) => {
-    if (!matchedStay || !item?.serviceId || !canComplete) return;
+    if (!matchedStay) {
+      notifyToast({
+        type: 'WARNING',
+        message: 'Khách hàng chưa làm thủ tục nhận phòng (Check-in). Vui lòng chờ khách đến nhận phòng trước khi tính vào hóa đơn phòng.',
+      });
+      return;
+    }
+    if (!item?.serviceId || !canComplete) return;
     const extraParts = [];
     if (item.time && item.time !== 'Không') extraParts.push(`Giờ hẹn: ${item.time}`);
     if (item.detail && item.detail !== 'Không') extraParts.push(`Yêu cầu: ${item.detail}`);
     setConfirmActionModal({
-      title: 'Xác nhận hoàn thành & gộp Folio',
-      message: `Xác nhận hoàn thành dịch vụ đặt trước này cho Phòng ${matchedStay.roomNumber} và cộng tiền vào Folio?`,
+      title: 'Xác nhận hoàn thành & tính tiền phòng',
+      message: `Xác nhận hoàn thành dịch vụ đặt trước này cho Phòng ${matchedStay.roomNumber} và tính vào hóa đơn phòng?`,
       details: `${item.serviceName} (SL: ${item.quantity || 1}) → Phòng ${matchedStay.roomNumber} (${matchedStay.guestName || ''})`,
       extra: extraParts.length > 0 ? extraParts.join(' • ') : null,
-      confirmLabel: 'Hoàn thành & Gộp Folio',
+      confirmLabel: 'Hoàn thành & Tính tiền phòng',
       onConfirm: async () => {
         await handleQuickLoadAndComplete(matchedStay, item);
       },
@@ -529,18 +582,18 @@ export const ServicesAndBillingPage = () => {
     const unchargedItems = matchedList.filter((it) => !it.matchedOrder);
 
     if (unchargedItems.length === 0) {
-      notifyToast({ type: 'INFO', message: 'Tất cả các dịch vụ đặt trước của khách đã được hoàn thành & tính vào Folio rồi.' });
+      notifyToast({ type: 'INFO', message: 'Tất cả các dịch vụ đặt trước của khách đã được hoàn thành & tính vào tiền phòng rồi.' });
       return;
     }
 
     setConfirmActionModal({
       title: 'Xác nhận hoàn thành tất cả dịch vụ đặt trước',
-      message: `Xác nhận hoàn thành toàn bộ ${unchargedItems.length} lượt dịch vụ đặt trước chưa tính vào Folio của Phòng ${matchedStay.roomNumber}?`,
+      message: `Xác nhận hoàn thành toàn bộ ${unchargedItems.length} lượt dịch vụ đặt trước chưa tính vào tiền phòng của Phòng ${matchedStay.roomNumber}?`,
       details: unchargedItems
         .map((it) => `${it.serviceName} (SL: ${it.quantity || 1}${it.time ? `, hẹn ${it.time}` : ''})`)
         .join(' | '),
       extra: `Khách hàng: ${matchedStay.guestName || reservation?.contactName || ''}`,
-      confirmLabel: `Hoàn thành & Gộp ${unchargedItems.length} lượt vào Folio`,
+      confirmLabel: `Hoàn thành & Tính ${unchargedItems.length} lượt vào tiền phòng`,
       onConfirm: async () => {
         await handleQuickLoadAllPreOrders(reservation, matchedStay, items);
       },
@@ -617,10 +670,23 @@ export const ServicesAndBillingPage = () => {
   );
 
   const filteredOrders = orders.filter((o) => {
-    if (!orderStatusFilter) return true;
-    if (orderStatusFilter === 'PENDING_CONFIRM') return o.status === 'ORDERED' && !o.staffConfirmed;
-    if (orderStatusFilter === 'WAITING_SERVICE') return o.status === 'ORDERED' && o.staffConfirmed;
-    return o.status === orderStatusFilter;
+    const matchStatus = (() => {
+      if (!orderStatusFilter) return true;
+      if (orderStatusFilter === 'PENDING_CONFIRM') return o.status === 'ORDERED' && !o.staffConfirmed;
+      if (orderStatusFilter === 'WAITING_SERVICE') return o.status === 'ORDERED' && o.staffConfirmed;
+      return o.status === orderStatusFilter;
+    })();
+    if (!matchStatus) return false;
+
+    if (orderSearchKeyword.trim()) {
+      const kw = orderSearchKeyword.toLowerCase().trim();
+      const matchId = String(o.serviceOrderId).toLowerCase().includes(kw);
+      const matchName = o.serviceName && o.serviceName.toLowerCase().includes(kw);
+      const matchNotes = o.notes && o.notes.toLowerCase().includes(kw);
+      const matchRoom = o.roomNumber && String(o.roomNumber).toLowerCase().includes(kw);
+      return matchId || matchName || matchNotes || matchRoom;
+    }
+    return true;
   });
   const totalOrderPages = Math.max(1, Math.ceil(filteredOrders.length / orderPageSize));
   const paginatedOrders = filteredOrders.slice(
@@ -634,8 +700,40 @@ export const ServicesAndBillingPage = () => {
     voucherPage * voucherPageSize
   );
 
-  const totalPreOrderPages = Math.max(1, Math.ceil(upcomingPreOrders.length / preOrderPageSize));
-  const paginatedPreOrders = upcomingPreOrders.slice(
+  const filteredPreOrders = upcomingPreOrders.filter((r) => {
+    const matchedStay = activeStays.find((s) => s.reservationCode === r.reservationCode);
+    const isCheckedIn = Boolean(matchedStay);
+
+    if (preOrderCheckInFilter === 'CHECKED_IN' && !isCheckedIn) return false;
+    if (preOrderCheckInFilter === 'NOT_CHECKED_IN' && isCheckedIn) return false;
+
+    const items = parseAndGroupPreOrders(r.specialNotes);
+    const stayOrders = matchedStay
+      ? orders.filter((o) => String(o.stayId) === String(matchedStay.stayId))
+      : [];
+    const matchedItems = matchPreOrderItemsToStayOrders(items, stayOrders);
+    const hasUncharged = matchedItems.some((it) => !it.matchedOrder);
+
+    if (preOrderChargeFilter === 'HAS_UNCHARGED' && !hasUncharged) return false;
+    if (preOrderChargeFilter === 'ALL_CHARGED' && hasUncharged) return false;
+
+    if (preOrderSearchKeyword.trim()) {
+      const kw = preOrderSearchKeyword.toLowerCase().trim();
+      const matchCode = r.reservationCode && r.reservationCode.toLowerCase().includes(kw);
+      const matchContact = r.contactName && r.contactName.toLowerCase().includes(kw);
+      const matchPhone = r.contactPhone && r.contactPhone.toLowerCase().includes(kw);
+      const matchRoom = matchedStay?.roomNumber && String(matchedStay.roomNumber).toLowerCase().includes(kw);
+      const matchType = r.roomTypeName && r.roomTypeName.toLowerCase().includes(kw);
+      const matchNotes = r.specialNotes && r.specialNotes.toLowerCase().includes(kw);
+      if (!matchCode && !matchContact && !matchPhone && !matchRoom && !matchType && !matchNotes) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const totalPreOrderPages = Math.max(1, Math.ceil(filteredPreOrders.length / preOrderPageSize));
+  const paginatedPreOrders = filteredPreOrders.slice(
     (preOrderPage - 1) * preOrderPageSize,
     preOrderPage * preOrderPageSize
   );
@@ -643,6 +741,44 @@ export const ServicesAndBillingPage = () => {
   const activeServicesCount = services.filter((s) => s.status === 'ACTIVE').length;
   const pendingOrdersCount = orders.filter((o) => o.status === 'ORDERED').length;
   const completedOrdersCount = orders.filter((o) => o.status === 'COMPLETED').length;
+
+  const openFoliosCount = (activeStays || []).filter((s) => s?.folioStatus !== 'CLOSED').length;
+  const closedFoliosCount = (activeStays || []).filter((s) => s?.folioStatus === 'CLOSED').length;
+  const totalVouchersCount = (vouchers || []).length;
+  const activeVouchersCount = (vouchers || []).filter((v) => v?.status === 'ACTIVE').length;
+  const usedVouchersCount = (vouchers || []).reduce((acc, v) => acc + (v?.usedCount || 0), 0);
+  const pausedOrFullVouchersCount = (vouchers || []).filter(
+    (v) => v && (v.status !== 'ACTIVE' || (v.usageLimit > 0 && v.usedCount >= v.usageLimit))
+  ).length;
+
+  const pageHeaderInfo = useMemo(() => {
+    if (role === ROLES.FRONT_DESK) {
+      return {
+        title: 'Quầy Thu Ngân, Quyết Toán & Dịch Vụ Khách Sạn',
+        subtitle:
+          'Kiểm tra Folio phòng lưu trú, khấu trừ tiền cọc, áp mã giảm giá khi khách thanh toán, đóng Folio và hỗ trợ đặt dịch vụ phòng.',
+      };
+    }
+    if (role === ROLES.SALES_MANAGER) {
+      return {
+        title: 'Chương Trình Khuyến Mãi & Mã Giảm Giá (Vouchers)',
+        subtitle:
+          'Cấu hình và phát hành mã voucher ưu đãi, tỷ lệ chiết khấu, hạn mức ngân sách và thời hạn sử dụng.',
+      };
+    }
+    if (role === ROLES.ACCOUNTANT) {
+      return {
+        title: 'Đối Soát Doanh Thu Phòng, Dịch Vụ & Hóa Đơn',
+        subtitle:
+          'Kiểm tra chi tiết thanh toán Folio, đối soát hóa đơn VAT, doanh thu dịch vụ phòng và chiết khấu voucher.',
+      };
+    }
+    return {
+      title: 'Dịch Vụ Khách Sạn & Đơn Nội Khu',
+      subtitle:
+        'Quản lý danh mục dịch vụ tiện ích, đặt dịch vụ cho phòng lưu trú và quyết toán hóa đơn.',
+    };
+  }, [role]);
 
   // Component thanh phân trang dùng chung
   const renderPagination = (currentPage, totalPages, totalItems, pageSize, onPageChange, onPageSizeChange) => {
@@ -770,86 +906,173 @@ export const ServicesAndBillingPage = () => {
   };
 
   return (
-    <div style={{ maxWidth: 1240, margin: '0 auto' }}>
+    <div style={{ width: '100%', maxWidth: '100%', margin: '0 auto', padding: '0 8px' }}>
       {/* 1. Header Trang */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <h2 style={{ margin: 0, color: '#0f172a', fontSize: 24, fontWeight: 700 }}>
-            Dịch Vụ Khách Sạn &amp; Đơn Nội Khu
+            {pageHeaderInfo.title}
           </h2>
           <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 13.5 }}>
-            Quản lý danh mục dịch vụ tiện ích, đặt dịch vụ cho phòng lưu trú và kiểm tra khuyến mãi.
+            {pageHeaderInfo.subtitle}
           </p>
-        </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          {canManageCatalog && (
-            <button
-              onClick={handleOpenCreateService}
-              style={{
-                background: '#0284c7',
-                color: '#fff',
-                border: 'none',
-                padding: '9px 16px',
-                borderRadius: 8,
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontSize: 13.5,
-                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-              }}
-            >
-              + Thêm Dịch Vụ Mới
-            </button>
-          )}
-          {canCreateOrder && (
-            <button
-              onClick={handleOpenCreateOrder}
-              style={{
-                background: '#16a34a',
-                color: '#fff',
-                border: 'none',
-                padding: '9px 16px',
-                borderRadius: 8,
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontSize: 13.5,
-                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-              }}
-            >
-              + Đặt Dịch Vụ Cho Phòng
-            </button>
-          )}
         </div>
       </div>
 
-      {/* 2. Thẻ KPI Thống Kê Tổng Quan (Cards) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
-        <div style={{ background: '#fff', padding: 18, borderRadius: 10, border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: 12.5, color: '#64748b', fontWeight: 500 }}>Dịch Vụ Mở Bán</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: '#0284c7', marginTop: 4 }}>
-            {activeServicesCount}{' '}
-            <span style={{ fontSize: 13, color: '#94a3b8', fontWeight: 400 }}>/ {services.length}</span>
+      {/* 2. Thẻ KPI Thống Kê Tổng Quan Phân Quyền Theo Role */}
+      {role === ROLES.FRONT_DESK ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Phòng Đang Ở</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {(activeStays || []).length}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>phòng</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Chờ Quyết Toán</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {openFoliosCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>Folio mở</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Đã Quyết Toán</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {closedFoliosCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>đã đóng</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Đơn DV Chờ Xử Lý</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {pendingOrdersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>yêu cầu</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Lịch Đón Tiễn / Đặt Trước</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {(upcomingPreOrders || []).length}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>chuyến</span>
+            </div>
           </div>
         </div>
-        <div style={{ background: '#fff', padding: 18, borderRadius: 10, border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: 12.5, color: '#64748b', fontWeight: 500 }}>Tổng Đơn Dịch Vụ</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>{orders.length}</div>
-        </div>
-        <div style={{ background: '#fff', padding: 18, borderRadius: 10, border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: 12.5, color: '#64748b', fontWeight: 500 }}>Chờ Phục Vụ</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: '#ea580c', marginTop: 4 }}>{pendingOrdersCount}</div>
-        </div>
-        <div style={{ background: '#fff', padding: 18, borderRadius: 10, border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: 12.5, color: '#64748b', fontWeight: 500 }}>Đã Hoàn Thành</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: '#16a34a', marginTop: 4 }}>{completedOrdersCount}</div>
-        </div>
-        <div style={{ background: '#fff', padding: 18, borderRadius: 10, border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: 12.5, color: '#64748b', fontWeight: 500 }}>Khách Đặt Trước</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: '#d97706', marginTop: 4 }}>
-            {upcomingPreOrders.length}{' '}
-            <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 400 }}>chuyến</span>
+      ) : role === ROLES.SALES_MANAGER ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Tổng Mã Khuyến Mãi</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {totalVouchersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>mã</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Đang Hoạt Động</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {activeVouchersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>khả dụng</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Lượt Dùng Thành Công</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {usedVouchersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>lượt</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Hết Lượt / Tạm Dừng</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {pausedOrFullVouchersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>chương trình</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Dịch Vụ Khách Sạn</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {activeServicesCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>/ {(services || []).length} mở bán</span>
+            </div>
           </div>
         </div>
-      </div>
+      ) : role === ROLES.ACCOUNTANT ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Tổng Phòng Đang Ở</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {(activeStays || []).length}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>Folio</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Folio Đã Quyết Toán</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {closedFoliosCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>hóa đơn</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Folio Chờ Đối Soát</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {openFoliosCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>chưa thu</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Tổng Đơn Dịch Vụ</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {(orders || []).length}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>đơn</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Mã Giảm Giá Khả Dụng</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {activeVouchersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>mã active</span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Dịch Vụ Mở Bán</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {activeServicesCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>/ {(services || []).length}</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Tổng Đơn Dịch Vụ</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {(orders || []).length}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>đơn</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Chờ Phục Vụ</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {pendingOrdersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>cần giao</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Đã Hoàn Thành</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {completedOrdersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>đã giao</span>
+            </div>
+          </div>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Khách Đặt Trước</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {(upcomingPreOrders || []).length}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>chuyến</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 3. Thanh Chuyển Tab Nghiệp Vụ */}
       <div
@@ -918,6 +1141,26 @@ export const ServicesAndBillingPage = () => {
           </button>
         )}
 
+        {canViewFolios && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('folios')}
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === 'folios' ? '2px solid #0284c7' : '2px solid transparent',
+              color: activeTab === 'folios' ? '#0284c7' : '#64748b',
+              fontWeight: activeTab === 'folios' ? 700 : 500,
+              padding: '10px 18px',
+              fontSize: 14,
+              cursor: 'pointer',
+              marginBottom: -2,
+            }}
+          >
+            4. Quyết Toán &amp; Hóa Đơn Phòng ({activeStays.length})
+          </button>
+        )}
+
         {canViewVouchers && (
           <button
             type="button"
@@ -934,7 +1177,7 @@ export const ServicesAndBillingPage = () => {
               marginBottom: -2,
             }}
           >
-            4. Mã Khuyến Mãi / Voucher ({vouchers.length})
+            5. Quản Lý Khuyến Mãi ({vouchers.length})
           </button>
         )}
       </div>
@@ -962,8 +1205,32 @@ export const ServicesAndBillingPage = () => {
                 <option value="MINIBAR">MINIBAR (Đồ uống phòng)</option>
               </select>
             </div>
-            <div style={{ fontSize: 13, color: '#64748b' }}>
-              Hiển thị <strong>{filteredServices.length}</strong> dịch vụ
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ fontSize: 13, color: '#64748b' }}>
+                Hiển thị <strong>{filteredServices.length}</strong> dịch vụ
+              </div>
+              {canManageCatalog && (
+                <button
+                  type="button"
+                  onClick={handleOpenCreateService}
+                  style={{
+                    background: '#0284c7',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '7px 14px',
+                    borderRadius: 6,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    boxShadow: '0 1px 2px rgba(2, 132, 199, 0.2)',
+                  }}
+                >
+                  <span>+</span> Thêm Dịch Vụ Mới
+                </button>
+              )}
             </div>
           </div>
 
@@ -974,10 +1241,14 @@ export const ServicesAndBillingPage = () => {
             columns={[
               {
                 header: 'Mã DV',
+                width: 90,
+                minWidth: 80,
+                nowrap: true,
                 render: (s) => <code style={{ color: '#0284c7', fontWeight: 600 }}>#{s.serviceId}</code>,
               },
               {
                 header: 'Tên Dịch Vụ',
+                minWidth: 200,
                 render: (s) => (
                   <div>
                     <strong style={{ color: '#0f172a' }}>{s.serviceName}</strong>
@@ -989,6 +1260,8 @@ export const ServicesAndBillingPage = () => {
               },
               {
                 header: 'Nhóm Dịch Vụ',
+                minWidth: 140,
+                nowrap: true,
                 render: (s) => (
                   <span
                     style={{
@@ -998,6 +1271,7 @@ export const ServicesAndBillingPage = () => {
                       fontSize: 12,
                       fontWeight: 600,
                       color: '#475569',
+                      whiteSpace: 'nowrap',
                     }}
                   >
                     {s.category}
@@ -1006,23 +1280,29 @@ export const ServicesAndBillingPage = () => {
               },
               {
                 header: 'Đơn Giá / ĐVT',
+                minWidth: 140,
+                nowrap: true,
                 render: (s) => (
                   <div>
                     <strong style={{ color: '#0f172a' }}>{formatVND(s.unitPrice)}</strong>
-                    <span style={{ color: '#64748b', fontSize: 12 }}> / {s.billingUnit}</span>
+                    <span style={{ color: '#64748b', fontSize: 12, whiteSpace: 'nowrap' }}> / {s.billingUnit}</span>
                   </div>
                 ),
               },
               {
                 header: 'Trạng Thái',
+                minWidth: 120,
+                nowrap: true,
                 render: (s) => <StatusBadge status={s.status} />,
               },
               ...(canManageCatalog
                 ? [
                     {
-                      header: 'Hành Động',
+                      header: 'Thao Tác',
+                      minWidth: 180,
+                      nowrap: true,
                       render: (s) => (
-                        <div style={{ display: 'flex', gap: 6 }}>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
                           <button
                             type="button"
                             disabled={busy}
@@ -1036,6 +1316,7 @@ export const ServicesAndBillingPage = () => {
                               cursor: 'pointer',
                               fontSize: 12.5,
                               fontWeight: 600,
+                              whiteSpace: 'nowrap',
                             }}
                           >
                             Chỉnh sửa
@@ -1053,6 +1334,7 @@ export const ServicesAndBillingPage = () => {
                               cursor: 'pointer',
                               fontSize: 12.5,
                               fontWeight: 600,
+                              whiteSpace: 'nowrap',
                             }}
                           >
                             {s.status === 'ACTIVE' ? 'Ngừng bán' : 'Mở bán lại'}
@@ -1078,17 +1360,26 @@ export const ServicesAndBillingPage = () => {
       {/* ======================= TAB 2: ĐƠN GỌI DỊCH VỤ ======================= */}
       {activeTab === 'orders' && canViewOrders && (
         <div>
-          {/* Bộ lọc trạng thái đơn */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Lọc trạng thái:</span>
+          {/* Bộ lọc đơn dịch vụ phòng */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                placeholder="Tìm mã đơn, phòng, tên món, ghi chú..."
+                value={orderSearchKeyword}
+                onChange={(e) => {
+                  setOrderSearchKeyword(e.target.value);
+                  setOrderPage(1);
+                }}
+                style={{ ...inputStyle, width: 260 }}
+              />
               <select
                 value={orderStatusFilter}
                 onChange={(e) => {
                   setOrderStatusFilter(e.target.value);
                   setOrderPage(1);
                 }}
-                style={{ ...inputStyle, width: 250 }}
+                style={{ ...inputStyle, width: 230 }}
               >
                 <option value="">Tất cả trạng thái</option>
                 <option value="PENDING_CONFIRM">Chờ xác nhận (Khách mới đặt)</option>
@@ -1096,9 +1387,54 @@ export const ServicesAndBillingPage = () => {
                 <option value="COMPLETED">COMPLETED (Đã hoàn thành)</option>
                 <option value="VOIDED">VOIDED (Đã hủy dịch vụ)</option>
               </select>
+              {(orderStatusFilter || orderSearchKeyword) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOrderStatusFilter('');
+                    setOrderSearchKeyword('');
+                    setOrderPage(1);
+                  }}
+                  style={{
+                    background: '#f1f5f9',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: 6,
+                    padding: '6px 12px',
+                    fontSize: 12.5,
+                    cursor: 'pointer',
+                    color: '#475569',
+                  }}
+                >
+                  Xóa lọc
+                </button>
+              )}
             </div>
-            <div style={{ fontSize: 13, color: '#64748b' }}>
-              Hiển thị <strong>{filteredOrders.length}</strong> đơn dịch vụ
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 13, color: '#64748b' }}>
+                Hiển thị <strong>{filteredOrders.length}</strong> / {orders.length} đơn dịch vụ
+              </div>
+              {canCreateOrder && (
+                <button
+                  type="button"
+                  onClick={handleOpenCreateOrder}
+                  style={{
+                    background: '#0284c7',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '7px 14px',
+                    borderRadius: 6,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    boxShadow: '0 1px 2px rgba(2, 132, 199, 0.2)',
+                  }}
+                >
+                  <span>+</span> Đặt Dịch Vụ Cho Phòng
+                </button>
+              )}
             </div>
           </div>
 
@@ -1109,35 +1445,41 @@ export const ServicesAndBillingPage = () => {
             columns={[
               {
                 header: 'Mã Đơn',
-                render: (o) => <code style={{ color: '#0284c7', fontWeight: 600 }}>#{o.serviceOrderId}</code>,
+                width: 90,
+                minWidth: 80,
+                nowrap: true,
+                render: (o) => <span style={{ color: '#64748b', fontWeight: 500 }}>#{o.serviceOrderId}</span>,
               },
               {
                 header: 'Phòng & Khách Lưu Trú',
+                minWidth: 200,
                 render: (o) => (
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                       <span
                         style={{
-                          background: '#0284c7',
-                          color: '#fff',
                           fontWeight: 700,
+                          background: '#e0e7ff',
+                          color: '#3730a3',
                           fontSize: 12,
                           padding: '2px 8px',
-                          borderRadius: 4,
+                          borderRadius: 6,
+                          whiteSpace: 'nowrap',
                         }}
                       >
-                        Phòng {o.roomNumber || '—'}
+                        {o.roomNumber ? `P.${o.roomNumber}` : '—'}
                       </span>
                       <strong style={{ color: '#0f172a' }}>{o.guestName || 'Khách vãng lai'}</strong>
                     </div>
-                    <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 3 }}>
-                      Stay #{o.stayId} {o.reservationCode ? `• Mã đặt: ${o.reservationCode}` : ''}
+                    <div style={{ fontSize: 11.5, color: '#64748b', whiteSpace: 'nowrap' }}>
+                      Stay #{o.stayId} {o.reservationCode ? `• ${o.reservationCode}` : ''}
                     </div>
                   </div>
                 ),
               },
               {
                 header: 'Dịch Vụ Sử Dụng',
+                minWidth: 200,
                 render: (o) => (
                   <div>
                     <strong style={{ color: '#0f172a' }}>{o.serviceName}</strong>
@@ -1147,37 +1489,43 @@ export const ServicesAndBillingPage = () => {
                     {o.notes && (
                       <div
                         style={{
-                          marginTop: 4,
+                          marginTop: 3,
                           fontSize: 11.5,
-                          color: '#b45309',
-                          background: '#fffbeb',
-                          border: '1px solid #fde68a',
-                          padding: '2px 6px',
-                          borderRadius: 4,
-                          maxWidth: 260,
+                          color: '#64748b',
+                          lineHeight: 1.35,
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 4,
                         }}
                       >
-                        {formatOrderNotes(o.notes)}
+                        <span style={{ color: '#94a3b8' }}>↳</span>
+                        <span>{formatOrderNotes(o.notes)}</span>
                       </div>
                     )}
                   </div>
                 ),
               },
               {
-                header: 'Đơn Giá & Thành Tiền',
+                header: 'Thành Tiền',
+                minWidth: 140,
+                nowrap: true,
                 render: (o) => (
                   <div>
-                    <strong style={{ color: '#16a34a' }}>{formatVND(o.totalAmount)}</strong>
-                    <div style={{ fontSize: 11, color: '#64748b' }}>
-                      ({formatVND(o.unitPrice)} / {o.billingUnit})
+                    <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 14 }}>
+                      {formatVND(o.totalAmount)}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>
+                      {formatVND(o.unitPrice)} / {o.billingUnit}
                     </div>
                   </div>
                 ),
               },
               {
                 header: 'Thời Gian',
+                minWidth: 140,
+                nowrap: true,
                 render: (o) => (
-                  <div style={{ fontSize: 12.5 }}>
+                  <div style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
                     <div>{formatDateTime(o.orderTime)}</div>
                     {o.completedAt && (
                       <div style={{ color: '#16a34a', fontSize: 11, marginTop: 2 }}>
@@ -1194,6 +1542,8 @@ export const ServicesAndBillingPage = () => {
               },
               {
                 header: 'Trạng Thái',
+                minWidth: 130,
+                nowrap: true,
                 render: (o) => (
                   <div>
                     {o.status === 'ORDERED' ? (
@@ -1202,28 +1552,30 @@ export const ServicesAndBillingPage = () => {
                           style={{
                             display: 'inline-block',
                             padding: '4px 10px',
-                            borderRadius: 9999,
+                            borderRadius: 14,
                             fontSize: 12,
                             fontWeight: 600,
                             backgroundColor: '#dbeafe',
                             color: '#1e40af',
+                            whiteSpace: 'nowrap',
                           }}
                         >
-                          Chờ phục vụ (Đã xác nhận)
+                          Chờ phục vụ
                         </span>
                       ) : (
                         <span
                           style={{
                             display: 'inline-block',
                             padding: '4px 10px',
-                            borderRadius: 9999,
+                            borderRadius: 14,
                             fontSize: 12,
                             fontWeight: 600,
                             backgroundColor: '#fef9c3',
                             color: '#854d0e',
+                            whiteSpace: 'nowrap',
                           }}
                         >
-                          Chờ nhân viên xác nhận
+                          Chờ xác nhận
                         </span>
                       )
                     ) : (
@@ -1250,21 +1602,27 @@ export const ServicesAndBillingPage = () => {
                 ),
               },
               {
-                header: 'Hành Động',
+                header: 'Thao Tác',
+                minWidth: 130,
+                nowrap: true,
                 render: (o) => (
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', alignItems: 'center', whiteSpace: 'nowrap' }}>
                     <button
                       type="button"
-                      onClick={() => setDetailModalData({ type: 'ROOM_ORDER', order: o })}
+                      onClick={() => {
+                        const matchedStay = activeStays.find((s) => s.stayId === o.stayId);
+                        setDetailModalData({ type: 'ROOM_ORDER', order: o, matchedStay });
+                      }}
                       style={{
-                        background: '#f1f5f9',
+                        background: '#f8fafc',
                         color: '#0f172a',
                         border: '1px solid #cbd5e1',
                         borderRadius: 6,
-                        padding: '5px 8px',
+                        padding: '5px 10px',
                         cursor: 'pointer',
                         fontSize: 12,
                         fontWeight: 600,
+                        whiteSpace: 'nowrap',
                       }}
                       title="Xem chi tiết lịch hẹn & ghi chú yêu cầu của đơn dịch vụ này"
                     >
@@ -1284,10 +1642,11 @@ export const ServicesAndBillingPage = () => {
                           cursor: 'pointer',
                           fontSize: 12.5,
                           fontWeight: 600,
+                          whiteSpace: 'nowrap',
                         }}
-                        title="Xác nhận tiếp nhận đơn để chuyển sang Chờ phục vụ (Sau khi xác nhận sẽ khóa hủy)"
+                        title="Xác nhận tiếp nhận đơn để chuyển sang Chờ phục vụ"
                       >
-                        Xác nhận đơn
+                        Xác nhận
                       </button>
                     )}
                     {o.status === 'ORDERED' && o.staffConfirmed && canComplete && (
@@ -1304,27 +1663,12 @@ export const ServicesAndBillingPage = () => {
                           cursor: 'pointer',
                           fontSize: 12.5,
                           fontWeight: 600,
+                          whiteSpace: 'nowrap',
                         }}
-                        title="Xác nhận đã cung cấp dịch vụ cho khách và cộng tiền vào Folio"
+                        title="Xác nhận đã cung cấp dịch vụ cho khách và cộng tiền vào hóa đơn phòng"
                       >
                         Hoàn thành
                       </button>
-                    )}
-                    {o.status === 'ORDERED' && o.staffConfirmed && !canComplete && (
-                      <span
-                        style={{
-                          fontSize: 11.5,
-                          color: '#1e40af',
-                          background: '#eff6ff',
-                          border: '1px solid #bfdbfe',
-                          padding: '3px 8px',
-                          borderRadius: 6,
-                          fontWeight: 600,
-                        }}
-                        title="Lễ tân đã xác nhận đơn, đang chờ bộ phận Dịch vụ thực hiện và bấm Hoàn thành"
-                      >
-                        Chờ bộ phận DV phục vụ
-                      </span>
                     )}
                     {o.status === 'ORDERED' && !o.staffConfirmed && canVoid && (
                       <button
@@ -1340,6 +1684,7 @@ export const ServicesAndBillingPage = () => {
                           cursor: 'pointer',
                           fontSize: 12.5,
                           fontWeight: 600,
+                          whiteSpace: 'nowrap',
                         }}
                       >
                         Hủy đơn
@@ -1391,6 +1736,85 @@ export const ServicesAndBillingPage = () => {
             </button>
           </div>
 
+          {/* Bộ lọc lịch đặt trước dịch vụ */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 14,
+              flexWrap: 'wrap',
+              gap: 10,
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              borderRadius: 8,
+              padding: '10px 14px',
+            }}
+          >
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                placeholder="Tìm mã booking, tên khách, SĐT, dịch vụ..."
+                value={preOrderSearchKeyword}
+                onChange={(e) => {
+                  setPreOrderSearchKeyword(e.target.value);
+                  setPreOrderPage(1);
+                }}
+                style={{ ...inputStyle, width: 270 }}
+              />
+              <select
+                value={preOrderCheckInFilter}
+                onChange={(e) => {
+                  setPreOrderCheckInFilter(e.target.value);
+                  setPreOrderPage(1);
+                }}
+                style={{ ...inputStyle, width: 200 }}
+              >
+                <option value="ALL">Tất cả trạng thái lưu trú</option>
+                <option value="CHECKED_IN">Đã Check-in (Đã nhận phòng)</option>
+                <option value="NOT_CHECKED_IN">Chưa Check-in (Chờ nhận phòng)</option>
+              </select>
+              <select
+                value={preOrderChargeFilter}
+                onChange={(e) => {
+                  setPreOrderChargeFilter(e.target.value);
+                  setPreOrderPage(1);
+                }}
+                style={{ ...inputStyle, width: 220 }}
+              >
+                <option value="ALL">Tất cả trạng thái tiền phòng</option>
+                <option value="HAS_UNCHARGED">Còn dịch vụ chờ tính tiền phòng</option>
+                <option value="ALL_CHARGED">Đã tính hết vào tiền phòng</option>
+              </select>
+              {(preOrderSearchKeyword || preOrderCheckInFilter !== 'ALL' || preOrderChargeFilter !== 'ALL') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreOrderSearchKeyword('');
+                    setPreOrderCheckInFilter('ALL');
+                    setPreOrderChargeFilter('ALL');
+                    setPreOrderPage(1);
+                  }}
+                  style={{
+                    background: '#fff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: 6,
+                    padding: '6px 12px',
+                    fontSize: 12.5,
+                    cursor: 'pointer',
+                    color: '#475569',
+                  }}
+                >
+                  Xóa lọc
+                </button>
+              )}
+            </div>
+
+            <div style={{ fontSize: 13, color: '#64748b' }}>
+              Hiển thị <strong>{filteredPreOrders.length}</strong> / {upcomingPreOrders.length} lịch đặt trước
+            </div>
+          </div>
+
           <DataTable
             keyField="reservationId"
             data={paginatedPreOrders}
@@ -1398,17 +1822,51 @@ export const ServicesAndBillingPage = () => {
             columns={[
               {
                 header: 'Mã Booking & Khách Hàng',
-                render: (r) => (
-                  <div>
-                    <code style={{ color: '#0284c7', fontWeight: 700, fontSize: 13 }}>#{r.reservationCode}</code>
-                    <div style={{ fontWeight: 600, color: '#0f172a', marginTop: 2 }}>{r.contactName}</div>
-                    {r.contactPhone && (
-                      <div style={{ fontSize: 12, color: '#0369a1', marginTop: 2 }}>
-                        SĐT: <a href={`tel:${r.contactPhone}`} style={{ color: '#0369a1', textDecoration: 'none' }}>{r.contactPhone}</a>
+                render: (r) => {
+                  const matchedStay = activeStays.find((s) => s.reservationCode === r.reservationCode);
+                  return (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <strong style={{ color: '#0f172a', fontSize: 13 }}>#{r.reservationCode}</strong>
+                        {matchedStay ? (
+                          <span
+                            style={{
+                              background: '#e0e7ff',
+                              color: '#3730a3',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              padding: '2px 8px',
+                              borderRadius: 6,
+                            }}
+                            title={`Khách đã nhận phòng ${matchedStay.roomNumber}`}
+                          >
+                            P.{matchedStay.roomNumber}
+                          </span>
+                        ) : (
+                          <span
+                            style={{
+                              background: '#f1f5f9',
+                              color: '#64748b',
+                              fontSize: 11,
+                              fontWeight: 500,
+                              padding: '2px 8px',
+                              borderRadius: 6,
+                            }}
+                            title="Khách chưa làm thủ tục nhận phòng tại Lễ tân"
+                          >
+                            Chưa Check-in
+                          </span>
+                        )}
                       </div>
-                    )}
-                  </div>
-                ),
+                      <div style={{ fontWeight: 600, color: '#0f172a', marginTop: 3 }}>{r.contactName}</div>
+                      {r.contactPhone && (
+                        <div style={{ fontSize: 12, color: '#0369a1', marginTop: 2 }}>
+                          SĐT: <a href={`tel:${r.contactPhone}`} style={{ color: '#0369a1', textDecoration: 'none' }}>{r.contactPhone}</a>
+                        </div>
+                      )}
+                    </div>
+                  );
+                },
               },
               {
                 header: 'Ngày Lưu Trú & Hạng Phòng',
@@ -1476,7 +1934,7 @@ export const ServicesAndBillingPage = () => {
                                       borderRadius: 4,
                                     }}
                                   >
-                                    Đã tính Folio (#{existingOrder.serviceOrderId})
+                                    Đã tính vào tiền phòng (#{existingOrder.serviceOrderId})
                                   </span>
                                 )}
                                 {isOrdered && (
@@ -1505,7 +1963,7 @@ export const ServicesAndBillingPage = () => {
                                       borderRadius: 4,
                                     }}
                                   >
-                                    Chờ hoàn thành &amp; gộp Folio
+                                    Chờ tính vào tiền phòng
                                   </span>
                                 )}
                               </div>
@@ -1539,7 +1997,7 @@ export const ServicesAndBillingPage = () => {
                                 </button>
                                 {!existingOrder && canCreateOrder && (
                                   <>
-                                    {matchedStay && canComplete && (
+                                    {matchedStay && canComplete ? (
                                       <button
                                         type="button"
                                         onClick={() => handleOpenQuickLoadAndCompleteConfirm(matchedStay, it)}
@@ -1559,11 +2017,28 @@ export const ServicesAndBillingPage = () => {
                                           whiteSpace: 'nowrap',
                                           boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                                         }}
-                                        title="Hoàn thành đơn và cộng tiền vào Folio ngay"
+                                        title="Hoàn thành đơn và cộng tiền vào hóa đơn phòng ngay"
                                       >
-                                        Hoàn thành &amp; Gộp Folio
+                                        Hoàn thành &amp; Tính tiền phòng
                                       </button>
-                                    )}
+                                    ) : !matchedStay ? (
+                                      <span
+                                        style={{
+                                          background: '#f8fafc',
+                                          color: '#64748b',
+                                          border: '1px dashed #cbd5e1',
+                                          padding: '2px 7px',
+                                          borderRadius: 4,
+                                          fontSize: 11,
+                                          fontWeight: 600,
+                                          whiteSpace: 'nowrap',
+                                          cursor: 'not-allowed',
+                                        }}
+                                        title="Khách chưa làm thủ tục nhận phòng. Cần chờ khách check-in trước khi tính vào hóa đơn phòng."
+                                      >
+                                        Chờ khách nhận phòng để tính tiền
+                                      </span>
+                                    ) : null}
                                     <button
                                       type="button"
                                       onClick={() => handleCancelPreOrder(r, it)}
@@ -1602,20 +2077,48 @@ export const ServicesAndBillingPage = () => {
                                       whiteSpace: 'nowrap',
                                     }}
                                   >
-                                    Hoàn thành &amp; Gộp Folio
+                                    Hoàn thành &amp; Tính tiền phòng
                                   </button>
                                 )}
                               </div>
                             </div>
                             {(it.time || (it.detail && it.detail !== 'Không')) && (
-                              <div style={{ display: 'flex', gap: 8, fontSize: 11, color: '#64748b', marginTop: 3, flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', gap: 6, fontSize: 11.5, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                                 {it.time && (
-                                  <span>
-                                    Giờ hẹn: <strong style={{ color: '#b45309' }}>{it.time}</strong>
+                                  <span
+                                    style={{
+                                      background: '#fffbeb',
+                                      color: '#b45309',
+                                      border: '1px solid #fde68a',
+                                      padding: '2px 7px',
+                                      borderRadius: 4,
+                                      fontWeight: 600,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 4,
+                                    }}
+                                  >
+                                    <span style={{ color: '#92400e', fontSize: 10.5, fontWeight: 700 }}>Hẹn:</span>
+                                    <strong style={{ color: '#b45309' }}>{it.time}</strong>
                                   </span>
                                 )}
                                 {it.detail && it.detail !== 'Không' && (
-                                  <span>Ghi chú: <strong style={{ color: '#334155' }}>{it.detail}</strong></span>
+                                  <span
+                                    style={{
+                                      background: '#f8fafc',
+                                      color: '#334155',
+                                      border: '1px solid #e2e8f0',
+                                      padding: '2px 7px',
+                                      borderRadius: 4,
+                                      fontWeight: 500,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 4,
+                                    }}
+                                  >
+                                    <span style={{ color: '#64748b', fontSize: 10.5, fontWeight: 700 }}>Ghi chú:</span>
+                                    <strong style={{ color: '#0f172a' }}>{it.detail}</strong>
+                                  </span>
                                 )}
                               </div>
                             )}
@@ -1677,9 +2180,9 @@ export const ServicesAndBillingPage = () => {
                                       gap: 4,
                                       boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                                     }}
-                                    title="Hoàn thành toàn bộ các dịch vụ đặt trước của khách và gộp vào Folio cùng một lúc"
+                                    title="Hoàn thành toàn bộ các dịch vụ đặt trước của khách và tính vào hóa đơn phòng"
                                   >
-                                    Hoàn thành tất cả vào Folio
+                                    Tính tất cả vào tiền phòng
                                   </button>
                                 ) : (
                                   <span
@@ -1694,7 +2197,7 @@ export const ServicesAndBillingPage = () => {
                                       display: 'inline-block',
                                     }}
                                   >
-                                    Chờ hoàn thành &amp; gộp Folio
+                                    Chờ tính vào tiền phòng
                                   </span>
                                 )
                               ) : (
@@ -1712,7 +2215,7 @@ export const ServicesAndBillingPage = () => {
                                     gap: 5,
                                   }}
                                 >
-                                  Đã hoàn thành &amp; Tính Folio
+                                  Đã tính hết vào tiền phòng
                                 </span>
                               )}
                             </div>
@@ -1747,7 +2250,7 @@ export const ServicesAndBillingPage = () => {
           {renderPagination(
             preOrderPage,
             totalPreOrderPages,
-            upcomingPreOrders.length,
+            filteredPreOrders.length,
             preOrderPageSize,
             setPreOrderPage,
             setPreOrderPageSize
@@ -1755,64 +2258,31 @@ export const ServicesAndBillingPage = () => {
         </div>
       )}
 
-      {/* ======================= TAB 4: MÃ KHUYẾN MÃI VOUCHER ======================= */}
+      {/* ======================= TAB 4: QUYẾT TOÁN & HÓA ĐƠN PHÒNG ======================= */}
+      {activeTab === 'folios' && canViewFolios && (
+        <FolioBillingTab
+          role={role}
+          activeStays={activeStays}
+          vouchers={vouchers}
+          onRefresh={async () => {
+            await loadActiveStays();
+            await loadOrders();
+            await loadVouchers();
+          }}
+          busy={busy}
+          setBusy={setBusy}
+        />
+      )}
+
+      {/* ======================= TAB 5: QUẢN LÝ MÃ KHUYẾN MÃI VOUCHER ======================= */}
       {activeTab === 'vouchers' && canViewVouchers && (
-        <div>
-          <div style={{ marginBottom: 12, color: '#64748b', fontSize: 13 }}>
-            Danh sách các mã ưu đãi giảm giá đang có trong hệ thống (Hỗ trợ cấu hình bởi Sales Manager).
-          </div>
-          <DataTable
-            keyField="voucherId"
-            data={paginatedVouchers}
-            emptyMessage="Không có mã khuyến mãi nào."
-            columns={[
-              {
-                header: 'Mã Voucher',
-                render: (v) => (
-                  <code style={{ background: '#f1f5f9', padding: '3px 8px', borderRadius: 4, fontWeight: 700, color: '#0f172a' }}>
-                    {v.code}
-                  </code>
-                ),
-              },
-              {
-                header: 'Loại Ưu Đãi',
-                render: (v) => (v.discountType === 'PERCENTAGE' ? 'Giảm theo phần trăm (%)' : 'Giảm số tiền cố định (VND)'),
-              },
-              {
-                header: 'Giá Trị Giảm',
-                render: (v) => (
-                  <strong style={{ color: '#0284c7' }}>
-                    {v.discountType === 'PERCENTAGE' ? `${v.discountValue}%` : formatVND(v.discountValue)}
-                  </strong>
-                ),
-              },
-              {
-                header: 'Điều Kiện Đơn Tối Thiểu',
-                render: (v) => formatVND(v.minSpend),
-              },
-              {
-                header: 'Lượt Sử Dụng',
-                render: (v) => (
-                  <span>
-                    <strong>{v.usedCount}</strong> / {v.usageLimit}
-                  </span>
-                ),
-              },
-              {
-                header: 'Trạng Thái',
-                render: (v) => <StatusBadge status={v.status} />,
-              },
-            ]}
-          />
-          {renderPagination(
-            voucherPage,
-            totalVoucherPages,
-            vouchers.length,
-            voucherPageSize,
-            setVoucherPage,
-            setVoucherPageSize
-          )}
-        </div>
+        <VoucherManagementTab
+          role={role}
+          vouchers={vouchers}
+          onRefresh={loadVouchers}
+          busy={busy}
+          setBusy={setBusy}
+        />
       )}
 
       {/* ======================= MODAL: THÊM / SỬA DỊCH VỤ ======================= */}
@@ -2078,7 +2548,7 @@ export const ServicesAndBillingPage = () => {
                         >
                           <span>
                             {allHandled
-                              ? `Toàn bộ ${preOrdersForSelectedStay.length} dịch vụ đặt trước đã được nạp vào phòng & tính Folio (Đã khóa):`
+                              ? `Toàn bộ ${preOrdersForSelectedStay.length} dịch vụ đặt trước đã được tính vào tiền phòng (Đã hoàn tất):`
                               : `Khách có yêu cầu đặt trước dịch vụ (${preOrdersForSelectedStay.length}):`}
                           </span>
                         </div>
@@ -2114,7 +2584,7 @@ export const ServicesAndBillingPage = () => {
                                         borderRadius: 4,
                                       }}
                                     >
-                                      Đã tính Folio (Đơn #{po.orderId})
+                                      Đã tính vào tiền phòng (Đơn #{po.orderId})
                                     </span>
                                   )}
                                   {isOrdered && (
@@ -2143,18 +2613,48 @@ export const ServicesAndBillingPage = () => {
                                         borderRadius: 4,
                                       }}
                                     >
-                                      Chờ hoàn thành &amp; gộp Folio
+                                      Chờ tính vào tiền phòng
                                     </span>
                                   )}
                                 </div>
-                                {po.scheduledTime && (
-                                  <div style={{ color: '#b45309', fontSize: 11.5, marginTop: 2 }}>
-                                    Thời gian hẹn: {po.scheduledTime}
-                                  </div>
-                                )}
-                                {po.details && po.details !== 'Không' && (
-                                  <div style={{ color: '#6b7280', fontStyle: 'italic', fontSize: 11.5 }}>
-                                    Chi tiết: {po.details}
+                                {(po.scheduledTime || (po.details && po.details !== 'Không')) && (
+                                  <div style={{ display: 'flex', gap: 6, fontSize: 11.5, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                                    {po.scheduledTime && (
+                                      <span
+                                        style={{
+                                          background: '#fffbeb',
+                                          color: '#b45309',
+                                          border: '1px solid #fde68a',
+                                          padding: '1px 6px',
+                                          borderRadius: 4,
+                                          fontWeight: 600,
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: 3,
+                                        }}
+                                      >
+                                        <span style={{ color: '#92400e', fontSize: 10.5, fontWeight: 700 }}>Hẹn:</span>
+                                        <strong>{po.scheduledTime}</strong>
+                                      </span>
+                                    )}
+                                    {po.details && po.details !== 'Không' && (
+                                      <span
+                                        style={{
+                                          background: '#f8fafc',
+                                          color: '#334155',
+                                          border: '1px solid #e2e8f0',
+                                          padding: '1px 6px',
+                                          borderRadius: 4,
+                                          fontWeight: 500,
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: 3,
+                                        }}
+                                      >
+                                        <span style={{ color: '#64748b', fontSize: 10.5, fontWeight: 700 }}>Ghi chú:</span>
+                                        <strong style={{ color: '#0f172a' }}>{po.details}</strong>
+                                      </span>
+                                    )}
                                   </div>
                                 )}
                               </div>
@@ -2168,6 +2668,9 @@ export const ServicesAndBillingPage = () => {
                                         reservationId: selectedStay.reservationId,
                                         reservationCode: selectedStay.reservationCode,
                                         contactName: selectedStay.guestName,
+                                        contactPhone: selectedStay.phoneNumber,
+                                        checkInDate: selectedStay.checkInDate || selectedStay.actualCheckIn,
+                                        checkOutDate: selectedStay.checkOutDate || selectedStay.actualCheckOut,
                                       },
                                       item: {
                                         itemIndex: po.itemIndex,
@@ -2198,7 +2701,7 @@ export const ServicesAndBillingPage = () => {
                                 </button>
                                 {isCompleted ? (
                                   <span style={{ color: '#16a34a', fontSize: 11.5, fontWeight: 700 }}>
-                                    Đã ghi nhận Folio
+                                    Đã tính vào tiền phòng
                                   </span>
                                 ) : isOrdered ? (
                                   <span style={{ color: '#d97706', fontSize: 11.5, fontWeight: 600 }}>
@@ -2231,9 +2734,9 @@ export const ServicesAndBillingPage = () => {
                                           cursor: 'pointer',
                                           whiteSpace: 'nowrap',
                                         }}
-                                        title="Hoàn thành đơn và cộng tiền vào Folio ngay"
+                                        title="Hoàn thành đơn và cộng tiền vào hóa đơn phòng ngay"
                                       >
-                                        Hoàn thành &amp; Gộp Folio
+                                        Hoàn thành &amp; Tính tiền phòng
                                       </button>
                                     )}
                                     <button
@@ -2478,7 +2981,7 @@ export const ServicesAndBillingPage = () => {
                       onChange={(e) => setOrderForm({ ...orderForm, completeImmediately: e.target.checked })}
                       style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#16a34a' }}
                     />
-                    <span>Tự động xác nhận hoàn thành &amp; cộng tiền vào Folio ngay</span>
+                    <span>Tự động xác nhận hoàn thành &amp; cộng tiền vào hóa đơn phòng ngay</span>
                   </label>
                   <div style={{ fontSize: 11.5, color: '#15803d', marginLeft: 24, marginTop: 2 }}>
                     (Nếu bỏ tích, đơn sẽ được tạo ở trạng thái <strong>Đã xác nhận - Chờ phục vụ</strong> và khóa hủy)
@@ -2926,6 +3429,14 @@ export const ServicesAndBillingPage = () => {
                     <div style={{ fontSize: 11.5, color: '#64748b' }}>Tổng thành tiền</div>
                     <strong style={{ color: '#16a34a', fontSize: 15 }}>{formatVND(detailModalData.order.totalAmount)}</strong>
                   </div>
+                  {detailModalData.matchedStay && (
+                    <div style={{ gridColumn: '1 / -1', background: '#f1f5f9', padding: '6px 10px', borderRadius: 6 }}>
+                      <div style={{ fontSize: 11, color: '#64748b' }}>Thời gian lưu trú của phòng:</div>
+                      <div style={{ fontSize: 12.5, color: '#0f172a' }}>
+                        Nhận phòng: <strong>{formatDate(detailModalData.matchedStay.checkInDate || detailModalData.matchedStay.actualCheckIn)}</strong> • Trả phòng: <strong>{formatDate(detailModalData.matchedStay.checkOutDate || detailModalData.matchedStay.actualCheckOut)}</strong>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Khối hiển thị Ghi chú / Lịch hẹn phục vụ của khách */}
@@ -3126,13 +3637,13 @@ export const ServicesAndBillingPage = () => {
                     )}
                   </div>
                   <div>
-                    <div style={{ fontSize: 11.5, color: '#64748b' }}>Trạng thái phục vụ &amp; Folio</div>
+                    <div style={{ fontSize: 11.5, color: '#64748b' }}>Trạng thái phục vụ &amp; Tiền phòng</div>
                     {detailModalData.existingOrder?.status === 'COMPLETED' ? (
-                      <strong style={{ color: '#166534' }}>Đã hoàn thành &amp; Tính Folio (#{detailModalData.existingOrder.serviceOrderId})</strong>
+                      <strong style={{ color: '#166534' }}>Đã hoàn thành &amp; Tính tiền phòng (#{detailModalData.existingOrder.serviceOrderId})</strong>
                     ) : detailModalData.existingOrder?.status === 'ORDERED' ? (
                       <strong style={{ color: '#b45309' }}>Đang phục vụ (#{detailModalData.existingOrder.serviceOrderId})</strong>
                     ) : detailModalData.matchedStay ? (
-                      <strong style={{ color: '#b45309' }}>Chờ hoàn thành &amp; gộp Folio</strong>
+                      <strong style={{ color: '#b45309' }}>Chờ tính vào tiền phòng</strong>
                     ) : (
                       <strong style={{ color: '#0369a1' }}>Đã ghi nhận lịch hẹn (Chờ check-in)</strong>
                     )}
@@ -3169,7 +3680,24 @@ export const ServicesAndBillingPage = () => {
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {!detailModalData.existingOrder && canComplete && !detailModalData.matchedStay && (
+                    <div
+                      style={{
+                        background: '#eff6ff',
+                        border: '1px solid #bfdbfe',
+                        borderRadius: 6,
+                        padding: '7px 12px',
+                        fontSize: 12,
+                        color: '#1e40af',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <span>Khách chưa nhận phòng. Cần chờ lễ tân làm thủ tục check-in để tạo mã lưu trú (Stay) trước khi có thể tính vào tiền phòng.</span>
+                    </div>
+                  )}
                   {!detailModalData.existingOrder && canComplete && detailModalData.matchedStay && (
                     <button
                       type="button"
@@ -3189,7 +3717,7 @@ export const ServicesAndBillingPage = () => {
                         cursor: 'pointer',
                       }}
                     >
-                      Hoàn thành &amp; Gộp Folio
+                      Hoàn thành &amp; Tính tiền phòng
                     </button>
                   )}
                   {detailModalData.existingOrder?.status === 'ORDERED' && canComplete && (
@@ -3293,7 +3821,7 @@ export const ServicesAndBillingPage = () => {
                 {confirmActionModal.title || 'Xác nhận dịch vụ & tính tiền'}
               </div>
               <div style={{ fontSize: 12, color: '#64748b' }}>
-                Kiểm tra thông tin trước khi ghi nhận vào hóa đơn (Folio) của phòng
+                Kiểm tra thông tin trước khi ghi nhận vào hóa đơn tiền phòng
               </div>
             </div>
 
@@ -3324,7 +3852,7 @@ export const ServicesAndBillingPage = () => {
             </div>
 
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 20 }}>
-              Khi xác nhận, hệ thống sẽ chuyển trạng thái đơn sang <strong>Đã hoàn thành</strong> và tự động cộng tổng tiền vào Folio phòng.
+              Khi xác nhận, hệ thống sẽ chuyển trạng thái đơn sang <strong>Đã hoàn thành</strong> và tự động cộng tổng tiền vào hóa đơn phòng.
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>

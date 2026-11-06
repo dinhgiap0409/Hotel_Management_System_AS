@@ -44,6 +44,7 @@ lerna-debug.log*
 # IDEs & Editors (IntelliJ, VSCode, Eclipse)
 # ==========================================
 .idea/
+.PVS-Studio/
 *.iws
 *.iml
 *.ipr

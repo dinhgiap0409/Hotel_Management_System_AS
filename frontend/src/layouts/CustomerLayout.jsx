@@ -186,7 +186,7 @@ export const CustomerLayout = () => {
           <Outlet />
         </main>
       ) : (
-        <main style={{ flex: 1, maxWidth: 1200, width: '100%', margin: '0 auto', padding: '24px 20px', boxSizing: 'border-box' }}>
+        <main style={{ flex: 1, width: '100%', margin: '0 auto', padding: '16px 20px', boxSizing: 'border-box' }}>
           <Outlet />
         </main>
       )}
