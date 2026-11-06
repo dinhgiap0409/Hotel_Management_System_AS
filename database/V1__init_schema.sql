@@ -1,4 +1,4 @@
--- =============================================================================
+successfully downloaded text file (SHA: 823cb3856b63ead74a8496b7d3914301a20ae786)-- =============================================================================
 -- HOTEL MANAGEMENT SYSTEM (HMS) - MICROSOFT SQL SERVER SCHEMA
 -- Document Reference: HMS-SRS v1.2 & HMS-SDD v1.0 (Section 4.1 & Section 5.1)
 -- Includes 24 Core Domain Tables (a -> x) + 2 System Infrastructure Tables
@@ -138,6 +138,7 @@ BEGIN
         amenities    NVARCHAR(1000)    NULL,
         description  NVARCHAR(1000)    NULL,
         image_url    NVARCHAR(500)     NULL,
+        gallery_images NVARCHAR(MAX)    NULL, -- comma-separated extra photo URLs (detail gallery)
         is_active    BIT               NOT NULL DEFAULT 1,
         CONSTRAINT PK_Room_Type PRIMARY KEY (room_type_id),
         CONSTRAINT UQ_Room_Type_Name UNIQUE (type_name),
@@ -378,6 +379,7 @@ BEGIN
         cancelled_by_staff_id INT               NULL,
         cancelled_at          DATETIME2(0)      NULL,
         cancel_reason         NVARCHAR(500)     NULL,
+        staff_confirmed       BIT               NOT NULL DEFAULT 0, -- staff-confirmed (UC-35); replaces "[ĐÃ XÁC NHẬN]" marker in cancel_reason
         status                NVARCHAR(30)      NOT NULL DEFAULT N'ORDERED', -- ORDERED, COMPLETED, VOIDED
         CONSTRAINT PK_Service_Order PRIMARY KEY (service_order_id),
         CONSTRAINT FK_Service_Order_Stay FOREIGN KEY (stay_id) REFERENCES dbo.[Guest_Stay](stay_id),

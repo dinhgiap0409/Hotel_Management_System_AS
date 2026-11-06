@@ -1,4 +1,4 @@
-package com.fpt.hms.controller;
+successfully downloaded text file (SHA: 4466351fb026cee0b626c8735113cd3ff5bf1e6f)package com.fpt.hms.controller;
 
 import com.fpt.hms.dto.billing_report.HotelServiceRequest;
 import com.fpt.hms.dto.billing_report.InvoiceDto;
@@ -191,6 +191,13 @@ public class BillingController {
     }
 
     // ---------------------------------------------------------------- UC-37..39 (existing, refined in Feature 2)
+
+    @GetMapping("/invoices")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER')")
+    @Operation(summary = "UC-40: List invoices (for receipt printing / re-print)")
+    public ResponseEntity<List<InvoiceDto>> listInvoices() {
+        return ResponseEntity.ok(billingService.getAllInvoices());
+    }
 
     @PostMapping("/stays/{stayId}/settle")
     @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT')")

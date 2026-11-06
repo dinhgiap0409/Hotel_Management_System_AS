@@ -1,5 +1,6 @@
-package com.fpt.hms.service.impl;
+successfully downloaded text file (SHA: 9f01a4ab4e643d1c7ad2bad27bdd7428fecc6004)package com.fpt.hms.service.impl;
 
+import com.fpt.hms.common.AuditService;
 import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.common.PageResponse;
 import com.fpt.hms.dto.room.*;
@@ -45,6 +46,7 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
     private final HousekeepingTaskRepository housekeepingTaskRepository;
     private final StaffRepository staffRepository;
     private final MessageResolver messageResolver;
+    private final AuditService auditService;
 
     // =========================================================================
     // 1. ROOM TYPES (UC-11..14) & DYNAMIC PRICING
@@ -314,12 +316,42 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
             throw new BusinessException("MSG07A", messageResolver.resolve("MSG07A"));
         }
 
+        String currentCleaning = room.getCleaningStatus() != null ? room.getCleaningStatus().trim().toUpperCase() : "";
         String targetCleaning = request.getNewCleaningStatus().trim().toUpperCase();
+
+        // BR-13 state machine: DIRTY -> CLEAN -> INSPECTED, with a reasoned
+        // reset INSPECTED -> DIRTY (room failed inspection / needs re-cleaning).
+        // Any other jump (e.g. DIRTY -> INSPECTED, INSPECTED -> CLEAN,
+        // CLEAN -> DIRTY) is rejected so an uncleaned room can never be marked
+        // inspected. Same-status updates are a no-op.
+        boolean sameStatus = currentCleaning.equals(targetCleaning);
+        boolean allowed = sameStatus
+                || ("DIRTY".equals(currentCleaning) && "CLEAN".equals(targetCleaning))
+                || ("CLEAN".equals(currentCleaning) && "INSPECTED".equals(targetCleaning))
+                || ("INSPECTED".equals(currentCleaning) && "DIRTY".equals(targetCleaning));
+        if (!allowed) {
+            throw new BusinessException("BR-13",
+                    "Không thể chuyển trạng thái vệ sinh phòng từ " + currentCleaning + " sang " + targetCleaning
+                            + ". Quy trình: DIRTY -> CLEAN -> INSPECTED (chỉ INSPECTED -> DIRTY khi có lý do).");
+        }
+        if ("INSPECTED".equals(currentCleaning) && "DIRTY".equals(targetCleaning)
+                && (request.getNotes() == null || request.getNotes().isBlank())) {
+            throw new BusinessException("BR-13",
+                    "Phòng đã qua kiểm tra (INSPECTED) chỉ được chuyển về DIRTY khi ghi rõ lý do (ví dụ: phát hiện bẩn/hỏng sau kiểm tra).");
+        }
+
         room.setCleaningStatus(targetCleaning);
         if (request.getNotes() != null) {
             room.setNotes(request.getNotes());
         }
-        return toRoomDto(roomRepository.save(room));
+        Room saved = roomRepository.save(room);
+        if (!sameStatus) {
+            auditService.recordAction(null, "HOUSEKEEPING", "HOUSEKEEPING_STATUS_CHANGE",
+                    "Room", saved.getRoomId(),
+                    "cleaningStatus=" + currentCleaning, "cleaningStatus=" + targetCleaning,
+                    "Cap nhat trang thai ve sinh phong (UC-19)");
+        }
+        return toRoomDto(saved);
     }
 
     @Override

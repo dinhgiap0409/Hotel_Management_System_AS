@@ -1,5 +1,6 @@
-package com.fpt.hms.service.impl;
+successfully downloaded text file (SHA: 70b37da3dc4186d76ab1c1253b53a19f45e2a998)package com.fpt.hms.service.impl;
 
+import com.fpt.hms.common.AuditService;
 import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.dto.booking.ReservationDto;
 import com.fpt.hms.dto.frontdesk.CheckInRequest;
@@ -41,6 +42,7 @@ public class FrontDeskServiceImpl implements FrontDeskService {
     private final InvoiceRepository invoiceRepository;
     private final MessageResolver messageResolver;
     private final Clock hotelClock;
+    private final AuditService auditService;
 
     @Override
     @Transactional
@@ -265,8 +267,21 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         stay.getRoomAssignments().add(assignment);
         GuestStay savedStay = guestStayRepository.save(stay);
 
-        long nights = Math.max(1, ChronoUnit.DAYS.between(reservation.getCheckInDate(), reservation.getCheckOutDate()));
-        BigDecimal roomCharges = room.getRoomType().getBasePrice().multiply(BigDecimal.valueOf(nights));
+        // Room charges must use the nightly-rate snapshot taken at booking time
+        // (ReservationNightlyRate, per-day tariff incl. weekend pricing), not
+        // basePrice x nights — the two disagreed whenever a weekend rate applied.
+        // Fall back to basePrice x nights only when no snapshot exists (legacy rows).
+        BigDecimal roomCharges = BigDecimal.ZERO;
+        if (detail != null && detail.getNightlyRates() != null) {
+            int qty = detail.getQuantity() != null ? detail.getQuantity() : 1;
+            roomCharges = detail.getNightlyRates().stream()
+                    .map(r -> r.getUnitPrice().multiply(BigDecimal.valueOf(qty)))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+        if (roomCharges.compareTo(BigDecimal.ZERO) <= 0) {
+            long nights = Math.max(1, ChronoUnit.DAYS.between(reservation.getCheckInDate(), reservation.getCheckOutDate()));
+            roomCharges = room.getRoomType().getBasePrice().multiply(BigDecimal.valueOf(nights));
+        }
 
         Folio folio = Folio.builder()
                 .guestStay(savedStay)
@@ -279,6 +294,11 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         room.setStayStatus(StayStatus.OCCUPIED.name());
         roomRepository.save(room);
 
+        auditService.recordAction(null, "FRONT_DESK", "CHECK_IN",
+                "GuestStay", savedStay.getStayId(),
+                "reservation=" + reservation.getReservationCode() + ";status=CONFIRMED",
+                "status=ACTIVE;room=" + room.getRoomNumber(),
+                "Check-in khach, mo Folio (UC-27)");
         return toStayDto(savedStay, room.getRoomNumber(), savedFolio);
     }
 
@@ -321,6 +341,11 @@ public class FrontDeskServiceImpl implements FrontDeskService {
 
         folio.setStatus(FolioStatus.CLOSED.name());
         folioRepository.save(folio);
+
+        auditService.recordAction(null, "FRONT_DESK", "CHECK_OUT",
+                "GuestStay", stay.getStayId(),
+                "status=ACTIVE", "status=COMPLETED;folio=" + folio.getStatus(),
+                "Check-out khach, dong Folio (UC-30)");
 
         String roomNum = "N/A";
         if (!stay.getRoomAssignments().isEmpty()) {

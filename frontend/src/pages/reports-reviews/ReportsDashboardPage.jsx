@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+successfully downloaded text file (SHA: d90e74c10f71fbc8d1badff123c9f6bf78ffe912)import { useEffect, useState } from 'react';
 import { billingApi } from '../../services/billingApi';
 import { DataTable } from '../../components/common/DataTable';
 import { StatusBadge } from '../../components/common/StatusBadge';
@@ -9,8 +9,8 @@ export const ReportsDashboardPage = () => {
   const [reviews, setReviews] = useState([]);
 
   useEffect(() => {
-    billingApi.getDashboardKpi().then((r) => setKpi(r.data.data));
-    billingApi.getReviews().then((r) => setReviews(r.data.data || []));
+    billingApi.getDashboardKpi().then((r) => setKpi(r.data.data || r.data));
+    billingApi.getReviews().then((r) => setReviews(r.data.data || r.data || []));
   }, []);
 
   return (
@@ -27,16 +27,16 @@ export const ReportsDashboardPage = () => {
             <div style={{ fontSize: 24, fontWeight: 700 }}>{kpi.totalRooms}</div>
           </div>
           <div style={{ background: '#fff', padding: 20, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b' }}>Tổng Lượt Đặt phòng</div>
-            <div style={{ fontSize: 24, fontWeight: 700 }}>{kpi.totalBookings}</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Phòng đang ở / Tỷ lệ lấp đầy</div>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{kpi.occupiedRooms} / {kpi.totalRooms} ({kpi.occupancyPercentage}%)</div>
           </div>
           <div style={{ background: '#fff', padding: 20, borderRadius: 10, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b' }}>Tổng Hóa đơn Phát hành</div>
-            <div style={{ fontSize: 24, fontWeight: 700 }}>{kpi.totalInvoices}</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Hóa đơn đã thanh toán</div>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{kpi.paidInvoicesCount}</div>
           </div>
           <div style={{ background: '#fff', padding: 20, borderRadius: 10, border: '1px solid #e2e8f0' }}>
             <div style={{ fontSize: 13, color: '#64748b' }}>Tổng Doanh thu Đã thu</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: '#16a34a' }}>{formatVND(kpi.totalCollectedRevenue)}</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#16a34a' }}>{formatVND(kpi.totalSettledRevenue)}</div>
           </div>
         </div>
       )}
@@ -49,7 +49,7 @@ export const ReportsDashboardPage = () => {
           { header: 'ID', render: (r) => `#${r.reviewId}` },
           { header: 'Số sao', render: (r) => `${r.rating} / 5 ⭐` },
           { header: 'Nhận xét', render: (r) => r.comment },
-          { header: 'Trạng thái', render: (r) => <StatusBadge status={r.status} /> },
+          { header: 'Trạng thái', render: (r) => <StatusBadge status={r.isHidden ? 'HIDDEN' : 'PUBLISHED'} /> },
         ]}
       />
     </div>
