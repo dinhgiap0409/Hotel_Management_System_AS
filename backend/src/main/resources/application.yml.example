@@ -1,6 +1,0 @@
-# Copy this file to application-local.yml if you need custom local DB credentials
-spring:
-  datasource:
-    url: jdbc:sqlserver://localhost:1433;databaseName=HMS_DB;encrypt=true;trustServerCertificate=true
-    username: sa
-    password: YOUR_SQL_SERVER_PASSWORD

@@ -54,10 +54,8 @@ lerna-debug.log*
 .project
 
 # ==========================================
-# OS & AI Agent Customizations
+# OS Files
 # ==========================================
 .DS_Store
 Thumbs.db
 Desktop.ini
-.agents/
-**/.agents/

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ROLE_DEFAULT_ROUTES, getRoleLabel } from '../config/constants';
@@ -6,10 +7,12 @@ export const CustomerLayout = () => {
   const { isAuthenticated, user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const isFullBleedAuthPage = location.pathname === '/login';
 
-  const handleLogout = async () => {
+  const handleConfirmLogout = async () => {
+    setShowLogoutConfirm(false);
     await logout();
     navigate('/login');
   };
@@ -18,6 +21,9 @@ export const CustomerLayout = () => {
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#F5F4ED', fontFamily: 'var(--font-sans)' }}>
       <header
         style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 100,
           background: '#141413',
           color: '#FAF9F5',
           padding: '14px 28px',
@@ -127,17 +133,27 @@ export const CustomerLayout = () => {
                 Hồ sơ: {user.fullName}
               </Link>
               <button
-                onClick={handleLogout}
+                type="button"
+                onClick={() => setShowLogoutConfirm(true)}
                 style={{
-                  background: 'transparent',
+                  background: '#DC2626',
                   color: '#FAF9F5',
-                  border: '1px solid rgba(232, 230, 220, 0.35)',
+                  border: 'none',
                   padding: '6px 12px',
                   borderRadius: 6,
                   cursor: 'pointer',
                   fontSize: 13,
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
                 }}
               >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
                 Đăng xuất
               </button>
             </>
@@ -196,6 +212,77 @@ export const CustomerLayout = () => {
         />
         <span>HMS — Hotel Management System © 2026 | SBA301 Group Project</span>
       </footer>
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(20, 20, 19, 0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              background: '#FAF9F5',
+              borderRadius: 10,
+              maxWidth: 400,
+              width: '100%',
+              padding: 24,
+              border: '1px solid #E8E6DC',
+              boxShadow: '0 20px 40px rgba(20, 20, 19, 0.28)',
+            }}
+          >
+            <h3 style={{ margin: '0 0 8px', fontSize: 17, fontWeight: 700, color: '#141413' }}>
+              Xác nhận đăng xuất
+            </h3>
+            <p style={{ margin: '0 0 20px', fontSize: 14, color: '#5E5D59', lineHeight: 1.5 }}>
+              Bạn có chắc chắn muốn đăng xuất không?
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(false)}
+                style={{
+                  background: '#F5F4ED',
+                  color: '#3D3D3A',
+                  border: '1px solid #D5D2C6',
+                  padding: '8px 16px',
+                  borderRadius: 6,
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLogout}
+                style={{
+                  background: '#DC2626',
+                  color: '#FAF9F5',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: 6,
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Đăng xuất
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
