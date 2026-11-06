@@ -4,6 +4,7 @@ import com.fpt.hms.dto.booking.ReservationDto;
 import com.fpt.hms.dto.frontdesk.CheckInRequest;
 import com.fpt.hms.dto.frontdesk.DirectBookingRequest;
 import com.fpt.hms.dto.frontdesk.GuestStayDto;
+import com.fpt.hms.dto.room.RoomDto;
 import com.fpt.hms.security.UserPrincipal;
 import com.fpt.hms.service.FrontDeskService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -46,6 +47,21 @@ public class FrontDeskController {
     @Operation(summary = "UC-26: List all pending reservations awaiting front-desk confirmation")
     public ResponseEntity<List<ReservationDto>> getPendingReservations() {
         return ResponseEntity.ok(frontDeskService.getPendingReservations());
+    }
+
+    @GetMapping("/arrivals")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'GENERAL_MANAGER')")
+    @Operation(summary = "UC-27: List confirmed arrivals scheduled for check-in")
+    public ResponseEntity<List<ReservationDto>> getArrivals() {
+        return ResponseEntity.ok(frontDeskService.getArrivals());
+    }
+
+    @GetMapping("/available-rooms")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'GENERAL_MANAGER')")
+    @Operation(summary = "UC-27: Get vacant inspected/clean physical rooms available for check-in assignment")
+    public ResponseEntity<List<RoomDto>> getAvailableRoomsForCheckIn(
+            @RequestParam(required = false) Integer roomTypeId) {
+        return ResponseEntity.ok(frontDeskService.getAvailableRoomsForCheckIn(roomTypeId));
     }
 
     @PostMapping("/reservations/{reservationId}/confirm")

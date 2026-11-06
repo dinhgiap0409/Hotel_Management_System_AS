@@ -5,6 +5,7 @@ import com.fpt.hms.dto.booking.ReservationDto;
 import com.fpt.hms.dto.frontdesk.CheckInRequest;
 import com.fpt.hms.dto.frontdesk.DirectBookingRequest;
 import com.fpt.hms.dto.frontdesk.GuestStayDto;
+import com.fpt.hms.dto.room.RoomDto;
 import com.fpt.hms.entity.*;
 import com.fpt.hms.enums.*;
 import com.fpt.hms.exception.BusinessException;
@@ -153,6 +154,41 @@ public class FrontDeskServiceImpl implements FrontDeskService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<ReservationDto> getArrivals() {
+        return reservationRepository.findAll().stream()
+                .filter(r -> ReservationStatus.CONFIRMED.name().equalsIgnoreCase(r.getStatus()))
+                .sorted(Comparator.comparing(Reservation::getCheckInDate))
+                .map(this::toReservationDto)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<RoomDto> getAvailableRoomsForCheckIn(Integer roomTypeId) {
+        return roomRepository.findByRoomStatusNot(RoomStatus.ARCHIVED.name()).stream()
+                .filter(r -> roomTypeId == null || (r.getRoomType() != null && roomTypeId.equals(r.getRoomType().getRoomTypeId())))
+                .filter(r -> RoomStatus.ACTIVE.name().equalsIgnoreCase(r.getRoomStatus()))
+                .filter(r -> StayStatus.VACANT.name().equalsIgnoreCase(r.getStayStatus()))
+                .filter(r -> CleaningStatus.INSPECTED.name().equalsIgnoreCase(r.getCleaningStatus())
+                        || CleaningStatus.CLEAN.name().equalsIgnoreCase(r.getCleaningStatus()))
+                .map(r -> RoomDto.builder()
+                        .roomId(r.getRoomId())
+                        .roomNumber(r.getRoomNumber())
+                        .floor(r.getFloor())
+                        .roomTypeId(r.getRoomType() != null ? r.getRoomType().getRoomTypeId() : null)
+                        .roomTypeName(r.getRoomType() != null ? r.getRoomType().getTypeName() : null)
+                        .basePrice(r.getRoomType() != null ? r.getRoomType().getBasePrice() : null)
+                        .stayStatus(r.getStayStatus())
+                        .cleaningStatus(r.getCleaningStatus())
+                        .roomStatus(r.getRoomStatus())
+                        .notes(r.getNotes())
+                        .build())
+                .sorted(Comparator.comparing(RoomDto::getRoomNumber))
+                .toList();
+    }
+
+    @Override
     @Transactional
     public ReservationDto confirmReservation(Integer reservationId) {
         Reservation r = reservationRepository.findById(reservationId)
@@ -179,11 +215,34 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         Room room = roomRepository.findById(request.getRoomId())
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        // BR-14: Only Vacant and Inspected rooms can be assigned at check-in
+        // Validate room type matches booked room type
+        ReservationDetail detail = (reservation.getDetails() != null && !reservation.getDetails().isEmpty())
+                ? reservation.getDetails().getFirst()
+                : null;
+        if (detail != null && detail.getRoomType() != null && room.getRoomType() != null
+                && !room.getRoomType().getRoomTypeId().equals(detail.getRoomType().getRoomTypeId())) {
+            throw new BusinessException("BR-14", "Phòng " + room.getRoomNumber() + " (" + room.getRoomType().getTypeName()
+                    + ") không thuộc hạng phòng đã đặt (" + detail.getRoomType().getTypeName() + ").");
+        }
+
+        // BR-14: Only Vacant and Inspected/Clean rooms can be assigned at check-in
+        boolean isCleanOrInspected = CleaningStatus.INSPECTED.name().equalsIgnoreCase(room.getCleaningStatus())
+                || CleaningStatus.CLEAN.name().equalsIgnoreCase(room.getCleaningStatus());
+
         if (!StayStatus.VACANT.name().equalsIgnoreCase(room.getStayStatus())
-                || !CleaningStatus.INSPECTED.name().equalsIgnoreCase(room.getCleaningStatus())
+                || !isCleanOrInspected
                 || !RoomStatus.ACTIVE.name().equalsIgnoreCase(room.getRoomStatus())) {
             throw new BusinessException("MSG06A", messageResolver.resolve("MSG06A"));
+        }
+
+        // Save CCCD/Identity number to Customer record if provided
+        if (request.getGuestIdNumber() != null && !request.getGuestIdNumber().isBlank()
+                && reservation.getCustomer() != null) {
+            Customer c = reservation.getCustomer();
+            if (c.getIdentityNumber() == null || c.getIdentityNumber().isBlank()) {
+                c.setIdentityNumber(request.getGuestIdNumber().trim());
+                customerRepository.save(c);
+            }
         }
 
         // Atomic transaction (SDD 4.1.10): 1. Update Reservation -> 2. Create GuestStay & Assignment -> 3. Initialize Folio -> 4. Mark Room OCCUPIED
