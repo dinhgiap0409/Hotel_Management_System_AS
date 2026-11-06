@@ -28,6 +28,17 @@ export const VnPayCallbackPage = () => {
   const externalResponseCode = searchParams.get('vnp_ResponseCode');
   const externalTransactionNo = searchParams.get('vnp_TransactionNo');
   const externalBankCode = searchParams.get('vnp_BankCode');
+  // All vnp_* parameters VNPay returned, forwarded verbatim so the backend
+  // can recompute the HMAC-SHA512 signature. The frontend result alone is
+  // never trusted — the backend is the source of truth (UC-23).
+  const vnpParams = {};
+  searchParams.forEach((value, key) => {
+    if (key.startsWith('vnp_')) vnpParams[key] = value;
+  });
+  // The simulated gateway is only shown when the payment URL was generated in
+  // DEMO_TMN mode (mode=gateway). In production mode this page only displays
+  // the result the backend verified.
+  const isDemoGateway = mode === 'gateway';
 
   const [bankCode, setBankCode] = useState('NCB');
   const [cardNumber, setCardNumber] = useState('9704198526191432198');
@@ -51,6 +62,11 @@ export const VnPayCallbackPage = () => {
         vnpResponseCode: externalResponseCode,
         vnpTransactionNo: externalTransactionNo || `VNP${Date.now()}`,
         bankCode: externalBankCode || 'NCB',
+        vnpAmount: vnpAmountRaw > 0 ? vnpAmountRaw : undefined,
+        vnpSecureHash: searchParams.get('vnp_SecureHash') || undefined,
+        vnpSecureHashType: searchParams.get('vnp_SecureHashType') || undefined,
+        vnpParams,
+        demoMode: false,
       })
       .then((res) => {
         if (!isMounted) return;
@@ -86,6 +102,11 @@ export const VnPayCallbackPage = () => {
         vnpResponseCode: responseCode,
         vnpTransactionNo: `VNP${Date.now()}`,
         bankCode,
+        vnpAmount: vnpAmountRaw > 0 ? vnpAmountRaw : undefined,
+        vnpParams: { ...vnpParams, vnp_ResponseCode: responseCode },
+        // Demo simulation only: the backend only honours this flag when the
+        // server itself is configured with DEMO_TMN/DEMO_SECRET.
+        demoMode: true,
       });
       const data = res.data?.data || res.data;
       setResultBooking(data);
@@ -196,8 +217,33 @@ export const VnPayCallbackPage = () => {
                 </div>
               </Card.Body>
             </Card>
+          ) : !isDemoGateway ? (
+            /* Production mode: no simulated gateway. This page only shows the
+               result the backend verified; a fake "success" button must never
+               be available outside DEMO_TMN mode. */
+            <Card className="border-0 shadow-lg rounded-4 overflow-hidden">
+              <Card.Body className="p-4">
+                <Alert variant="warning" className="rounded-3 small mb-4">
+                  <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                  Trang này chỉ hiển thị kết quả thanh toán do backend xác thực.
+                  Cổng mô phỏng VNPay chỉ xuất hiện khi hệ thống đang chạy ở chế độ
+                  DEMO (DEMO_TMN). Vui lòng quay lại trang đặt phòng và thanh toán
+                  lại qua VNPay.
+                </Alert>
+                <div className="d-flex flex-wrap gap-2">
+                  <Button className="btn-hms-light" onClick={() => navigate('/')}>
+                    <i className="bi bi-arrow-left me-2"></i>
+                    Về trang chủ
+                  </Button>
+                  <Button className="btn-hms-primary px-4" onClick={() => navigate('/my-bookings')}>
+                    <i className="bi bi-journal-bookmark-fill me-2"></i>
+                    Quản lý Đặt phòng của tôi
+                  </Button>
+                </div>
+              </Card.Body>
+            </Card>
           ) : (
-            /* Interactive VNPay Sandbox Gateway UI */
+            /* Interactive VNPay Sandbox Gateway UI (DEMO_TMN only) */
             <Card className="border-0 shadow-lg rounded-4 overflow-hidden">
               <div
                 className="p-4 text-white d-flex justify-content-between align-items-center flex-wrap gap-2"

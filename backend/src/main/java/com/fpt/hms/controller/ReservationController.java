@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,6 +19,23 @@ import java.util.List;
 
 /**
  * Module 3A (Owner: GiapND) - Public Catalog, Room Search & Online Reservation Controller (UC-14, UC-21 to UC-25).
+ *
+ * <p>Authorization (SRS v1.2, UC table §2.2) — public endpoints need no login
+ * (UC-14/21/22 search & detail, UC-23 VNPay callback/IPN, Find Booking by code);
+ * authenticated endpoints are role-checked below. Roles NOT listed on an
+ * endpoint get 403: Housekeeping, Service Staff/Manager, Sales Manager,
+ * Accountant and Administrator may NOT create bookings or view other
+ * customers' My Bookings. Administrator may only view the room catalog
+ * (UC-14) via the public endpoints.
+ *
+ * <p>SRS contradiction, recorded not resolved silently: screen table §3.1.3
+ * marks screens 3, 4, 6, 6.1, 8, 8.1 as Customer-only, while UC table §2.2
+ * also gives Front-Desk Staff UC-14/21/22/23/25. Resolution: Front-Desk does
+ * NOT use these public customer pages to book; they use their own Front Desk
+ * Dashboard / Direct Reservation Form (screens 9, 10, 10.3, 10.4 — TungPV's
+ * module, untouched here). The FRONT_DESK role is still accepted on the
+ * create/cancel/list endpoints so a front-desk operator can act on a guest's
+ * behalf through the API when needed; UC-24 (My Bookings) stays CUSTOMER-only.
  */
 @RestController
 @RequestMapping("/api/v1")
@@ -52,6 +70,7 @@ public class ReservationController {
     }
 
     @PostMapping("/reservations")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK')")
     @Operation(summary = "UC-23: Create a new room reservation (holds quota for 24 hours per BR-19 and returns VNPay deposit URL)")
     public ResponseEntity<ReservationDto> createReservation(
             @Valid @RequestBody CreateReservationRequest request,
@@ -68,6 +87,7 @@ public class ReservationController {
     }
 
     @GetMapping("/reservations/my")
+    @PreAuthorize("hasRole('CUSTOMER')")
     @Operation(summary = "UC-24: List reservations belonging to the currently logged-in customer")
     public ResponseEntity<List<ReservationDto>> getMyReservations(
             @AuthenticationPrincipal UserPrincipal principal) {
@@ -76,6 +96,7 @@ public class ReservationController {
     }
 
     @GetMapping("/reservations")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'GENERAL_MANAGER')")
     @Operation(summary = "UC-24 & UC-26: List reservations (Customer sees own bookings; Staff sees all bookings)")
     public ResponseEntity<List<ReservationDto>> listReservations(
             @AuthenticationPrincipal UserPrincipal principal) {
@@ -92,8 +113,13 @@ public class ReservationController {
     }
 
     @PostMapping("/reservations/{reservationId}/cancel")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK')")
     @Operation(summary = "UC-25: Cancel an unfulfilled reservation")
-    public ResponseEntity<ReservationDto> cancelReservation(@PathVariable Integer reservationId) {
-        return ResponseEntity.ok(reservationService.cancelReservation(reservationId));
+    public ResponseEntity<ReservationDto> cancelReservation(
+            @PathVariable Integer reservationId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        Integer accountId = principal != null ? principal.getAccountId() : null;
+        String roleName = principal != null ? principal.getRoleName() : null;
+        return ResponseEntity.ok(reservationService.cancelReservation(reservationId, accountId, roleName));
     }
 }
