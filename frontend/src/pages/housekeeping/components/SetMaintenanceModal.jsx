@@ -146,3 +146,4 @@ export const SetMaintenanceModal = ({ show, onHide, room, onSuccess }) => {
     </Modal>
   );
 };
+

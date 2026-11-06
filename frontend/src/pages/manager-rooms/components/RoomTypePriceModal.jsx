@@ -212,3 +212,4 @@ export const RoomTypePriceModal = ({ show, onHide, roomType, onSuccess }) => {
     </Modal>
   );
 };
+

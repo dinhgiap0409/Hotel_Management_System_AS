@@ -222,3 +222,4 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
     </Modal>
   );
 };
+

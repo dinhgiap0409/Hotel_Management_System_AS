@@ -136,3 +136,4 @@ export const CleanlinessModal = ({ show, onHide, room, onSuccess }) => {
     </Modal>
   );
 };
+
