@@ -1,7 +1,6 @@
 import { Card, Row, Col, Form, Button, Alert } from 'react-bootstrap';
 
 export const HeroSearchSection = ({
-  userRole,
   todayStr,
   checkInDate,
   setCheckInDate,
@@ -19,7 +18,6 @@ export const HeroSearchSection = ({
       <Card.Body className="p-4 p-md-5">
         <div className="d-inline-flex align-items-center gap-2 rounded-pill px-3 py-1 fw-semibold text-uppercase mb-3 hms-hero-badge">
           <span>★ HMS Luxury Collection</span>
-          {userRole && <span>• Đang xem với quyền {userRole}</span>}
         </div>
 
         <h1 className="hms-hero-title mb-2">

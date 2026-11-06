@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Container, Row, Col, Card, Button, Spinner, Alert, Badge } from 'react-bootstrap';
 import { bookingApi } from '../../services/bookingApi';
 import { roomApi } from '../../services/roomApi';
-import { useAuth } from '../../context/AuthContext';
 import { HeroSearchSection } from '../../components/booking/HeroSearchSection';
 import { CatalogFilterBar } from '../../components/booking/CatalogFilterBar';
 import { RoomCategoryCard } from '../../components/booking/RoomCategoryCard';
@@ -16,7 +15,6 @@ import {
 import '../../components/booking/css/bookingTheme.css';
 
 export const LandingSearchPage = () => {
-  const { user } = useAuth();
   const todayStr = useMemo(() => getLocalDateString(0), []);
 
   // Room categories fetched 100% from Database via Backend API
@@ -173,7 +171,6 @@ export const LandingSearchPage = () => {
     <Container fluid className="px-0">
       {/* 1. Hero Banner & UC-21 Search Available Rooms Bar */}
       <HeroSearchSection
-        userRole={user?.role}
         todayStr={todayStr}
         checkInDate={checkInDate}
         setCheckInDate={setCheckInDate}
