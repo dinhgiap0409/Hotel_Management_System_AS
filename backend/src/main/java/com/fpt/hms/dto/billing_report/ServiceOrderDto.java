@@ -32,6 +32,8 @@ public class ServiceOrderDto {
     private Instant completedAt;
     private Instant cancelledAt;
     private String cancelReason;
+    private String notes;
+    private Boolean staffConfirmed;
     private String status;
 }
 

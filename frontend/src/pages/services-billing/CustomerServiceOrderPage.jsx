@@ -7,10 +7,10 @@ import { formatVND } from '../../lib/money';
 import { formatDateTime, formatDate } from '../../lib/datetime';
 import { notifyToast } from '../../lib/http';
 
-// Helper trích xuất danh sách dịch vụ đặt trước từ specialNotes của Reservation
+// Helper trích xuất từng lượt dịch vụ đặt trước độc lập từ specialNotes của Reservation (KHÔNG gộp cứng)
 const parsePreOrders = (notes) => {
   if (!notes) return [];
-  const rawList = notes
+  return notes
     .split('\n')
     .filter((line) => line.includes('[ĐẶT TRƯỚC]'))
     .map((line, idx) => {
@@ -21,6 +21,7 @@ const parsePreOrders = (notes) => {
       const nameMatch = line.match(/\[ĐẶT TRƯỚC\]\s*(.*?)\s*\(Mã DV:/);
       return {
         id: idx,
+        itemIndex: idx,
         raw: line,
         serviceName: nameMatch ? nameMatch[1].trim() : 'Dịch vụ đặt trước',
         serviceId: idMatch ? idMatch[1] : '',
@@ -29,33 +30,66 @@ const parsePreOrders = (notes) => {
         details: detailMatch ? detailMatch[1].trim() : '',
       };
     });
+};
 
-  const map = new Map();
-  rawList.forEach((it) => {
-    const key = it.serviceId || it.serviceName;
-    if (!map.has(key)) {
-      map.set(key, { ...it });
-    } else {
-      const existing = map.get(key);
-      existing.quantity = (existing.quantity || 1) + (it.quantity || 1);
-      if (it.scheduledTime && it.scheduledTime !== 'Không') {
-        if (!existing.scheduledTime || existing.scheduledTime === 'Không') {
-          existing.scheduledTime = it.scheduledTime;
-        } else if (!existing.scheduledTime.includes(it.scheduledTime)) {
-          existing.scheduledTime = `${existing.scheduledTime}, ${it.scheduledTime}`;
-        }
+// Làm sạch emoji và tag [Đặt trước #idx] cũ khi hiển thị trên UI để không bị rối chữ
+const formatOrderNotes = (notes) => {
+  if (!notes) return '';
+  return notes
+    .replace(/[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+    .replace(/\[Đặt trước\s*#\d+\]/gi, '[Đặt trước]')
+    .trim();
+};
+
+// Đối chiếu 1-1 các lượt đặt trước của khách với các đơn dịch vụ đã tạo tại phòng
+const matchCustomerPreOrdersToOrders = (items, stayOrders) => {
+  if (!items || items.length === 0) return [];
+  const activeOrders = (stayOrders || []).filter((o) => o.status !== 'VOIDED');
+  const usedOrderIds = new Set();
+
+  const result = items.map((it) => ({ ...it, matchedOrder: null }));
+
+  result.forEach((it) => {
+    const legacyTag = `[Đặt trước #${it.itemIndex + 1}]`;
+    const timeTag = it.scheduledTime && it.scheduledTime !== 'Không' ? `Giờ hẹn: ${it.scheduledTime}` : null;
+    const detailTag = it.details && it.details !== 'Không' ? `Yêu cầu: ${it.details}` : null;
+
+    const exactMatch = activeOrders.find((o) => {
+      if (usedOrderIds.has(o.serviceOrderId) || String(o.serviceId) !== String(it.serviceId) || !o.notes) {
+        return false;
       }
-      if (it.details && it.details !== 'Không') {
-        if (!existing.details || existing.details === 'Không') {
-          existing.details = it.details;
-        } else if (!existing.details.includes(it.details)) {
-          existing.details = `${existing.details}, ${it.details}`;
-        }
+      if (o.notes.includes(legacyTag)) return true;
+      if (o.notes.includes('[Đặt trước]')) {
+        const matchTime = !timeTag || o.notes.includes(timeTag);
+        const matchDetail = !detailTag || o.notes.includes(detailTag);
+        return matchTime && matchDetail;
+      }
+      return false;
+    });
+    if (exactMatch) {
+      usedOrderIds.add(exactMatch.serviceOrderId);
+      it.matchedOrder = exactMatch;
+    }
+  });
+
+  const chronologicalOrders = [...activeOrders].sort(
+    (a, b) => (a.serviceOrderId || 0) - (b.serviceOrderId || 0)
+  );
+  result.forEach((it) => {
+    if (!it.matchedOrder) {
+      const fallbackMatch = chronologicalOrders.find(
+        (o) =>
+          !usedOrderIds.has(o.serviceOrderId) &&
+          String(o.serviceId) === String(it.serviceId)
+      );
+      if (fallbackMatch) {
+        usedOrderIds.add(fallbackMatch.serviceOrderId);
+        it.matchedOrder = fallbackMatch;
       }
     }
   });
 
-  return Array.from(map.values());
+  return result;
 };
 
 export const CustomerServiceOrderPage = () => {
@@ -94,6 +128,9 @@ export const CustomerServiceOrderPage = () => {
   const [orderSuccess, setOrderSuccess] = useState('');
   const [cancellingPreOrder, setCancellingPreOrder] = useState(null);
   const [cancelModalData, setCancelModalData] = useState(null);
+  const [voidRoomOrderModal, setVoidRoomOrderModal] = useState(null); // { order, reason: '' }
+  const [voidingRoomOrder, setVoidingRoomOrder] = useState(false);
+  const [customerDetailModal, setCustomerDetailModal] = useState(null); // { type: 'PRE_ORDER' | 'ROOM_ORDER', data }
 
   // Orders in stay tracking state
   const [myOrders, setMyOrders] = useState([]);
@@ -210,18 +247,29 @@ export const CustomerServiceOrderPage = () => {
     const list = [];
     confirmedReservations.forEach((r) => {
       const items = parsePreOrders(r.specialNotes);
-      items.forEach((item) => {
+      const isCheckedInStay = activeStays.find((s) => s.reservationCode === r.reservationCode);
+      const stayOrders =
+        isCheckedInStay && String(isCheckedInStay.stayId) === String(selectedStayId)
+          ? myOrders
+          : [];
+      const matchedItems = isCheckedInStay
+        ? matchCustomerPreOrdersToOrders(items, stayOrders)
+        : items.map((it) => ({ ...it, matchedOrder: null }));
+
+      matchedItems.forEach((item) => {
         list.push({
           ...item,
           reservationCode: r.reservationCode,
           reservationId: r.reservationId,
           roomTypeName: r.roomTypeName,
           checkInDate: r.checkInDate,
+          isCheckedIn: Boolean(isCheckedInStay),
+          roomNumber: isCheckedInStay?.roomNumber || null,
         });
       });
     });
     return list;
-  }, [confirmedReservations]);
+  }, [confirmedReservations, activeStays, selectedStayId, myOrders]);
 
   // Danh sách dịch vụ đặt trước theo bộ lọc
   const displayedPreOrders = useMemo(() => {
@@ -486,10 +534,19 @@ export const CustomerServiceOrderPage = () => {
           return;
         }
 
+        const noteParts = [];
+        if (scheduledTime && scheduledTime.trim()) {
+          noteParts.push(`Giờ hẹn: ${scheduledTime.trim()}`);
+        }
+        if (roomServiceNotes && roomServiceNotes.trim()) {
+          noteParts.push(`Yêu cầu: ${roomServiceNotes.trim()}`);
+        }
+
         await billingApi.createServiceOrder({
           stayId: Number(selectedStayId),
           serviceId: selectedService.serviceId,
           quantity: Number(quantity),
+          notes: noteParts.length > 0 ? noteParts.join(' | ') : null,
         });
 
         setOrderSuccess(`Yêu cầu đã được chuyển tới bộ phận phục vụ phòng ${friendlyRoomNumber}!`);
@@ -509,17 +566,30 @@ export const CustomerServiceOrderPage = () => {
   };
 
   const handleOpenCancelModal = (po) => {
-    setCancelModalData(po);
+    setCancelModalData({
+      ...po,
+      cancelQty: Number(po.quantity) || 1,
+    });
   };
 
   const handleConfirmCancelCustomerPreOrder = async () => {
     if (!cancelModalData?.reservationId || !cancelModalData?.serviceId) return;
     setCancellingPreOrder(cancelModalData.serviceId);
+    const qtyToCancel = Number(cancelModalData.cancelQty) || Number(cancelModalData.quantity) || 1;
+    const totalQty = Number(cancelModalData.quantity) || 1;
     try {
-      await billingApi.cancelPreOrder(cancelModalData.reservationId, cancelModalData.serviceId);
+      await billingApi.cancelPreOrder(
+        cancelModalData.reservationId,
+        cancelModalData.serviceId,
+        cancelModalData.itemIndex,
+        qtyToCancel
+      );
       notifyToast({
         type: 'SUCCESS',
-        message: `Đã hủy thành công yêu cầu đặt trước dịch vụ "${cancelModalData.serviceName}".`,
+        message:
+          qtyToCancel < totalQty
+            ? `Đã hủy ${qtyToCancel} suất "${cancelModalData.serviceName}" (còn lại ${totalQty - qtyToCancel} suất).`
+            : `Đã hủy thành công yêu cầu đặt trước dịch vụ "${cancelModalData.serviceName}".`,
       });
       setCancelModalData(null);
       await loadConfirmedReservations();
@@ -530,6 +600,35 @@ export const CustomerServiceOrderPage = () => {
       });
     } finally {
       setCancellingPreOrder(null);
+    }
+  };
+
+  const handleConfirmVoidRoomOrder = async (e) => {
+    if (e) e.preventDefault();
+    if (!voidRoomOrderModal?.order?.serviceOrderId) return;
+    if (!voidRoomOrderModal.reason?.trim()) {
+      notifyToast({ type: 'WARNING', message: 'Vui lòng nhập lý do hủy đơn dịch vụ phòng.' });
+      return;
+    }
+    setVoidingRoomOrder(true);
+    try {
+      await billingApi.voidServiceOrder(
+        voidRoomOrderModal.order.serviceOrderId,
+        voidRoomOrderModal.reason.trim()
+      );
+      notifyToast({
+        type: 'SUCCESS',
+        message: `Đã hủy thành công đơn dịch vụ phòng #${voidRoomOrderModal.order.serviceOrderId}.`,
+      });
+      setVoidRoomOrderModal(null);
+      await loadOrders(selectedStayId);
+    } catch (err) {
+      notifyToast({
+        type: 'DANGER',
+        message: err.response?.data?.message || 'Không thể hủy đơn dịch vụ này.',
+      });
+    } finally {
+      setVoidingRoomOrder(false);
     }
   };
 
@@ -557,28 +656,11 @@ export const CustomerServiceOrderPage = () => {
             {/* Thẻ Tiêu Đề Sidebar & Tên Khách */}
             <Card className="border-0 shadow-sm rounded-3 overflow-hidden" style={{ background: '#FAF9F5', border: '1px solid #E8E6DC' }}>
               <Card.Body className="p-3">
-                <div className="d-flex align-items-center gap-2.5 mb-2">
-                  <div
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 10,
-                      background: '#16233B',
-                      color: '#FAF9F5',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 18,
-                    }}
-                  >
-                    🛎️
-                  </div>
-                  <div>
-                    <strong style={{ color: '#16233B', fontSize: 15, display: 'block' }}>
-                      {user?.fullName || 'Quý Khách Hàng'}
-                    </strong>
-                    <span style={{ fontSize: 11.5, color: '#64748B' }}>Dịch Vụ Khách Sạn</span>
-                  </div>
+                <div className="mb-2">
+                  <strong style={{ color: '#16233B', fontSize: 15, display: 'block' }}>
+                    {user?.fullName || 'Quý Khách Hàng'}
+                  </strong>
+                  <span style={{ fontSize: 11.5, color: '#64748B' }}>Dịch Vụ Khách Sạn</span>
                 </div>
 
                 <hr style={{ borderColor: '#E8E6DC', margin: '10px 0' }} />
@@ -605,10 +687,7 @@ export const CustomerServiceOrderPage = () => {
                       transition: 'all 0.15s',
                     }}
                   >
-                    <div className="d-flex align-items-center gap-2">
-                      <span>🍽️</span>
-                      <span>Đặt Dịch Vụ (Menu)</span>
-                    </div>
+                    <span>Đặt Dịch Vụ (Menu)</span>
                     <span
                       style={{
                         fontSize: 11,
@@ -642,10 +721,7 @@ export const CustomerServiceOrderPage = () => {
                       transition: 'all 0.15s',
                     }}
                   >
-                    <div className="d-flex align-items-center gap-2">
-                      <span>✈️</span>
-                      <span>Lịch Đặt Trước Chuyến Đi</span>
-                    </div>
+                    <span>Lịch Đặt Trước Chuyến Đi</span>
                     {allMyPreOrders.length > 0 && (
                       <span
                         style={{
@@ -682,10 +758,7 @@ export const CustomerServiceOrderPage = () => {
                       transition: 'all 0.15s',
                     }}
                   >
-                    <div className="d-flex align-items-center gap-2">
-                      <span>🚪</span>
-                      <span>Đơn Phục Vụ Tại Phòng</span>
-                    </div>
+                    <span>Đơn Phục Vụ Tại Phòng</span>
                     {myOrders.length > 0 && (
                       <span
                         style={{
@@ -719,7 +792,7 @@ export const CustomerServiceOrderPage = () => {
                   }}
                 >
                   <div className="d-flex align-items-center justify-content-between mb-1">
-                    <span style={{ color: '#166534', fontWeight: 700 }}>🚪 PHÒNG ĐANG Ở</span>
+                    <span style={{ color: '#166534', fontWeight: 700 }}>PHÒNG ĐANG Ở</span>
                     <Badge bg="success" style={{ fontSize: 10 }}>ACTIVE</Badge>
                   </div>
                   <strong style={{ color: '#16233B', fontSize: 14 }}>{friendlyRoomNumber}</strong>
@@ -743,7 +816,7 @@ export const CustomerServiceOrderPage = () => {
                   }}
                 >
                   <div className="d-flex align-items-center justify-content-between mb-1">
-                    <span style={{ color: '#0369A1', fontWeight: 700 }}>✈️ CHUYẾN SẮP TỚI</span>
+                    <span style={{ color: '#0369A1', fontWeight: 700 }}>CHUYẾN SẮP TỚI</span>
                     <Badge bg="info" text="dark" style={{ fontSize: 10 }}>CONFIRMED</Badge>
                   </div>
                   <strong style={{ color: '#0284C7', fontSize: 13.5 }}>#{currentReservation?.reservationCode}</strong>
@@ -769,7 +842,7 @@ export const CustomerServiceOrderPage = () => {
               <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
                 <div>
                   <h4 style={{ margin: 0, color: '#16233B', fontSize: 20, fontWeight: 700 }}>
-                    🍽️ Danh Mục Dịch Vụ Khách Sạn
+                    Danh Mục Dịch Vụ Khách Sạn
                   </h4>
                   <div style={{ fontSize: 13, color: '#64748B', marginTop: 2 }}>
                     Ẩm thực tại phòng 24/7, xe đưa đón sân bay, buffet sáng, spa trị liệu và các tiện ích cao cấp.
@@ -780,7 +853,7 @@ export const CustomerServiceOrderPage = () => {
                   <Form.Control
                     type="text"
                     size="sm"
-                    placeholder="🔍 Tìm tên dịch vụ..."
+                    placeholder="Tìm tên dịch vụ..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     style={{ borderRadius: 20, background: '#FAF9F5', fontSize: 13 }}
@@ -795,15 +868,15 @@ export const CustomerServiceOrderPage = () => {
                     cat === 'ALL'
                       ? 'Tất cả'
                       : cat === 'TRANSPORT'
-                      ? '🚗 Đưa đón sân bay'
+                      ? 'Đưa đón sân bay'
                       : cat === 'F&B'
-                      ? '🍽️ Ẩm thực (F&B)'
+                      ? 'Ẩm thực (F&B)'
                       : cat === 'SPA'
-                      ? '💆 Spa & Trị liệu'
+                      ? 'Spa & Trị liệu'
                       : cat === 'LAUNDRY'
-                      ? '👔 Giặt ủi'
+                      ? 'Giặt ủi'
                       : cat === 'MINIBAR'
-                      ? '🍷 Minibar'
+                      ? 'Minibar'
                       : cat;
                   const isSelected = categoryFilter === cat;
                   return (
@@ -833,7 +906,6 @@ export const CustomerServiceOrderPage = () => {
               ) : filteredServices.length === 0 ? (
                 <Card className="border-0 shadow-sm rounded-3 text-center py-5" style={{ background: '#FAF9F5' }}>
                   <Card.Body>
-                    <div className="text-secondary mb-2" style={{ fontSize: 32 }}>🍽️</div>
                     <div className="text-dark fw-semibold">Không tìm thấy dịch vụ nào phù hợp</div>
                     <div className="text-secondary small">Vui lòng thử lại với từ khóa hoặc danh mục khác.</div>
                   </Card.Body>
@@ -912,7 +984,7 @@ export const CustomerServiceOrderPage = () => {
               <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
                 <div>
                   <h4 style={{ margin: 0, color: '#0369A1', fontSize: 20, fontWeight: 700 }}>
-                    ✈️ Lịch Dịch Vụ Quý Khách Đã Hẹn Trước
+                    Lịch Dịch Vụ Quý Khách Đã Hẹn Trước
                   </h4>
                   <div style={{ fontSize: 13, color: '#64748B', marginTop: 2 }}>
                     Danh sách xe đưa đón sân bay, buffet sáng, tiện nghi đã đặt trước cho chuyến đi sắp tới.
@@ -927,7 +999,6 @@ export const CustomerServiceOrderPage = () => {
                     disabled={loadingReservations}
                     style={{ borderRadius: 6, fontSize: 12.5 }}
                   >
-                    <i className={`bi bi-arrow-clockwise me-1 ${loadingReservations ? 'spin' : ''}`}></i>
                     Làm mới lịch
                   </Button>
                   <Button
@@ -1019,7 +1090,6 @@ export const CustomerServiceOrderPage = () => {
                 <Card.Body className="p-0">
                   {displayedPreOrders.length === 0 ? (
                     <div className="text-center py-5 px-3">
-                      <div className="text-secondary mb-2" style={{ fontSize: 32 }}>🚗</div>
                       <div className="text-dark fw-semibold" style={{ fontSize: 14 }}>
                         Quý khách chưa có dịch vụ đặt trước nào
                       </div>
@@ -1047,18 +1117,22 @@ export const CustomerServiceOrderPage = () => {
                             <th>Thời Gian Dự Kiến</th>
                             <th>Chi Tiết / Chuyến Bay</th>
                             <th className="text-center">Trạng Thái</th>
-                            <th className="text-center" style={{ width: 100 }}>Thao Tác</th>
+                            <th className="text-center" style={{ width: 175 }}>Thao Tác</th>
                           </tr>
                         </thead>
                         <tbody style={{ fontSize: 13 }}>
                           {paginatedPreOrders.map((po, idx) => {
                             const stt = (preOrderPage - 1) * preOrderPageSize + idx + 1;
+                            const isCompleted = po.matchedOrder?.status === 'COMPLETED';
+                            const isServing = po.matchedOrder?.status === 'ORDERED';
                             return (
-                              <tr key={idx}>
+                              <tr key={`${po.reservationId}-${po.itemIndex ?? idx}`}>
                                 <td className="text-secondary">{stt}</td>
                                 <td>
                                   <code style={{ color: '#0369a1', fontWeight: 600 }}>#{po.reservationCode}</code>
-                                  <div style={{ fontSize: 11, color: '#64748b' }}>{po.roomTypeName}</div>
+                                  <div style={{ fontSize: 11, color: '#64748b' }}>
+                                    {po.roomNumber ? `Phòng ${po.roomNumber}` : po.roomTypeName}
+                                  </div>
                                 </td>
                                 <td>
                                   <strong style={{ color: '#16233B' }}>{po.serviceName}</strong>
@@ -1066,28 +1140,54 @@ export const CustomerServiceOrderPage = () => {
                                 </td>
                                 <td className="text-center fw-semibold">{po.quantity}</td>
                                 <td className="text-dark">
-                                  <i className="bi bi-clock me-1 text-secondary"></i>
                                   <strong>{po.scheduledTime || 'Trước khi nhận phòng'}</strong>
                                 </td>
                                 <td className="text-secondary small" style={{ maxWidth: 260 }}>
                                   {po.details || 'Tiêu chuẩn'}
                                 </td>
                                 <td className="text-center">
-                                  <Badge bg="info" text="dark" style={{ fontWeight: 500 }}>
-                                    📋 Đã ghi nhận (Chờ check-in)
-                                  </Badge>
+                                  {isCompleted ? (
+                                    <Badge bg="success" style={{ fontWeight: 500 }}>
+                                      Đã hoàn thành &amp; Tính Folio
+                                    </Badge>
+                                  ) : isServing ? (
+                                    <Badge bg="primary" style={{ fontWeight: 500 }}>
+                                      Đang phục vụ
+                                    </Badge>
+                                  ) : po.isCheckedIn ? (
+                                    <Badge bg="warning" text="dark" style={{ fontWeight: 500 }}>
+                                      Chờ hoàn thành &amp; gộp Folio
+                                    </Badge>
+                                  ) : (
+                                    <Badge bg="info" text="dark" style={{ fontWeight: 500 }}>
+                                      Đã ghi nhận (Chờ check-in)
+                                    </Badge>
+                                  )}
                                 </td>
                                 <td className="text-center">
-                                  <Button
-                                    size="sm"
-                                    variant="outline-danger"
-                                    onClick={() => handleOpenCancelModal(po)}
-                                    disabled={cancellingPreOrder === po.serviceId}
-                                    style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 4 }}
-                                    title="Hủy yêu cầu đặt trước dịch vụ này"
-                                  >
-                                    ✕ Hủy đặt
-                                  </Button>
+                                  <div className="d-flex justify-content-center gap-1 flex-wrap">
+                                    <Button
+                                      size="sm"
+                                      variant="outline-primary"
+                                      onClick={() => setCustomerDetailModal({ mode: 'PRE_ORDER', data: po })}
+                                      style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 4 }}
+                                      title="Xem đầy đủ chi tiết lịch hẹn & yêu cầu đi kèm"
+                                    >
+                                      Chi tiết
+                                    </Button>
+                                    {!po.matchedOrder && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline-danger"
+                                        onClick={() => handleOpenCancelModal(po)}
+                                        disabled={cancellingPreOrder === po.serviceId}
+                                        style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 4 }}
+                                        title="Hủy yêu cầu đặt trước dịch vụ này"
+                                      >
+                                        Hủy đặt
+                                      </Button>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -1122,7 +1222,7 @@ export const CustomerServiceOrderPage = () => {
               <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
                 <div>
                   <h4 style={{ margin: 0, color: '#166534', fontSize: 20, fontWeight: 700 }}>
-                    🚪 Đơn Dịch Vụ Phục Vụ Tại Phòng
+                    Đơn Dịch Vụ Phục Vụ Tại Phòng
                   </h4>
                   <div style={{ fontSize: 13, color: '#64748B', marginTop: 2 }}>
                     Theo dõi trạng thái phục vụ thời gian thực các món ăn, đồ uống, giặt là đang giao tới phòng.
@@ -1138,7 +1238,6 @@ export const CustomerServiceOrderPage = () => {
                       disabled={loadingOrders}
                       style={{ borderRadius: 6, fontSize: 12.5 }}
                     >
-                      <i className={`bi bi-arrow-clockwise me-1 ${loadingOrders ? 'spin' : ''}`}></i>
                       Cập nhật trạng thái
                     </Button>
                   )}
@@ -1159,7 +1258,6 @@ export const CustomerServiceOrderPage = () => {
                   className="border-0 shadow-sm rounded-3 p-4 text-center"
                   style={{ background: '#FFF8E1', borderLeft: '4px solid #FFA000' }}
                 >
-                  <div style={{ fontSize: 32, marginBottom: 8 }}>🚪</div>
                   <h5 className="fw-bold mb-1" style={{ color: '#8D6E63' }}>
                     Quý khách chưa có phòng đang lưu trú
                   </h5>
@@ -1181,30 +1279,13 @@ export const CustomerServiceOrderPage = () => {
                   <Card className="border-0 shadow-sm rounded-3 mb-3.5" style={{ background: '#FFFFFF', border: '1px solid #C8E6C9' }}>
                     <Card.Body className="p-3">
                       <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                        <div className="d-flex align-items-center gap-3">
-                          <div
-                            style={{
-                              width: 44,
-                              height: 44,
-                              borderRadius: 10,
-                              background: '#E8F5E9',
-                              border: '1px solid #C8E6C9',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 22,
-                            }}
-                          >
-                            🚪
+                        <div>
+                          <div className="d-flex align-items-center gap-2">
+                            <strong style={{ color: '#16233B', fontSize: 17 }}>{friendlyRoomNumber}</strong>
+                            <Badge bg="success" style={{ fontSize: 10 }}>ĐANG Ở (ACTIVE)</Badge>
                           </div>
-                          <div>
-                            <div className="d-flex align-items-center gap-2">
-                              <strong style={{ color: '#16233B', fontSize: 17 }}>{friendlyRoomNumber}</strong>
-                              <Badge bg="success" style={{ fontSize: 10 }}>ĐANG Ở (ACTIVE)</Badge>
-                            </div>
-                            <div className="small text-secondary mt-0.5">
-                              Khách: <strong className="text-dark">{currentStay?.guestName || user?.fullName}</strong> • Mã booking: <strong className="text-dark">{currentStay?.reservationCode}</strong>
-                            </div>
+                          <div className="small text-secondary mt-0.5">
+                            Khách: <strong className="text-dark">{currentStay?.guestName || user?.fullName}</strong> • Mã booking: <strong className="text-dark">{currentStay?.reservationCode}</strong>
                           </div>
                         </div>
 
@@ -1244,7 +1325,6 @@ export const CustomerServiceOrderPage = () => {
                         </div>
                       ) : myOrders.length === 0 ? (
                         <div className="text-center py-5 px-3">
-                          <div className="text-secondary mb-2" style={{ fontSize: 32 }}>🍽️</div>
                           <div className="text-dark fw-semibold" style={{ fontSize: 14 }}>
                             Quý khách chưa gọi món hoặc dịch vụ nào lên phòng
                           </div>
@@ -1269,24 +1349,32 @@ export const CustomerServiceOrderPage = () => {
                                 <th>Thời Gian Gọi</th>
                                 <th>Tên Dịch Vụ</th>
                                 <th className="text-center">Số Lượng</th>
+                                <th>Ghi Chú / Yêu Cầu</th>
                                 <th className="text-end">Đơn Giá</th>
                                 <th className="text-end">Thành Tiền</th>
                                 <th className="text-center">Trạng Thái</th>
+                                <th className="text-center" style={{ width: 175 }}>Thao Tác</th>
                               </tr>
                             </thead>
                             <tbody style={{ fontSize: 13 }}>
                               {paginatedRoomOrders.map((ord) => {
+                                const isConfirmedWaiting = ord.status === 'ORDERED' && Boolean(ord.staffConfirmed);
+                                const isPendingConfirm = ord.status === 'ORDERED' && !ord.staffConfirmed;
                                 const statusBg =
                                   ord.status === 'COMPLETED'
                                     ? 'success'
-                                    : ord.status === 'ORDERED'
+                                    : isConfirmedWaiting
+                                    ? 'primary'
+                                    : isPendingConfirm
                                     ? 'warning'
                                     : 'secondary';
                                 const statusLabel =
                                   ord.status === 'COMPLETED'
                                     ? 'Đã phục vụ (COMPLETED)'
-                                    : ord.status === 'ORDERED'
-                                    ? 'Đang chuẩn bị (ORDERED)'
+                                    : isConfirmedWaiting
+                                    ? 'Đã xác nhận - Chờ phục vụ'
+                                    : isPendingConfirm
+                                    ? 'Chờ nhân viên xác nhận'
                                     : ord.status === 'VOIDED'
                                     ? 'Đã hủy (VOIDED)'
                                     : ord.status;
@@ -1300,6 +1388,20 @@ export const CustomerServiceOrderPage = () => {
                                       {ord.category && <div className="small text-secondary">{ord.category}</div>}
                                     </td>
                                     <td className="text-center fw-semibold">{ord.quantity}</td>
+                                    <td style={{ maxWidth: 220 }}>
+                                      {ord.notes ? (
+                                        <div className="small text-dark" style={{ wordBreak: 'break-word' }}>
+                                          {formatOrderNotes(ord.notes)}
+                                        </div>
+                                      ) : (
+                                        <span className="text-muted small">Tiêu chuẩn</span>
+                                      )}
+                                      {ord.status === 'VOIDED' && ord.cancelReason && (
+                                        <div className="small text-danger mt-1" style={{ wordBreak: 'break-word' }}>
+                                          Lý do hủy: {ord.cancelReason}
+                                        </div>
+                                      )}
+                                    </td>
                                     <td className="text-end text-secondary">{formatVND(ord.unitPrice)}</td>
                                     <td className="text-end fw-bold" style={{ color: '#C96442' }}>
                                       {formatVND(ord.totalAmount || ord.unitPrice * ord.quantity)}
@@ -1308,6 +1410,30 @@ export const CustomerServiceOrderPage = () => {
                                       <Badge bg={statusBg} text={statusBg === 'warning' ? 'dark' : 'white'} style={{ fontWeight: 500 }}>
                                         {statusLabel}
                                       </Badge>
+                                    </td>
+                                    <td className="text-center">
+                                      <div className="d-flex justify-content-center gap-1 flex-wrap">
+                                        <Button
+                                          size="sm"
+                                          variant="outline-primary"
+                                          onClick={() => setCustomerDetailModal({ mode: 'ROOM_ORDER', data: ord })}
+                                          style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 4 }}
+                                          title="Xem chi tiết đơn gọi dịch vụ tại phòng"
+                                        >
+                                          Chi tiết
+                                        </Button>
+                                        {isPendingConfirm && (
+                                          <Button
+                                            size="sm"
+                                            variant="outline-danger"
+                                            onClick={() => setVoidRoomOrderModal({ order: ord, reason: '' })}
+                                            style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 4 }}
+                                            title="Hủy đơn gọi món này (chỉ hủy được khi nhân viên chưa xác nhận tiếp nhận)"
+                                          >
+                                            Hủy đơn
+                                          </Button>
+                                        )}
+                                      </div>
                                     </td>
                                   </tr>
                                 );
@@ -1348,7 +1474,7 @@ export const CustomerServiceOrderPage = () => {
       >
         <Modal.Header closeButton={!submittingOrder} style={{ background: '#FAF9F5', borderBottom: '1px solid #E8E6DC' }}>
           <Modal.Title style={{ fontFamily: 'var(--font-display, serif)', fontSize: 18, color: '#16233B' }}>
-            🛎️ Xác Nhận Đặt Dịch Vụ Khách Sạn
+            Xác Nhận Đặt Dịch Vụ Khách Sạn
           </Modal.Title>
         </Modal.Header>
 
@@ -1374,7 +1500,7 @@ export const CustomerServiceOrderPage = () => {
                         fontSize: 12.5,
                       }}
                     >
-                      🚪 Giao tới {friendlyRoomNumber}
+                      Giao tới {friendlyRoomNumber}
                     </button>
                     <button
                       type="button"
@@ -1388,7 +1514,7 @@ export const CustomerServiceOrderPage = () => {
                         fontSize: 12.5,
                       }}
                     >
-                      ✈️ Đặt trước cho chuyến đi #{currentReservation?.reservationCode}
+                      Đặt trước cho chuyến đi #{currentReservation?.reservationCode}
                     </button>
                   </div>
                 )}
@@ -1492,19 +1618,34 @@ export const CustomerServiceOrderPage = () => {
                     </div>
                   </>
                 ) : (
-                  <div>
-                    <Form.Label className="small fw-semibold text-dark mb-1">
-                      Ghi chú cho phục vụ <span className="text-secondary fw-normal">(tùy chọn)</span>
-                    </Form.Label>
-                    <Form.Control
-                      as="textarea"
-                      rows={2}
-                      placeholder="Ví dụ: Ít đá, không đường, mang thêm ly, giao lúc 19:30..."
-                      value={roomServiceNotes}
-                      onChange={(e) => setRoomServiceNotes(e.target.value)}
-                      style={{ fontSize: 13 }}
-                    />
-                  </div>
+                  <>
+                    <div>
+                      <Form.Label className="small fw-semibold text-dark mb-1">
+                        Thời gian muốn nhận / phục vụ tại phòng <span className="text-danger">*</span>
+                      </Form.Label>
+                      <Form.Control
+                        type="text"
+                        placeholder="Ví dụ: Giao ngay, 19:30 tối nay, hoặc 07:00 sáng mai..."
+                        value={scheduledTime}
+                        onChange={(e) => setScheduledTime(e.target.value)}
+                        required
+                        style={{ fontSize: 13 }}
+                      />
+                    </div>
+                    <div>
+                      <Form.Label className="small fw-semibold text-dark mb-1">
+                        Yêu cầu / Ghi chú cho phục vụ <span className="text-secondary fw-normal">(tùy chọn)</span>
+                      </Form.Label>
+                      <Form.Control
+                        as="textarea"
+                        rows={2}
+                        placeholder="Ví dụ: Ít đá, không đường, mang thêm ly, gõ cửa nhẹ..."
+                        value={roomServiceNotes}
+                        onChange={(e) => setRoomServiceNotes(e.target.value)}
+                        style={{ fontSize: 13 }}
+                      />
+                    </div>
+                  </>
                 )}
 
                 {/* Tạm tính chi phí */}
@@ -1564,7 +1705,7 @@ export const CustomerServiceOrderPage = () => {
       <Modal show={!!cancelModalData} onHide={() => !cancellingPreOrder && setCancelModalData(null)} centered>
         <Modal.Header closeButton style={{ borderBottom: '1px solid #F1F5F9' }}>
           <Modal.Title style={{ fontSize: 16, fontWeight: 700, color: '#16233B' }}>
-            ⚠️ Xác Nhận Hủy Dịch Vụ Đặt Trước
+            Xác Nhận Hủy Dịch Vụ Đặt Trước
           </Modal.Title>
         </Modal.Header>
         <Modal.Body className="p-3">
@@ -1588,18 +1729,47 @@ export const CustomerServiceOrderPage = () => {
             </div>
             {cancelModalData?.scheduledTime && (
               <div className="text-secondary small mt-1">
-                ⏱ Thời gian hẹn: <strong className="text-dark">{cancelModalData.scheduledTime}</strong>
+                Thời gian hẹn: <strong className="text-dark">{cancelModalData.scheduledTime}</strong>
               </div>
             )}
             {cancelModalData?.details && cancelModalData.details !== 'Không' && (
               <div className="text-secondary small">
-                📍 Chi tiết: {cancelModalData.details}
+                Chi tiết: {cancelModalData.details}
               </div>
             )}
           </div>
 
+          {Number(cancelModalData?.quantity) > 1 && (
+            <div className="mb-3 p-2.5 rounded-2" style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', padding: '10px 12px' }}>
+              <Form.Label className="fw-semibold mb-1 text-dark" style={{ fontSize: 12.5 }}>
+                Số lượng muốn hủy (Đang đặt: {cancelModalData?.quantity} suất):
+              </Form.Label>
+              <div className="d-flex align-items-center gap-2">
+                <Form.Select
+                  size="sm"
+                  value={cancelModalData?.cancelQty || cancelModalData?.quantity}
+                  onChange={(e) =>
+                    setCancelModalData((prev) => ({
+                      ...prev,
+                      cancelQty: Number(e.target.value),
+                    }))
+                  }
+                  style={{ maxWidth: 210, fontSize: 13 }}
+                >
+                  {Array.from({ length: Number(cancelModalData?.quantity) || 1 }, (_, i) => i + 1).map((num) => (
+                    <option key={num} value={num}>
+                      {num === Number(cancelModalData?.quantity)
+                        ? `Hủy toàn bộ (${num} suất)`
+                        : `Hủy ${num} suất (Giữ lại ${Number(cancelModalData?.quantity) - num} suất)`}
+                    </option>
+                  ))}
+                </Form.Select>
+              </div>
+            </div>
+          )}
+
           <div className="text-muted small" style={{ fontSize: 12 }}>
-            ℹ️ Sau khi hủy, yêu cầu sẽ được gỡ khỏi lịch trình đón tiếp của khách sạn. Quý khách vẫn có thể đặt lại bất kỳ lúc nào trước khi nhận phòng.
+            Sau khi hủy, yêu cầu sẽ được cập nhật khỏi lịch trình đón tiếp của khách sạn. Quý khách vẫn có thể đặt lại bất kỳ lúc nào trước khi nhận phòng.
           </div>
         </Modal.Body>
         <Modal.Footer style={{ borderTop: '1px solid #F1F5F9', padding: '10px 16px' }}>
@@ -1627,6 +1797,251 @@ export const CustomerServiceOrderPage = () => {
             ) : (
               'Xác nhận hủy'
             )}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      {/* Modal Hủy Đơn Dịch Vụ Gọi Tại Phòng (Khi đơn còn ORDERED) */}
+      <Modal show={!!voidRoomOrderModal} onHide={() => !voidingRoomOrder && setVoidRoomOrderModal(null)} centered>
+        <Modal.Header closeButton style={{ borderBottom: '1px solid #F1F5F9' }}>
+          <Modal.Title style={{ fontSize: 16, fontWeight: 700, color: '#16233B' }}>
+            Hủy Đơn Gọi Dịch Vụ Phòng #{voidRoomOrderModal?.order?.serviceOrderId}
+          </Modal.Title>
+        </Modal.Header>
+        <Form onSubmit={handleConfirmVoidRoomOrder}>
+          <Modal.Body className="p-3">
+            <div
+              style={{
+                background: '#FFF1F2',
+                border: '1px solid #FFE4E6',
+                borderRadius: 8,
+                padding: '12px 14px',
+                fontSize: 13,
+                marginBottom: 12,
+              }}
+            >
+              <div className="fw-bold" style={{ color: '#BE123C', fontSize: 14 }}>
+                {voidRoomOrderModal?.order?.serviceName} (SL: {voidRoomOrderModal?.order?.quantity})
+              </div>
+              <div className="text-secondary small mt-1">
+                Thành tiền: <strong className="text-dark">{formatVND(voidRoomOrderModal?.order?.totalAmount)}</strong>
+              </div>
+              {voidRoomOrderModal?.order?.notes && (
+                <div className="text-secondary small mt-1">
+                  Ghi chú đã gửi: {formatOrderNotes(voidRoomOrderModal.order.notes)}
+                </div>
+              )}
+            </div>
+
+            <Form.Group className="mb-2">
+              <Form.Label className="fw-semibold" style={{ fontSize: 13 }}>
+                Lý do hủy đơn <span className="text-danger">*</span>
+              </Form.Label>
+              <Form.Control
+                as="textarea"
+                rows={2}
+                required
+                placeholder="VD: Đặt nhầm món, đổi sang món khác, không còn nhu cầu..."
+                value={voidRoomOrderModal?.reason || ''}
+                onChange={(e) =>
+                  setVoidRoomOrderModal((prev) => (prev ? { ...prev, reason: e.target.value } : null))
+                }
+                style={{ fontSize: 13 }}
+              />
+            </Form.Group>
+            <div className="text-muted small" style={{ fontSize: 12 }}>
+              Đơn đang ở trạng thái <strong>Chờ nhân viên xác nhận</strong>. Khi nhân viên đã xác nhận tiếp nhận chuẩn bị phục vụ, đơn sẽ được khóa hủy.
+            </div>
+          </Modal.Body>
+          <Modal.Footer style={{ borderTop: '1px solid #F1F5F9', padding: '10px 16px' }}>
+            <Button
+              variant="outline-secondary"
+              size="sm"
+              onClick={() => setVoidRoomOrderModal(null)}
+              disabled={voidingRoomOrder}
+              style={{ fontSize: 12.5, borderRadius: 6 }}
+            >
+              Đóng
+            </Button>
+            <Button
+              type="submit"
+              variant="danger"
+              size="sm"
+              disabled={voidingRoomOrder}
+              style={{ fontSize: 12.5, borderRadius: 6, fontWeight: 600 }}
+            >
+              {voidingRoomOrder ? (
+                <>
+                  <Spinner size="sm" animation="border" className="me-1" />
+                  Đang hủy...
+                </>
+              ) : (
+                'Xác nhận hủy đơn'
+              )}
+            </Button>
+          </Modal.Footer>
+        </Form>
+      </Modal>
+
+      {/* Modal Xem Chi Tiết Đơn Dịch Vụ / Lịch Đặt Trước Của Khách Hàng */}
+      <Modal show={!!customerDetailModal} onHide={() => setCustomerDetailModal(null)} centered>
+        <Modal.Header closeButton style={{ background: '#FAF9F5', borderBottom: '1px solid #E8E6DC' }}>
+          <Modal.Title style={{ fontSize: 16, fontWeight: 700, color: '#16233B' }}>
+            {customerDetailModal?.mode === 'PRE_ORDER'
+              ? 'Chi Tiết Lịch Đặt Trước Dịch Vụ'
+              : `Chi Tiết Đơn Phục Vụ Tại Phòng #${customerDetailModal?.data?.serviceOrderId || ''}`}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="p-3" style={{ fontSize: 13.5 }}>
+          {customerDetailModal?.mode === 'PRE_ORDER' && customerDetailModal.data && (
+            <div className="d-flex flex-column gap-2">
+              <div className="p-3 rounded-3" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
+                <div className="fw-bold" style={{ fontSize: 15, color: '#0369A1' }}>
+                  {customerDetailModal.data.serviceName}
+                </div>
+                <div className="small text-secondary mt-1">
+                  Mã đặt phòng: <strong className="text-dark">#{customerDetailModal.data.reservationCode}</strong> • Hạng phòng:{' '}
+                  <strong className="text-dark">{customerDetailModal.data.roomTypeName}</strong>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-3" style={{ background: '#FFFFFF', border: '1px solid #E2E8F0' }}>
+                <div className="row g-2">
+                  <div className="col-6">
+                    <div className="text-secondary small">Số lượng đặt:</div>
+                    <div className="fw-bold text-dark">{customerDetailModal.data.quantity} suất</div>
+                  </div>
+                  <div className="col-6">
+                    <div className="text-secondary small">Trạng thái:</div>
+                    {customerDetailModal.data.matchedOrder?.status === 'COMPLETED' ? (
+                      <Badge bg="success">Đã hoàn thành &amp; Tính Folio</Badge>
+                    ) : customerDetailModal.data.matchedOrder?.status === 'ORDERED' ? (
+                      <Badge bg="primary">Đang phục vụ</Badge>
+                    ) : customerDetailModal.data.isCheckedIn ? (
+                      <Badge bg="warning" text="dark">Chờ hoàn thành &amp; gộp Folio</Badge>
+                    ) : (
+                      <Badge bg="info" text="dark">Đã ghi nhận (Chờ check-in)</Badge>
+                    )}
+                  </div>
+                  <div className="col-12 mt-2">
+                    <div className="text-secondary small">Thời gian hẹn phục vụ / đón tiếp:</div>
+                    <div className="fw-semibold text-primary mt-0.5">
+                      {customerDetailModal.data.scheduledTime || 'Trước khi nhận phòng (Tiêu chuẩn)'}
+                    </div>
+                  </div>
+                  <div className="col-12 mt-2">
+                    <div className="text-secondary small">Chi tiết chuyến bay / Yêu cầu ghi chú:</div>
+                    <div
+                      className="p-2 rounded-2 mt-1 text-dark"
+                      style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}
+                    >
+                      {customerDetailModal.data.details || 'Không có ghi chú đặc biệt'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {customerDetailModal?.mode === 'ROOM_ORDER' && customerDetailModal.data && (
+            <div className="d-flex flex-column gap-2">
+              <div className="p-3 rounded-3" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                <div className="d-flex justify-content-between align-items-start">
+                  <div>
+                    <div className="fw-bold" style={{ fontSize: 15, color: '#166534' }}>
+                      {customerDetailModal.data.serviceName}
+                    </div>
+                    <div className="small text-secondary mt-0.5">
+                      Danh mục: {customerDetailModal.data.category || 'Dịch vụ phòng'} • Phòng: <strong>{friendlyRoomNumber}</strong>
+                    </div>
+                  </div>
+                  <Badge
+                    bg={
+                      customerDetailModal.data.status === 'COMPLETED'
+                        ? 'success'
+                        : customerDetailModal.data.status === 'ORDERED' && customerDetailModal.data.staffConfirmed
+                        ? 'primary'
+                        : customerDetailModal.data.status === 'ORDERED'
+                        ? 'warning'
+                        : 'secondary'
+                    }
+                    text={
+                      customerDetailModal.data.status === 'ORDERED' && !customerDetailModal.data.staffConfirmed
+                        ? 'dark'
+                        : 'white'
+                    }
+                  >
+                    {customerDetailModal.data.status === 'COMPLETED'
+                      ? 'Đã phục vụ (COMPLETED)'
+                      : customerDetailModal.data.status === 'ORDERED' && customerDetailModal.data.staffConfirmed
+                      ? 'Đã xác nhận - Chờ phục vụ'
+                      : customerDetailModal.data.status === 'ORDERED'
+                      ? 'Chờ nhân viên xác nhận'
+                      : 'Đã hủy (VOIDED)'}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-3" style={{ background: '#FFFFFF', border: '1px solid #E2E8F0' }}>
+                <div className="row g-2">
+                  <div className="col-6">
+                    <div className="text-secondary small">Mã đơn dịch vụ:</div>
+                    <div className="fw-bold text-dark">#{customerDetailModal.data.serviceOrderId}</div>
+                  </div>
+                  <div className="col-6">
+                    <div className="text-secondary small">Thời gian đặt:</div>
+                    <div className="fw-semibold text-dark">{formatDateTime(customerDetailModal.data.orderTime)}</div>
+                  </div>
+                  <div className="col-4 mt-2">
+                    <div className="text-secondary small">Số lượng:</div>
+                    <div className="fw-bold text-dark">{customerDetailModal.data.quantity}</div>
+                  </div>
+                  <div className="col-4 mt-2">
+                    <div className="text-secondary small">Đơn giá:</div>
+                    <div className="text-dark">{formatVND(customerDetailModal.data.unitPrice)}</div>
+                  </div>
+                  <div className="col-4 mt-2">
+                    <div className="text-secondary small">Thành tiền:</div>
+                    <div className="fw-bold" style={{ color: '#C96442' }}>
+                      {formatVND(
+                        customerDetailModal.data.totalAmount ||
+                          customerDetailModal.data.unitPrice * customerDetailModal.data.quantity
+                      )}
+                    </div>
+                  </div>
+                  <div className="col-12 mt-2">
+                    <div className="text-secondary small">Ghi chú / Thời gian muốn nhận tại phòng:</div>
+                    <div
+                      className="p-2 rounded-2 mt-1 text-dark"
+                      style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}
+                    >
+                      {formatOrderNotes(customerDetailModal.data.notes) || 'Giao ngay tiêu chuẩn (Không có ghi chú riêng)'}
+                    </div>
+                  </div>
+                  {customerDetailModal.data.status === 'VOIDED' && customerDetailModal.data.cancelReason && (
+                    <div className="col-12 mt-2">
+                      <div className="text-danger small fw-semibold">Lý do hủy đơn:</div>
+                      <div
+                        className="p-2 rounded-2 mt-1 text-danger"
+                        style={{ background: '#FFF1F2', border: '1px solid #FFE4E6' }}
+                      >
+                        {customerDetailModal.data.cancelReason}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </Modal.Body>
+        <Modal.Footer style={{ borderTop: '1px solid #F1F5F9', padding: '10px 16px' }}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setCustomerDetailModal(null)}
+            style={{ fontSize: 12.5, borderRadius: 6 }}
+          >
+            Đóng
           </Button>
         </Modal.Footer>
       </Modal>

@@ -16,13 +16,21 @@ export const billingApi = {
   getMyConfirmedReservations: () => http.get('/billing/my-confirmed-reservations'),
   getAllUpcomingPreOrders: () => http.get('/billing/pre-orders'),
   createPreOrder: (data) => http.post('/billing/pre-orders', data),
-  cancelPreOrder: (reservationId, serviceId) =>
-    http.delete('/billing/pre-orders', { params: { reservationId, serviceId } }),
+  cancelPreOrder: (reservationId, serviceId, itemIndex = null, cancelQuantity = null) =>
+    http.delete('/billing/pre-orders', {
+      params: {
+        reservationId,
+        serviceId,
+        ...(itemIndex !== null && itemIndex !== undefined ? { itemIndex } : {}),
+        ...(cancelQuantity !== null && cancelQuantity !== undefined ? { cancelQuantity } : {}),
+      },
+    }),
   getAllServices: () => http.get('/billing/services/all'),
   createService: (data) => http.post('/billing/services', data),
   updateService: (serviceId, data) => http.put(`/billing/services/${serviceId}`, data),
   toggleServiceStatus: (serviceId, status) =>
     http.patch(`/billing/services/${serviceId}/status`, null, { params: { status } }),
+  confirmServiceOrder: (orderId) => http.patch(`/billing/service-orders/${orderId}/confirm`),
   completeServiceOrder: (orderId) => http.patch(`/billing/service-orders/${orderId}/complete`),
   voidServiceOrder: (orderId, cancelReason) =>
     http.patch(`/billing/service-orders/${orderId}/void`, null, { params: { cancelReason } }),
