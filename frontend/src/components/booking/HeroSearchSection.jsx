@@ -85,12 +85,12 @@ export const HeroSearchSection = ({
                     onChange={(e) => setGuestCount(e.target.value)}
                   >
                     <option value="1">1 khách người lớn</option>
-                    <option value="2">2 khách (Cặp đôi / Tiêu chuẩn)</option>
-                    <option value="3">3 khách (Phòng Premier / Gia đình nhỏ)</option>
-                    <option value="4">4 khách (Gia đình / Suite)</option>
-                    <option value="5">5 khách (Penthouse)</option>
-                    <option value="6">6 khách (Presidential Penthouse)</option>
-                    <option value="8">8 khách (Đoàn lớn - Kiểm tra hết chỗ)</option>
+                    <option value="2">2 khách</option>
+                    <option value="3">3 khách</option>
+                    <option value="4">4 khách</option>
+                    <option value="5">5 khách</option>
+                    <option value="6">6 khách</option>
+                    <option value="8">8 khách</option>
                   </Form.Select>
                 </Form.Group>
               </Col>
