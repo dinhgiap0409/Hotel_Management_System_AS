@@ -22,8 +22,10 @@ public interface BillingService {
     List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto> getActiveStaysForSelect(Integer callerAccountId, String callerRole);
     List<ServiceOrderDto> getServiceOrders(Integer stayId, Integer callerAccountId, String callerRole);
     ServiceOrderDto orderServiceToFolio(ServiceOrderRequest request, Integer callerAccountId, String callerRole);
+    ServiceOrderDto confirmServiceOrder(Integer orderId, Integer callerAccountId);
     ServiceOrderDto completeServiceOrder(Integer orderId, Integer callerAccountId);
     ServiceOrderDto voidServiceOrder(Integer orderId, String cancelReason, Integer callerAccountId);
+    ServiceOrderDto voidServiceOrder(Integer orderId, String cancelReason, Integer callerAccountId, String callerRole);
 
     // Read-only voucher list (CRUD arrives in Feature 2)
     List<Voucher> getAllVouchers();
@@ -31,6 +33,7 @@ public interface BillingService {
     // Pre-order services before check-in (Airport Transfer, Buffet, Spa...)
     String savePreOrderToNotes(com.fpt.hms.dto.billing_report.PreOrderRequest request, Integer callerAccountId, String callerRole);
     String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer callerAccountId, String callerRole);
+    String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer itemIndex, Integer cancelQuantity, Integer callerAccountId, String callerRole);
     List<com.fpt.hms.dto.booking.ReservationDto> getMyConfirmedReservations(Integer callerAccountId);
     List<com.fpt.hms.dto.booking.ReservationDto> getAllUpcomingPreOrders();
 

@@ -178,13 +178,24 @@ public class BillingServiceImpl implements BillingService {
         }
 
         // BR-27: snapshot unit_price at ordering time. Folio is charged when the order is COMPLETED.
+        boolean isStaffCreator = callerRole != null && !"CUSTOMER".equalsIgnoreCase(callerRole);
+        String userNotes = (request.getNotes() != null && !request.getNotes().trim().isEmpty())
+                ? "[GHI CHÚ] " + request.getNotes().trim()
+                : null;
+        String initialMeta;
+        if (isStaffCreator) {
+            initialMeta = userNotes != null ? "[ĐÃ XÁC NHẬN] " + userNotes : "[ĐÃ XÁC NHẬN]";
+        } else {
+            initialMeta = userNotes;
+        }
         ServiceOrder order = ServiceOrder.builder()
                 .guestStay(stay)
                 .hotelService(service)
-                .recordedByStaff(findStaff(callerAccountId))
+                .recordedByStaff(isStaffCreator ? findStaff(callerAccountId) : null)
                 .orderTime(Instant.now())
                 .quantity(request.getQuantity())
                 .unitPrice(service.getUnitPrice())
+                .cancelReason(initialMeta)
                 .status(ServiceOrderStatus.ORDERED.name())
                 .build();
         return toDto(serviceOrderRepository.save(order));
@@ -192,8 +203,34 @@ public class BillingServiceImpl implements BillingService {
 
     @Override
     @Transactional
+    public ServiceOrderDto confirmServiceOrder(Integer orderId, Integer callerAccountId) {
+        ServiceOrder order = findOrder(orderId);
+        if (!ServiceOrderStatus.ORDERED.name().equals(order.getStatus())) {
+            throw new BusinessException("SERVICE_ORDER_STATE", "Chỉ đơn dịch vụ đang chờ xác nhận mới có thể thực hiện xác nhận.");
+        }
+        if (isOrderConfirmedByStaff(order)) {
+            return toDto(order);
+        }
+        Staff staff = findStaff(callerAccountId);
+        if (staff != null) {
+            order.setRecordedByStaff(staff);
+        }
+        String currentRaw = order.getCancelReason();
+        if (currentRaw == null || currentRaw.isBlank()) {
+            order.setCancelReason("[ĐÃ XÁC NHẬN]");
+        } else if (!currentRaw.contains("[ĐÃ XÁC NHẬN]")) {
+            order.setCancelReason("[ĐÃ XÁC NHẬN] " + currentRaw.trim());
+        }
+        return toDto(serviceOrderRepository.save(order));
+    }
+
+    @Override
+    @Transactional
     public ServiceOrderDto completeServiceOrder(Integer orderId, Integer callerAccountId) {
         ServiceOrder order = findOrder(orderId);
+        if (!isOrderConfirmedByStaff(order)) {
+            throw new BusinessException("ORDER_NOT_CONFIRMED", "Đơn dịch vụ của khách phải được nhân viên xác nhận chuyển sang chờ phục vụ trước khi hoàn thành.");
+        }
         if (!ServiceOrderStatus.ORDERED.name().equals(order.getStatus())) {
             throw new BusinessException("SERVICE_ORDER_STATE", "Chá»‰ Ä‘Æ¡n dá»‹ch vá»¥ Ä‘ang chá» cung cáº¥p má»›i cÃ³ thá»ƒ hoÃ n thÃ nh.");
         }
@@ -221,17 +258,46 @@ public class BillingServiceImpl implements BillingService {
     @Override
     @Transactional
     public ServiceOrderDto voidServiceOrder(Integer orderId, String cancelReason, Integer callerAccountId) {
+        return voidServiceOrder(orderId, cancelReason, callerAccountId, null);
+    }
+
+    @Override
+    @Transactional
+    public ServiceOrderDto voidServiceOrder(Integer orderId, String cancelReason, Integer callerAccountId, String callerRole) {
         if (cancelReason == null || cancelReason.isBlank()) {
             throw new BusinessException("CANCEL_REASON_REQUIRED", "Vui lÃ²ng nháº­p lÃ½ do há»§y dá»‹ch vá»¥.");
         }
         ServiceOrder order = findOrder(orderId);
+        if ("CUSTOMER".equalsIgnoreCase(callerRole) && !isStayOwner(order.getGuestStay(), callerAccountId)) {
+            throw new BusinessException("AUTH_FORBIDDEN", "Quý khách không có quyền hủy đơn dịch vụ của phòng này.",
+                    org.springframework.http.HttpStatus.FORBIDDEN);
+        }
         // UC-36: only services that have not been provided yet can be voided.
         if (!ServiceOrderStatus.ORDERED.name().equals(order.getStatus())) {
             throw new BusinessException("SERVICE_ORDER_STATE", "Chá»‰ Ä‘Æ°á»£c há»§y dá»‹ch vá»¥ chÆ°a cung cáº¥p.");
         }
+        if (isOrderConfirmedByStaff(order)) {
+            throw new BusinessException("ORDER_ALREADY_CONFIRMED",
+                    "Đơn dịch vụ đã được nhân viên xác nhận chuyển sang chờ phục vụ, không thể hủy.");
+        }
         order.setStatus(ServiceOrderStatus.VOIDED.name());
         order.setCancelledAt(Instant.now());
-        order.setCancelReason(cancelReason.trim());
+
+        String formattedReason = "CUSTOMER".equalsIgnoreCase(callerRole)
+                ? "Khách hàng hủy: " + cancelReason.trim()
+                : cancelReason.trim();
+
+        String currentRaw = order.getCancelReason();
+        if (currentRaw != null && currentRaw.contains("[GHI CHÚ] ")) {
+            int noteStart = currentRaw.indexOf("[GHI CHÚ] ");
+            String existingNotes = currentRaw.contains(" || [HỦY] ")
+                    ? currentRaw.substring(noteStart, currentRaw.indexOf(" || [HỦY] "))
+                    : currentRaw.substring(noteStart);
+            order.setCancelReason(existingNotes + " || [HỦY] " + formattedReason);
+        } else {
+            order.setCancelReason(formattedReason);
+        }
+
         order.setCancelledByStaff(findStaff(callerAccountId));
         return toDto(serviceOrderRepository.save(order));
     }
@@ -271,6 +337,13 @@ public class BillingServiceImpl implements BillingService {
         return order.getUnitPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
     }
 
+    private boolean isOrderConfirmedByStaff(ServiceOrder o) {
+        if (o == null) return false;
+        if (o.getRecordedByStaff() != null) return true;
+        String raw = o.getCancelReason();
+        return raw != null && raw.contains("[ĐÃ XÁC NHẬN]");
+    }
+
     private ServiceOrderDto toDto(ServiceOrder o) {
         GuestStay stay = o.getGuestStay();
         Reservation reservation = stay.getReservation();
@@ -283,6 +356,27 @@ public class BillingServiceImpl implements BillingService {
             roomNumber = stay.getRoomAssignments().get(stay.getRoomAssignments().size() - 1)
                     .getRoom().getRoomNumber();
         }
+        boolean staffConfirmed = isOrderConfirmedByStaff(o);
+        String rawReason = o.getCancelReason();
+        String extractedNotes = null;
+        String extractedCancelReason = null;
+        if (rawReason != null) {
+            String cleaned = rawReason.replace("[ĐÃ XÁC NHẬN]", "").trim();
+            if (!cleaned.isEmpty()) {
+                if (cleaned.startsWith("[GHI CHÚ] ")) {
+                    if (cleaned.contains(" || [HỦY] ")) {
+                        int sepIdx = cleaned.indexOf(" || [HỦY] ");
+                        extractedNotes = cleaned.substring("[GHI CHÚ] ".length(), sepIdx).trim();
+                        extractedCancelReason = cleaned.substring(sepIdx + " || [HỦY] ".length()).trim();
+                    } else {
+                        extractedNotes = cleaned.substring("[GHI CHÚ] ".length()).trim();
+                    }
+                } else {
+                    extractedCancelReason = cleaned;
+                }
+            }
+        }
+
         return ServiceOrderDto.builder()
                 .serviceOrderId(o.getServiceOrderId())
                 .stayId(stay.getStayId())
@@ -299,7 +393,9 @@ public class BillingServiceImpl implements BillingService {
                 .orderTime(o.getOrderTime())
                 .completedAt(o.getCompletedAt())
                 .cancelledAt(o.getCancelledAt())
-                .cancelReason(o.getCancelReason())
+                .notes(extractedNotes)
+                .cancelReason(extractedCancelReason)
+                .staffConfirmed(staffConfirmed)
                 .status(o.getStatus())
                 .build();
     }
@@ -431,6 +527,12 @@ public class BillingServiceImpl implements BillingService {
     @Override
     @Transactional
     public String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer callerAccountId, String callerRole) {
+        return cancelPreOrderFromNotes(reservationId, serviceId, null, null, callerAccountId, callerRole);
+    }
+
+    @Override
+    @Transactional
+    public String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer itemIndex, Integer cancelQuantity, Integer callerAccountId, String callerRole) {
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng."));
 
@@ -442,29 +544,77 @@ public class BillingServiceImpl implements BillingService {
             }
         }
 
-        // Kiểm tra xem dịch vụ này đã nạp vào phòng / tính vào Folio chưa
-        java.util.Optional<GuestStay> stayOpt = guestStayRepository.findByReservation_ReservationId(reservationId);
-        if (stayOpt.isPresent()) {
-            GuestStay stay = stayOpt.get();
-            boolean hasActiveOrCompletedOrder = serviceOrderRepository.findByGuestStay_StayIdOrderByOrderTimeDesc(stay.getStayId())
-                    .stream()
-                    .anyMatch(o -> o.getHotelService() != null
-                            && o.getHotelService().getServiceId().equals(serviceId)
-                            && ("ORDERED".equalsIgnoreCase(o.getStatus()) || "COMPLETED".equalsIgnoreCase(o.getStatus())));
-            if (hasActiveOrCompletedOrder) {
-                throw new BusinessException("PREORDER_ALREADY_CHARGED",
-                        "Dịch vụ này đã được nạp vào phòng / Folio của khách, không thể hủy từ danh sách đặt trước. Vui lòng hủy thông qua đơn gọi dịch vụ phòng.");
+        String notes = reservation.getSpecialNotes();
+        if (notes == null || notes.isBlank()) {
+            return "Đã hủy dịch vụ đặt trước thành công.";
+        }
+
+        String[] lines = notes.split("\n");
+        java.util.regex.Pattern qtyPattern = java.util.regex.Pattern.compile("SL:\\s*(\\d+)");
+
+        int totalPreOrderedForService = 0;
+        for (String line : lines) {
+            if (line.contains("[ĐẶT TRƯỚC]") && line.contains("Mã DV: " + serviceId + ")")) {
+                java.util.regex.Matcher m = qtyPattern.matcher(line);
+                totalPreOrderedForService += m.find() ? Integer.parseInt(m.group(1)) : 1;
             }
         }
 
-        String notes = reservation.getSpecialNotes();
-        if (notes != null && !notes.isBlank()) {
-            String updatedNotes = java.util.Arrays.stream(notes.split("\n"))
-                    .filter(line -> !(line.contains("[ĐẶT TRƯỚC]") && line.contains("Mã DV: " + serviceId + ")")))
-                    .collect(java.util.stream.Collectors.joining("\n"));
-            reservation.setSpecialNotes(updatedNotes.trim().isEmpty() ? null : updatedNotes.trim());
-            reservationRepository.save(reservation);
+        int totalChargedOrOrdered = 0;
+        java.util.Optional<GuestStay> stayOpt = guestStayRepository.findByReservation_ReservationId(reservationId);
+        if (stayOpt.isPresent()) {
+            GuestStay stay = stayOpt.get();
+            totalChargedOrOrdered = serviceOrderRepository.findByGuestStay_StayIdOrderByOrderTimeDesc(stay.getStayId())
+                    .stream()
+                    .filter(o -> o.getHotelService() != null
+                            && o.getHotelService().getServiceId().equals(serviceId)
+                            && ("ORDERED".equalsIgnoreCase(o.getStatus()) || "COMPLETED".equalsIgnoreCase(o.getStatus())))
+                    .mapToInt(o -> o.getQuantity() != null ? o.getQuantity() : 1)
+                    .sum();
         }
+
+        int unchargedRemaining = totalPreOrderedForService - totalChargedOrOrdered;
+
+        java.util.List<String> updatedLines = new java.util.ArrayList<>();
+        int currentPreOrderIdx = 0;
+        boolean targetHandled = false;
+
+        for (String line : lines) {
+            if (line.contains("[ĐẶT TRƯỚC]")) {
+                boolean isServiceMatch = line.contains("Mã DV: " + serviceId + ")");
+                boolean isIndexMatch = (itemIndex == null) || (currentPreOrderIdx == itemIndex);
+
+                if (!targetHandled && isServiceMatch && isIndexMatch) {
+                    java.util.regex.Matcher m = qtyPattern.matcher(line);
+                    int lineQty = m.find() ? Integer.parseInt(m.group(1)) : 1;
+                    int qtyToCancel = (cancelQuantity != null && cancelQuantity > 0)
+                            ? Math.min(cancelQuantity, lineQty)
+                            : lineQty;
+
+                    if (stayOpt.isPresent() && qtyToCancel > unchargedRemaining) {
+                        throw new BusinessException("PREORDER_ALREADY_CHARGED",
+                                "Dịch vụ này đã được nạp vào phòng / Folio của khách, không thể hủy từ danh sách đặt trước. Vui lòng hủy thông qua đơn gọi dịch vụ phòng.");
+                    }
+
+                    if (qtyToCancel < lineQty) {
+                        int newQty = lineQty - qtyToCancel;
+                        String updatedLine = line.replaceFirst("SL:\\s*\\d+", "SL: " + newQty);
+                        updatedLines.add(updatedLine);
+                    }
+                    // Nếu qtyToCancel >= lineQty thì không add vào updatedLines (tức là xóa dòng này)
+                    targetHandled = true;
+                } else {
+                    updatedLines.add(line);
+                }
+                currentPreOrderIdx++;
+            } else {
+                updatedLines.add(line);
+            }
+        }
+
+        String updatedNotes = String.join("\n", updatedLines).trim();
+        reservation.setSpecialNotes(updatedNotes.isEmpty() ? null : updatedNotes);
+        reservationRepository.save(reservation);
 
         return "Đã hủy dịch vụ đặt trước thành công.";
     }
@@ -482,7 +632,10 @@ public class BillingServiceImpl implements BillingService {
 
         return reservationRepository.findByCustomer_CustomerIdOrderByReservationDateDesc(customer.getCustomerId())
                 .stream()
-                .filter(r -> "CONFIRMED".equalsIgnoreCase(r.getStatus()))
+                .filter(r -> "CONFIRMED".equalsIgnoreCase(r.getStatus())
+                        || ("CHECKED_IN".equalsIgnoreCase(r.getStatus())
+                                && r.getSpecialNotes() != null
+                                && r.getSpecialNotes().contains("[ĐẶT TRƯỚC]")))
                 .map(this::toReservationDto)
                 .toList();
     }

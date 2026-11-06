@@ -84,7 +84,7 @@ public class BillingController {
     }
 
     @GetMapping("/service-orders")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ACCOUNTANT', 'GENERAL_MANAGER')")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN')")
     @Operation(summary = "List service orders, optionally by stay (customers only see their own)")
     public ResponseEntity<List<ServiceOrderDto>> listServiceOrders(
             @RequestParam(required = false) Integer stayId,
@@ -93,28 +93,41 @@ public class BillingController {
     }
 
     @PostMapping("/service-orders")
-    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER')")
+    @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ADMIN')")
     @Operation(summary = "UC-35: Order an ancillary service for an ACTIVE guest stay")
     public ResponseEntity<ServiceOrderDto> orderService(@Valid @RequestBody ServiceOrderRequest request,
                                                         @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(billingService.orderServiceToFolio(request, principal.getAccountId(), principal.getRoleName()));
     }
 
+    @PatchMapping("/service-orders/{orderId}/confirm")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ADMIN', 'GENERAL_MANAGER')")
+    @Operation(summary = "UC-35: Staff (Front Desk or Service Staff/Manager) confirms a guest's service order to move it to waiting-for-service and lock cancellation")
+    public ResponseEntity<ServiceOrderDto> confirmServiceOrder(@PathVariable Integer orderId,
+                                                               @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.confirmServiceOrder(orderId, principal != null ? principal.getAccountId() : null));
+    }
+
     @PatchMapping("/service-orders/{orderId}/complete")
-    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'FRONT_DESK', 'ADMIN', 'GENERAL_MANAGER')")
-    @Operation(summary = "UC-35: Mark service as provided and post the charge to the stay folio")
+    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'ADMIN', 'GENERAL_MANAGER')")
+    @Operation(summary = "UC-35: Mark service as provided and post the charge to the stay folio (Service Staff/Manager only)")
     public ResponseEntity<ServiceOrderDto> completeServiceOrder(@PathVariable Integer orderId,
                                                                 @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(billingService.completeServiceOrder(orderId, principal.getAccountId()));
     }
 
     @PatchMapping("/service-orders/{orderId}/void")
-    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'FRONT_DESK')")
+    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'FRONT_DESK', 'ADMIN', 'GENERAL_MANAGER', 'CUSTOMER')")
     @Operation(summary = "UC-36: Void a service order that has not been provided yet")
     public ResponseEntity<ServiceOrderDto> voidServiceOrder(@PathVariable Integer orderId,
                                                             @RequestParam String cancelReason,
                                                             @AuthenticationPrincipal UserPrincipal principal) {
-        return ResponseEntity.ok(billingService.voidServiceOrder(orderId, cancelReason, principal.getAccountId()));
+        return ResponseEntity.ok(billingService.voidServiceOrder(
+                orderId,
+                cancelReason,
+                principal != null ? principal.getAccountId() : null,
+                principal != null ? principal.getRoleName() : null
+        ));
     }
 
     // ---------------------------------------------------------------- Pre-orders before check-in
@@ -134,14 +147,18 @@ public class BillingController {
 
     @DeleteMapping("/pre-orders")
     @PreAuthorize("hasAnyRole('CUSTOMER', 'FRONT_DESK', 'SERVICE_STAFF', 'SERVICE_MANAGER', 'ADMIN', 'GENERAL_MANAGER')")
-    @Operation(summary = "Hủy dịch vụ đặt trước của khách hàng (Xóa khỏi lịch hẹn trước)")
+    @Operation(summary = "Hủy dịch vụ đặt trước của khách hàng (Hỗ trợ hủy 1 phần hoặc hủy theo từng lượt đặt)")
     public ResponseEntity<String> cancelPreOrder(
             @RequestParam Integer reservationId,
             @RequestParam Integer serviceId,
+            @RequestParam(required = false) Integer itemIndex,
+            @RequestParam(required = false) Integer cancelQuantity,
             @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(billingService.cancelPreOrderFromNotes(
                 reservationId,
                 serviceId,
+                itemIndex,
+                cancelQuantity,
                 principal != null ? principal.getAccountId() : null,
                 principal != null ? principal.getRoleName() : null
         ));
