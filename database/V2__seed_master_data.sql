@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: fc90f85f684b23a0882f45b826f0a6cb53468836)-- =============================================================================
+-- =============================================================================
 -- HOTEL MANAGEMENT SYSTEM (HMS) - MASTER SEED DATA
 -- Default password for all sample accounts: Admin@123
 -- BCrypt Hash (cost 10) for "Admin@123": $2a$10$.cIM9Fza/3AtZ5yZwoUD6emyp9rDA0m/Q2CoQgYZ3VFs4O3xwXP76
@@ -128,9 +128,9 @@ ELSE
 
 IF NOT EXISTS (SELECT 1 FROM dbo.[Room_Type] WHERE type_name = N'Garden Villa Suite')
     INSERT INTO dbo.[Room_Type] (type_name, capacity, base_price, amenities, description, image_url, gallery_images, is_active)
-    VALUES (N'Garden Villa Suite', 4, 2650000.00, N'Wi-Fi, Private Terrace, 2 Bedrooms, Outdoor Jacuzzi, Minibar, Butler Service', N'Biệt thự sân vườn biệt lập với sân hiên riêng tư, bồn sục ngoài trời và không gian xanh mát.', N'https://images.unsplash.com/photo-1540518614846-7ede433c4573?auto=format&fit=crop&w=1000&q=80', N'https://images.unsplash.com/photo-1571003123894-1f0594d2b5d9?auto=format&fit=crop&w=1000&q=80,https://images.unsplash.com/photo-1615460549969-36fa19521a4f?auto=format&fit=crop&w=1000&q=80,https://images.unsplash.com/photo-1631049035182-249067d7618e?auto=format&fit=crop&w=1000&q=80', 1);
+    VALUES (N'Garden Villa Suite', 4, 2650000.00, N'Wi-Fi, Private Terrace, 2 Bedrooms, Outdoor Jacuzzi, Minibar, Butler Service', N'Biệt thự sân vườn biệt lập với sân hiên riêng tư, bồn sục ngoài trời và không gian xanh mát.', N'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1000&q=80', N'https://images.unsplash.com/photo-1571003123894-1f0594d2b5d9?auto=format&fit=crop&w=1000&q=80,https://images.unsplash.com/photo-1615460549969-36fa19521a4f?auto=format&fit=crop&w=1000&q=80,https://images.unsplash.com/photo-1631049035182-249067d7618e?auto=format&fit=crop&w=1000&q=80', 1);
 ELSE
-    UPDATE dbo.[Room_Type] SET description = N'Biệt thự sân vườn biệt lập với sân hiên riêng tư, bồn sục ngoài trời và không gian xanh mát.', image_url = N'https://images.unsplash.com/photo-1540518614846-7ede433c4573?auto=format&fit=crop&w=1000&q=80', gallery_images = N'https://images.unsplash.com/photo-1571003123894-1f0594d2b5d9?auto=format&fit=crop&w=1000&q=80,https://images.unsplash.com/photo-1615460549969-36fa19521a4f?auto=format&fit=crop&w=1000&q=80,https://images.unsplash.com/photo-1631049035182-249067d7618e?auto=format&fit=crop&w=1000&q=80' WHERE type_name = N'Garden Villa Suite';
+    UPDATE dbo.[Room_Type] SET description = N'Biệt thự sân vườn biệt lập với sân hiên riêng tư, bồn sục ngoài trời và không gian xanh mát.', image_url = N'https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1000&q=80', gallery_images = N'https://images.unsplash.com/photo-1571003123894-1f0594d2b5d9?auto=format&fit=crop&w=1000&q=80,https://images.unsplash.com/photo-1615460549969-36fa19521a4f?auto=format&fit=crop&w=1000&q=80,https://images.unsplash.com/photo-1631049035182-249067d7618e?auto=format&fit=crop&w=1000&q=80' WHERE type_name = N'Garden Villa Suite';
 
 IF NOT EXISTS (SELECT 1 FROM dbo.[Room_Type] WHERE type_name = N'Executive Suite')
     INSERT INTO dbo.[Room_Type] (type_name, capacity, base_price, amenities, description, image_url, gallery_images, is_active)

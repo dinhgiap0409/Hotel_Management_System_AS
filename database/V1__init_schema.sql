@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 823cb3856b63ead74a8496b7d3914301a20ae786)-- =============================================================================
+-- =============================================================================
 -- HOTEL MANAGEMENT SYSTEM (HMS) - MICROSOFT SQL SERVER SCHEMA
 -- Document Reference: HMS-SRS v1.2 & HMS-SDD v1.0 (Section 4.1 & Section 5.1)
 -- Includes 24 Core Domain Tables (a -> x) + 2 System Infrastructure Tables

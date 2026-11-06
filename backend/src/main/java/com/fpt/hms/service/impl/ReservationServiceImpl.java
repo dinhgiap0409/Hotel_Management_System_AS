@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 7965b0e0c0ed89f1c1fc0729c14113c059794b0d)package com.fpt.hms.service.impl;
+package com.fpt.hms.service.impl;
 
 import com.fpt.hms.common.AuditService;
 import com.fpt.hms.common.MessageResolver;

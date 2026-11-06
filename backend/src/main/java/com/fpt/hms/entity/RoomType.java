@@ -1,4 +1,4 @@
-successfully downloaded text file (SHA: 2a711a908fc6f13a929a87e5237bf8791ca77df1)package com.fpt.hms.entity;
+package com.fpt.hms.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
