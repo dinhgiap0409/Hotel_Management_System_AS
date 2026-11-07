@@ -1,5 +1,6 @@
 package com.fpt.hms.service.impl;
 
+import com.fpt.hms.common.AuditService;
 import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.dto.booking.*;
 import com.fpt.hms.entity.*;
@@ -13,6 +14,8 @@ import com.fpt.hms.integration.VnPayGatewayService;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.ReservationService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,6 +46,11 @@ public class ReservationServiceImpl implements ReservationService {
     private final MailNotificationService mailNotificationService;
     private final MessageResolver messageResolver;
     private final Clock hotelClock;
+    private final AuditService auditService;
+
+    /** BR-19 hold duration, configured in application.yml (app.booking.hold-hours, default 24h). */
+    @Value("${app.booking.hold-hours:24}")
+    private long bookingHoldHours;
 
     @Override
     @Transactional(readOnly = true)
@@ -93,8 +101,15 @@ public class ReservationServiceImpl implements ReservationService {
         return roomTypeRepository.findByIsActiveTrue().stream()
                 .filter(rt -> rt.getCapacity() != null && rt.getCapacity() >= guests)
                 .map(rt -> {
+                    // UC-21: one single price rule everywhere — the stay total is
+                    // the sum of the nightly Room_Type_Price tariffs for the
+                    // requested dates (weekend surcharge included), exactly as
+                    // getRoomCategoryDetails and createReservation charge it.
+                    // Never basePrice * nights here, or the card total would
+                    // differ from the detail/modal/deposit totals.
                     PublicRoomCategoryDto dto = toPublicRoomCategoryDto(
-                            rt, nonArchivedRooms, publishedReviews, nights, rt.getBasePrice().multiply(BigDecimal.valueOf(nights))
+                            rt, nonArchivedRooms, publishedReviews, nights,
+                            calculateNightlyTotal(rt, checkInDate, checkOutDate)
                     );
 
                     int totalActivePhysicalRooms = dto.getTotalActiveRooms() != null ? dto.getTotalActiveRooms() : 0;
@@ -134,6 +149,13 @@ public class ReservationServiceImpl implements ReservationService {
         RoomType rt = roomTypeRepository.findById(roomTypeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hạng phòng #" + roomTypeId));
 
+        // UC-22: only an active room type may be viewed in detail (BR-18).
+        // Inactive types are hidden from the catalog and must not be reachable
+        // by direct URL either.
+        if (Boolean.FALSE.equals(rt.getIsActive())) {
+            throw new BusinessException("BR-18", "Hạng phòng này hiện đang tạm ngưng, không xem được chi tiết.");
+        }
+
         List<Room> categoryRooms = roomRepository.findByRoomStatusNot(RoomStatus.ARCHIVED.name()).stream()
                 .filter(r -> r.getRoomType() != null && roomTypeId.equals(r.getRoomType().getRoomTypeId()))
                 .filter(r -> RoomStatus.ACTIVE.name().equalsIgnoreCase(r.getRoomStatus()))
@@ -162,38 +184,16 @@ public class ReservationServiceImpl implements ReservationService {
                         .toList()
                 : Collections.emptyList();
 
-        // Day-of-week tariffs from Room_Type_Price table in SQL Server
-        List<RoomTypePrice> dbTariffs = roomTypePriceRepository.findByRoomType_RoomTypeIdAndIsActiveTrue(roomTypeId);
-        Map<Integer, BigDecimal> tariffByDay = new HashMap<>();
-        for (RoomTypePrice rtp : dbTariffs) {
-            if (rtp.getDayOfWeek() != null && rtp.getPrice() != null) {
-                tariffByDay.put(rtp.getDayOfWeek(), rtp.getPrice());
-            }
-        }
-
-        String[] dayLabels = {"", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"};
-        List<DayOfWeekRateDto> dayOfWeekRates = new ArrayList<>();
-        for (int dow = 1; dow <= 7; dow++) {
-            BigDecimal rate = tariffByDay.getOrDefault(dow, rt.getBasePrice());
-            dayOfWeekRates.add(DayOfWeekRateDto.builder()
-                    .dayOfWeek(dow)
-                    .dayLabel(dayLabels[dow])
-                    .price(rate)
-                    .isWeekendSurcharge(rate.compareTo(rt.getBasePrice()) > 0)
-                    .build());
-        }
+        // Day-of-week tariffs from Room_Type_Price table in SQL Server.
+        // Shared helper with search/createReservation: one price rule.
+        List<DayOfWeekRateDto> dayOfWeekRates = buildDayOfWeekRates(rt);
 
         // Compute stay nights & estimated total if dates are provided
         Long nights = null;
         BigDecimal estimatedTotal = null;
         if (checkInDate != null && checkOutDate != null && checkOutDate.isAfter(checkInDate)) {
             nights = ChronoUnit.DAYS.between(checkInDate, checkOutDate);
-            BigDecimal sum = BigDecimal.ZERO;
-            for (LocalDate d = checkInDate; d.isBefore(checkOutDate); d = d.plusDays(1)) {
-                int dow = d.getDayOfWeek().getValue();
-                sum = sum.add(tariffByDay.getOrDefault(dow, rt.getBasePrice()));
-            }
-            estimatedTotal = sum;
+            estimatedTotal = calculateNightlyTotal(rt, checkInDate, checkOutDate);
         }
 
         // Verified Reviews from Review table in SQL Server
@@ -233,11 +233,20 @@ public class ReservationServiceImpl implements ReservationService {
                 })
                 .toList();
 
+        // UC-22 gallery: main photo + the room type's gallery_images, so the
+        // detail page shows 4 photos (overview, bed, bathroom, amenities)
+        // instead of the main photo plus a generic hotel placeholder.
+        // UC-22 gallery: main photo + the room type's gallery_images, so the
+        // detail page shows 4 photos (overview, bed, bathroom, amenities)
+        // instead of the main photo plus a generic hotel placeholder.
         List<String> photoGallery = new ArrayList<>();
         if (rt.getImageUrl() != null && !rt.getImageUrl().isBlank()) {
             photoGallery.add(rt.getImageUrl().trim());
         }
-        photoGallery.add("/images/hotel-bg.jpg");
+        photoGallery.addAll(rt.getGalleryImageList());
+        if (photoGallery.isEmpty()) {
+            photoGallery.add("/images/hotel-bg.jpg");
+        }
 
         return RoomCategoryDetailDto.builder()
                 .roomTypeId(rt.getRoomTypeId())
@@ -340,7 +349,46 @@ public class ReservationServiceImpl implements ReservationService {
                 .reviewCount(reviewCount)
                 .nights(nights)
                 .estimatedTotal(estimatedTotal)
+                .dayOfWeekRates(buildDayOfWeekRates(rt))
                 .build();
+    }
+
+    /**
+     * THE single price rule for the whole booking flow (UC-14, UC-21..23):
+     * the stay total is the sum of one nightly Room_Type_Price tariff per
+     * night of the stay (day-of-week price, weekend surcharge included).
+     * A weekday with no tariff row falls back to basePrice for that night
+     * only — the same rule getRoomCategoryDetails and createReservation use.
+     * Never basePrice * nights: that under-prices weekend stays and makes
+     * the card total differ from the detail/modal/deposit totals.
+     */
+    private BigDecimal calculateNightlyTotal(RoomType rt, LocalDate checkInDate, LocalDate checkOutDate) {
+        if (checkInDate == null || checkOutDate == null || !checkOutDate.isAfter(checkInDate)) {
+            return null;
+        }
+        Map<Integer, BigDecimal> tariffByDay = loadTariffMap(rt.getRoomTypeId());
+        BigDecimal sum = BigDecimal.ZERO;
+        for (LocalDate d = checkInDate; d.isBefore(checkOutDate); d = d.plusDays(1)) {
+            sum = sum.add(tariffByDay.getOrDefault(d.getDayOfWeek().getValue(), rt.getBasePrice()));
+        }
+        return sum;
+    }
+
+    /** Day-of-week tariff table for one room type, from Room_Type_Price. */
+    private List<DayOfWeekRateDto> buildDayOfWeekRates(RoomType rt) {
+        Map<Integer, BigDecimal> tariffByDay = loadTariffMap(rt.getRoomTypeId());
+        String[] dayLabels = {"", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"};
+        List<DayOfWeekRateDto> dayOfWeekRates = new ArrayList<>();
+        for (int dow = 1; dow <= 7; dow++) {
+            BigDecimal rate = tariffByDay.getOrDefault(dow, rt.getBasePrice());
+            dayOfWeekRates.add(DayOfWeekRateDto.builder()
+                    .dayOfWeek(dow)
+                    .dayLabel(dayLabels[dow])
+                    .price(rate)
+                    .isWeekendSurcharge(rate.compareTo(rt.getBasePrice()) > 0)
+                    .build());
+        }
+        return dayOfWeekRates;
     }
 
     private boolean belongsToRoomType(Review rev, Integer roomTypeId) {
@@ -402,6 +450,14 @@ public class ReservationServiceImpl implements ReservationService {
             customer = customerRepository.findByAccount_AccountId(accountId).orElse(null);
         }
         if (customer == null) {
+            // Reuse the existing customer record for this email instead of
+            // creating an orphan duplicate (e.g. a returning guest, or a
+            // logged-in customer whose profile was created by another flow).
+            // Note: the record is reused as-is; linking it to the account is
+            // a follow-up (needs AccountRepository here).
+            customer = customerRepository.findByEmailIgnoreCase(request.getContactEmail().trim()).orElse(null);
+        }
+        if (customer == null) {
             customer = customerRepository.save(Customer.builder()
                     .fullName(request.getContactName().trim())
                     .email(request.getContactEmail().trim())
@@ -413,8 +469,9 @@ public class ReservationServiceImpl implements ReservationService {
                 + UUID.randomUUID().toString().substring(0, 5).toUpperCase();
 
         Instant now = Instant.now(hotelClock);
-        // Configurable test hold duration: 3 minutes for quick test verification (standard production is 24 hours)
-        Instant holdExpiresAt = now.plus(3, ChronoUnit.MINUTES);
+        // BR-19: hold the room quota for app.booking.hold-hours (default 24h).
+        // The scheduler cancels PENDING reservations past this instant.
+        Instant holdExpiresAt = now.plus(bookingHoldHours, ChronoUnit.HOURS);
 
         // BR-19: New reservations start as PENDING and hold quota for 24 hours
         Reservation reservation = Reservation.builder()
@@ -456,6 +513,11 @@ public class ReservationServiceImpl implements ReservationService {
 
         Reservation savedReservation = reservationRepository.save(reservation);
 
+        auditService.recordAction(accountId, accountId != null ? "CUSTOMER" : "GUEST",
+                "RESERVATION_CREATED", "Reservation", savedReservation.getReservationId(),
+                null, "code=" + code + ";status=PENDING;holdHours=" + bookingHoldHours,
+                "Tao don dat phong online (UC-23)");
+
         // Create Deposit Payment (30% of estimated stay total) & VNPay PaymentAttempt record
         BigDecimal estimatedTotal = singleRoomStaySum.multiply(BigDecimal.valueOf(qty));
         BigDecimal depositAmount = estimatedTotal
@@ -488,11 +550,12 @@ public class ReservationServiceImpl implements ReservationService {
     @Override
     @Transactional
     public ReservationDto processVnPayCallback(VnPayCallbackRequest request) {
-        Reservation reservation = reservationRepository.findByReservationCode(request.getReservationCode().trim())
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng với mã: " + request.getReservationCode()));
+        String code = request.getReservationCode().trim();
+        Reservation reservation = reservationRepository.findByReservationCode(code)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng với mã: " + code));
 
         Instant now = Instant.now(hotelClock);
-        boolean isSuccess = "00".equals(request.getVnpResponseCode().trim());
+        boolean isSuccess = request.getVnpResponseCode() != null && "00".equals(request.getVnpResponseCode().trim());
 
         List<Payment> payments = paymentRepository.findByReservation_ReservationId(reservation.getReservationId());
         Payment depositPayment = payments.stream()
@@ -503,17 +566,42 @@ public class ReservationServiceImpl implements ReservationService {
         PaymentAttempt attempt = paymentAttemptRepository.findByGatewayRequestRef(reservation.getReservationCode())
                 .orElse(null);
 
+        // Idempotent replay: a callback that was already processed successfully
+        // must not re-confirm the booking or send a second confirmation email.
+        boolean alreadyConfirmed = ReservationStatus.CONFIRMED.name().equalsIgnoreCase(reservation.getStatus())
+                || ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(reservation.getStatus())
+                || ReservationStatus.COMPLETED.name().equalsIgnoreCase(reservation.getStatus());
+        if (alreadyConfirmed && depositPayment != null && "PAID".equalsIgnoreCase(depositPayment.getStatus())) {
+            return toDto(reservation);
+        }
+
+        if (ReservationStatus.CANCELLED.name().equalsIgnoreCase(reservation.getStatus())) {
+            throw new BusinessException("BR-19", "Đơn đặt phòng này đã bị hủy hoặc quá hạn giữ chỗ 24 giờ.");
+        }
+
+        // BR-19: a PENDING booking whose hold has expired cannot be confirmed
+        // by a late callback (the scheduler may not have cancelled it yet).
+        if (ReservationStatus.PENDING.name().equalsIgnoreCase(reservation.getStatus())
+                && reservation.getHoldExpiresAt() != null && now.isAfter(reservation.getHoldExpiresAt())) {
+            throw new BusinessException("BR-19", "Đơn đặt phòng đã hết hạn giữ chỗ 24 giờ. Vui lòng đặt phòng lại.");
+        }
+
         if (isSuccess) {
-            if (ReservationStatus.CANCELLED.name().equalsIgnoreCase(reservation.getStatus())) {
-                throw new BusinessException("BR-19", "Đơn đặt phòng này đã bị hủy hoặc quá hạn giữ chỗ 24 giờ.");
-            }
+            // The backend is the source of truth: a claimed success is only
+            // accepted after the VNPay signature, amount and transaction ref
+            // have been verified (or, in demo mode, after an explicit demo
+            // simulation). The frontend result alone is never trusted.
+            verifyVnPayCallbackOrThrow(reservation, depositPayment, attempt, request);
+
             reservation.setStatus(ReservationStatus.CONFIRMED.name());
             reservationRepository.save(reservation);
 
-            if (depositPayment != null) {
+            boolean depositJustPaid = false;
+            if (depositPayment != null && !"PAID".equalsIgnoreCase(depositPayment.getStatus())) {
                 depositPayment.setStatus("PAID");
                 depositPayment.setPaidAt(now);
                 paymentRepository.save(depositPayment);
+                depositJustPaid = true;
             }
             if (attempt != null) {
                 attempt.setStatus("SUCCESS");
@@ -531,20 +619,69 @@ public class ReservationServiceImpl implements ReservationService {
                 paymentAttemptRepository.save(attempt);
             }
 
-            mailNotificationService.sendBookingConfirmation(
-                    reservation.getContactEmail(),
-                    reservation.getReservationCode(),
-                    reservation.getContactName()
-            );
+            if (depositJustPaid) {
+                mailNotificationService.sendBookingConfirmation(
+                        reservation.getContactEmail(),
+                        reservation.getReservationCode(),
+                        reservation.getContactName()
+                );
+            }
+            Integer actorId = reservation.getCustomer() != null && reservation.getCustomer().getAccount() != null
+                    ? reservation.getCustomer().getAccount().getAccountId() : null;
+            auditService.recordAction(actorId, "VNPAY", "VNPAY_CALLBACK_SUCCESS",
+                    "Reservation", reservation.getReservationId(),
+                    "status=PENDING", "status=CONFIRMED",
+                    "Xac thuc VNPay thanh cong, xac nhan dat phong (UC-23)");
         } else {
             if (attempt != null && !"SUCCESS".equalsIgnoreCase(attempt.getStatus())) {
                 attempt.setStatus("FAILED");
                 attempt.setCompletedAt(now);
                 paymentAttemptRepository.save(attempt);
             }
+            auditService.recordAction(null, "VNPAY", "VNPAY_CALLBACK_FAILED",
+                    "Reservation", reservation.getReservationId(),
+                    "status=" + reservation.getStatus(), "status=" + reservation.getStatus(),
+                    "VNPay tra ve ma loi " + request.getVnpResponseCode());
         }
 
         return toDto(reservation);
+    }
+
+    /**
+     * Verifies a claimed-success VNPay callback before the booking is confirmed.
+     * Checks, in order: the transaction ref matches this reservation's payment
+     * attempt, the amount (VND x 100) matches the stored 30% deposit, and — unless
+     * the server is in demo mode and the frontend explicitly simulated the gateway
+     * — the HMAC-SHA512 signature over the full vnp_* parameter set.
+     */
+    private void verifyVnPayCallbackOrThrow(Reservation reservation, Payment depositPayment,
+                                            PaymentAttempt attempt, VnPayCallbackRequest request) {
+        if (attempt != null && !reservation.getReservationCode().equalsIgnoreCase(attempt.getGatewayRequestRef())) {
+            throw new BusinessException("VNPAY_TXN_MISMATCH",
+                    "Mã giao dịch VNPay (vnp_TxnRef) không khớp với đơn đặt phòng.");
+        }
+        if (request.getVnpAmount() != null && depositPayment != null && depositPayment.getAmount() != null) {
+            long expectedAmount = depositPayment.getAmount().multiply(BigDecimal.valueOf(100)).longValue();
+            if (!request.getVnpAmount().equals(expectedAmount)) {
+                throw new BusinessException("VNPAY_AMOUNT_MISMATCH",
+                        "Số tiền VNPay không khớp với số tiền đặt cọc của đơn đặt phòng.");
+            }
+        }
+        boolean demoSimulation = Boolean.TRUE.equals(request.getDemoMode()) && vnPayGatewayService.isDemoMode();
+        if (demoSimulation) {
+            // Demo only: the simulated gateway page (mode=gateway, DEMO_TMN) has no
+            // real signature. This path is only reachable when the server itself
+            // is configured with DEMO_TMN/DEMO_SECRET; see VnPayGatewayService.
+            return;
+        }
+        if (request.getVnpSecureHash() == null || request.getVnpSecureHash().isBlank()) {
+            throw new BusinessException("VNPAY_SIGNATURE_MISSING",
+                    "Thiếu chữ ký VNPay (vnp_SecureHash). Giao dịch chưa được xác thực.");
+        }
+        if (!vnPayGatewayService.verifyCallbackSignature(request.getVnpParams(), request.getVnpSecureHash())) {
+            throw new BusinessException("VNPAY_SIGNATURE_INVALID",
+                    "Chữ ký VNPay không hợp lệ. Giao dịch chưa được xác thực.");
+        }
     }
 
     @Override
@@ -583,16 +720,59 @@ public class ReservationServiceImpl implements ReservationService {
 
     @Override
     @Transactional
-    public ReservationDto cancelReservation(Integer reservationId) {
+    public ReservationDto cancelReservation(Integer reservationId, Integer accountId, String roleName) {
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng #" + reservationId));
+
+        // UC-24/UC-25: a customer may only cancel their own booking. Front-desk
+        // staff cancel on the guest's behalf (SRS screen 10.4).
+        // UC-25 actors are Customer and Front-Desk Staff only; the controller
+        // already restricts this endpoint to those two roles.
+        boolean isStaff = roleName != null && "FRONT_DESK".equalsIgnoreCase(roleName);
+        if (accountId != null && !isStaff && reservation.getCustomer() != null
+                && reservation.getCustomer().getAccount() != null
+                && !accountId.equals(reservation.getCustomer().getAccount().getAccountId())) {
+            throw new AccessDeniedException("Bạn chỉ được hủy đơn đặt phòng của chính mình.");
+        }
 
         if (ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(reservation.getStatus())
                 || ReservationStatus.COMPLETED.name().equalsIgnoreCase(reservation.getStatus())) {
             throw new BusinessException("BR-21", "Không thể hủy đơn đặt phòng đã Nhận phòng (Checked-In) hoặc đã Hoàn tất (Completed).");
         }
+        if (ReservationStatus.CANCELLED.name().equalsIgnoreCase(reservation.getStatus())) {
+            return toDto(reservation);
+        }
+        String oldStatus = reservation.getStatus();
         reservation.setStatus(ReservationStatus.CANCELLED.name());
-        return toDto(reservationRepository.save(reservation));
+        Reservation saved = reservationRepository.save(reservation);
+
+        // Quy tac tien coc khi huy (UC-25, user chot 06/11/2026, giu nguyen):
+        // huy KHONG hoan coc da tra — khoan coc da PAID giu nguyen trang thai,
+        // khong co lenh hoan tien VNPay (huy thi mat coc). Chi cac payment dang
+        // PENDING (chua tra coc) moi bi danh FAILED de giai phong giu cho.
+        // Release the unpaid deposit hold so the room quota frees immediately
+        // instead of waiting for the hold-expiry scheduler.
+        List<Payment> payments = paymentRepository.findByReservation_ReservationId(reservation.getReservationId());
+        for (Payment payment : payments) {
+            if ("PENDING".equalsIgnoreCase(payment.getStatus())) {
+                payment.setStatus("FAILED");
+            }
+        }
+        paymentRepository.saveAll(payments);
+        paymentAttemptRepository.findByGatewayRequestRef(reservation.getReservationCode())
+                .ifPresent(attempt -> {
+                    if ("PENDING".equalsIgnoreCase(attempt.getStatus())) {
+                        attempt.setStatus("FAILED");
+                        attempt.setCompletedAt(Instant.now(hotelClock));
+                        paymentAttemptRepository.save(attempt);
+                    }
+                });
+
+        auditService.recordAction(accountId, roleName != null ? roleName : "CUSTOMER",
+                "RESERVATION_CANCELLED", "Reservation", saved.getReservationId(),
+                "status=" + oldStatus, "status=CANCELLED",
+                "Huy don dat phong (UC-25)");
+        return toDto(saved);
     }
 
     private int computeAvailableQuotaForRoomType(Integer roomTypeId, LocalDate checkInDate, LocalDate checkOutDate, LocalDate today) {

@@ -156,7 +156,10 @@ export const RoomCategoryModal = ({
   // Calculate estimated stay total using day-of-week tariffs
   const computeStayTotal = () => {
     const qty = Math.max(1, Number(roomQuantity || 1));
-    if (stayNights <= 0) return Number(room.basePrice || 0) * qty;
+    // No valid night range => no stay total. Never price a 0-night stay
+    // at basePrice * qty; the nightly sum below is the single price rule
+    // (dayOfWeekRates from the backend, Room_Type_Price per night).
+    if (stayNights <= 0) return 0;
     const rateMap = {};
     dayOfWeekRates.forEach((r) => {
       rateMap[r.dayOfWeek] = Number(r.price || room.basePrice || 0);
@@ -450,7 +453,7 @@ export const RoomCategoryModal = ({
                   </div>
                   <ul className="small text-secondary mb-0 ps-3" style={{ lineHeight: 1.7 }}>
                     <li>Giờ nhận phòng (Check-in): Từ <strong>14:00</strong> — Giờ trả phòng (Check-out): Trước <strong>12:00</strong> trưa.</li>
-                    <li>Đơn đặt phòng trực tuyến sẽ ở trạng thái <strong>PENDING</strong> và được giữ chỗ trong <strong>3 phút</strong> chờ thanh toán đặt cọc 30% qua VNPay.</li>
+                    <li>Đơn đặt phòng trực tuyến sẽ ở trạng thái <strong>PENDING</strong> và được giữ chỗ trong <strong>24 giờ</strong> chờ thanh toán đặt cọc 30% qua VNPay.</li>
                   </ul>
                 </div>
               </div>
@@ -576,7 +579,7 @@ export const RoomCategoryModal = ({
                       <div className="d-flex align-items-center gap-2 mb-1">
                         <i className="bi bi-check-circle-fill fs-5 text-success"></i>
                         <strong className="fs-6">
-                          Tạo đơn đặt phòng thành công! Đang giữ chỗ 3 phút
+                          Tạo đơn đặt phòng thành công! Đang giữ chỗ 24 giờ
                         </strong>
                       </div>
                       <div className="small">
@@ -595,7 +598,7 @@ export const RoomCategoryModal = ({
                         <Col sm={6}>
                           <span className="text-secondary">Trạng thái:</span>{' '}
                           <Badge bg="warning" text="dark">
-                            {createdBooking.status} (Giữ chỗ 3 phút)
+                            {createdBooking.status} (Giữ chỗ 24 giờ)
                           </Badge>
                         </Col>
                         <Col sm={6}>
@@ -697,7 +700,7 @@ export const RoomCategoryModal = ({
                           Thông tin người liên hệ & Đặt phòng
                         </h5>
                         <p className="text-secondary small mb-0">
-                          Đơn đặt phòng sẽ được giữ chỗ trong <strong>3 phút</strong> chờ thanh
+                          Đơn đặt phòng sẽ được giữ chỗ trong <strong>24 giờ</strong> chờ thanh
                           toán đặt cọc 30% qua VNPay.
                         </p>
                       </div>
@@ -911,7 +914,7 @@ export const RoomCategoryModal = ({
                     onClick={() => setActiveTab('BOOKING')}
                   >
                     <i className="bi bi-calendar2-check me-2"></i>
-                    Đặt phòng ngay (Giữ chỗ 3 phút)
+                    Đặt phòng ngay (Giữ chỗ 24 giờ)
                   </Button>
                 )}
                 <div className="d-flex justify-content-between align-items-center">

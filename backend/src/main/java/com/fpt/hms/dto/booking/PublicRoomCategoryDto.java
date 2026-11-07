@@ -31,5 +31,8 @@ public class PublicRoomCategoryDto {
     private Integer reviewCount;
     private BigDecimal estimatedTotal;
     private Long nights;
+    // Day-of-week tariffs (Room_Type_Price) so the card/modal price the stay
+    // from the same nightly rates as the backend instead of basePrice * nights.
+    private List<DayOfWeekRateDto> dayOfWeekRates;
 }
 

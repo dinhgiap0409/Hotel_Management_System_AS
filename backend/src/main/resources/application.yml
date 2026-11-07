@@ -45,6 +45,12 @@ app:
     timezone: Asia/Ho_Chi_Minh
     standard-check-in: "14:00"
     standard-check-out: "12:00"
+  # Module 3A (GiapND, BR-19): how long a PENDING online reservation holds its
+  # room quota before the scheduler auto-cancels it. Default 24h (SRS BR-19).
+  # Override with env BOOKING_HOLD_HOURS (e.g. 1 for a demo) — never hardcode
+  # a test value in the service code.
+  booking:
+    hold-hours: ${BOOKING_HOLD_HOURS:24}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
   jwt:

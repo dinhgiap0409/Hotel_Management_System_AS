@@ -1,7 +1,6 @@
 import { Card, Row, Col, Form, Button, Alert } from 'react-bootstrap';
 
 export const HeroSearchSection = ({
-  userRole,
   todayStr,
   checkInDate,
   setCheckInDate,
@@ -19,11 +18,10 @@ export const HeroSearchSection = ({
       <Card.Body className="p-4 p-md-5">
         <div className="d-inline-flex align-items-center gap-2 rounded-pill px-3 py-1 fw-semibold text-uppercase mb-3 hms-hero-badge">
           <span>★ HMS Luxury Collection</span>
-          {userRole && <span>• Đang xem với quyền {userRole}</span>}
         </div>
 
         <h1 className="hms-hero-title mb-2">
-          Danh Mục Hạng Phòng &amp; Tra Cứu Phòng Trống
+          Danh Mục <em>Hạng Phòng</em> &amp; Tra Cứu <em>Phòng Trống</em>
         </h1>
         <p className="hms-hero-subtitle mb-4">
           Khám phá các hạng phòng tiêu chuẩn quốc tế tại HMS Luxury Hotel hoặc nhập ngày nhận/trả phòng
@@ -85,12 +83,12 @@ export const HeroSearchSection = ({
                     onChange={(e) => setGuestCount(e.target.value)}
                   >
                     <option value="1">1 khách người lớn</option>
-                    <option value="2">2 khách (Cặp đôi / Tiêu chuẩn)</option>
-                    <option value="3">3 khách (Phòng Premier / Gia đình nhỏ)</option>
-                    <option value="4">4 khách (Gia đình / Suite)</option>
-                    <option value="5">5 khách (Penthouse)</option>
-                    <option value="6">6 khách (Presidential Penthouse)</option>
-                    <option value="8">8 khách (Đoàn lớn - Kiểm tra hết chỗ)</option>
+                    <option value="2">2 khách</option>
+                    <option value="3">3 khách</option>
+                    <option value="4">4 khách</option>
+                    <option value="5">5 khách</option>
+                    <option value="6">6 khách</option>
+                    <option value="8">8 khách</option>
                   </Form.Select>
                 </Form.Group>
               </Col>

@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { bookingApi } from '../../services/bookingApi';
 import { roomApi } from '../../services/roomApi';
 import { formatVND } from '../../lib/money';
+import { RoomCategoryModal } from '../../components/booking/RoomCategoryModal';
 import { ROLE_DEFAULT_ROUTES, getRoleLabel } from '../../config/constants';
 
 const HOTEL_HIGHLIGHTS = [
@@ -56,8 +57,12 @@ const HOTEL_HIGHLIGHTS = [
 export const HomePage = () => {
   const { isAuthenticated, user } = useAuth();
   const [featuredRooms, setFeaturedRooms] = useState([]);
+  // GiapND (UC-23): direct booking — the "Đặt phòng" button on a featured
+  // card opens RoomCategoryModal for that room type instead of navigating
+  // to another page (there is no checkout page in this project).
+  const [selectedCategory, setSelectedCategory] = useState(null);
 
-  useEffect(() => {
+  const loadFeaturedRooms = () => {
     bookingApi
       .getRoomCategories()
       .then((res) => {
@@ -73,6 +78,10 @@ export const HomePage = () => {
           })
           .catch(() => { });
       });
+  };
+
+  useEffect(() => {
+    loadFeaturedRooms();
   }, []);
 
   return (
@@ -432,22 +441,24 @@ export const HomePage = () => {
                     >
                       Chi tiết hạng phòng
                     </Link>
-                    <Link
-                      to="/rooms"
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategory(rt)}
                       style={{
                         flex: 1,
                         textAlign: 'center',
                         padding: '9px 14px',
                         borderRadius: 6,
+                        border: 'none',
                         background: '#16233B',
                         color: '#FAF9F5',
-                        textDecoration: 'none',
                         fontSize: 13,
                         fontWeight: 600,
+                        cursor: 'pointer',
                       }}
                     >
                       Đặt phòng
-                    </Link>
+                    </button>
                   </div>
                 </div>
               );
@@ -455,6 +466,16 @@ export const HomePage = () => {
           </div>
         </section>
       )}
+
+      {/* UC-23 direct booking modal (same as /rooms): pick dates + contact,
+          confirm -> PENDING hold 24h -> VNPay deposit. No checkout page. */}
+      <RoomCategoryModal
+        selectedCategory={selectedCategory}
+        onClose={() => setSelectedCategory(null)}
+        onBookingSuccess={() => loadFeaturedRooms()}
+        isSearchActive={false}
+        activeSearchMeta={null}
+      />
     </div>
   );
 };

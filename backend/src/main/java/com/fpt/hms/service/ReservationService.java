@@ -14,5 +14,5 @@ public interface ReservationService {
     List<ReservationDto> getMyReservations(Integer accountId);
     List<ReservationDto> getAllReservations();
     ReservationDto findByCode(String reservationCode);
-    ReservationDto cancelReservation(Integer reservationId);
+    ReservationDto cancelReservation(Integer reservationId, Integer accountId, String roleName);
 }

@@ -1,5 +1,6 @@
 package com.fpt.hms.dto.room;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -20,4 +21,9 @@ public class RoomTypeDto {
     private String description;
     private String imageUrl;
     private Boolean isActive;
+
+    @JsonProperty("status")
+    public String getStatus() {
+        return Boolean.TRUE.equals(isActive) ? "Active" : "Inactive";
+    }
 }

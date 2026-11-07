@@ -10,4 +10,7 @@ import java.util.Optional;
 @Repository
 public interface RoomTypePriceRepository extends JpaRepository<RoomTypePrice, Integer> {
     List<RoomTypePrice> findByRoomType_RoomTypeIdAndIsActiveTrue(Integer roomTypeId);
+    List<RoomTypePrice> findByRoomType_RoomTypeIdOrderByDayOfWeekAsc(Integer roomTypeId);
+    Optional<RoomTypePrice> findByRoomType_RoomTypeIdAndDayOfWeekAndIsActiveTrue(Integer roomTypeId, Integer dayOfWeek);
+    void deleteByRoomType_RoomTypeId(Integer roomTypeId);
 }

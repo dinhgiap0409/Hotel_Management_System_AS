@@ -11,6 +11,7 @@ import {
   Spinner,
   Alert,
 } from 'react-bootstrap';
+import { useAuth } from '../../context/AuthContext';
 import { bookingApi } from '../../services/bookingApi';
 import { formatVND } from '../../lib/money';
 import { formatDateTime } from '../../lib/datetime';
@@ -22,17 +23,33 @@ import {
   buildDefaultDayOfWeekRates,
 } from '../../components/booking/js/bookingUtils';
 import '../../components/booking/css/bookingTheme.css';
+import { RoomCategoryModal } from '../../components/booking/RoomCategoryModal';
 
 export const RoomDetailPage = () => {
   const { roomTypeId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { isAuthenticated, user } = useAuth();
+  // GiapND scope (UC-14/21/22/23): only guests, CUSTOMER and FRONT_DESK may
+  // book from this page. Staff/admin roles (ADMIN, GENERAL_MANAGER,
+  // SALES_MANAGER, HOUSEKEEPING_MANAGER, SERVICE_MANAGER, ACCOUNTANT,
+  // HOUSEKEEPING, SERVICE_STAFF) never reach this page through the router
+  // (PublicBookingGuard shows 403), this is defence-in-depth for the button.
+  const isBlockedRole =
+    isAuthenticated &&
+    !!user &&
+    user.role !== 'CUSTOMER' &&
+    user.role !== 'FRONT_DESK';
 
   const checkInDate = searchParams.get('checkInDate') || '';
   const checkOutDate = searchParams.get('checkOutDate') || '';
   const guests = searchParams.get('guests') || '2';
 
   const [detail, setDetail] = useState(null);
+  // GiapND (UC-23): direct booking — "Đặt Hạng Phòng Này" opens
+  // RoomCategoryModal for this room type instead of navigating to a
+  // checkout page (no checkout page exists in this project).
+  const [bookingOpen, setBookingOpen] = useState(false);
   const [activePhotoIdx, setActivePhotoIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -272,7 +289,7 @@ export const RoomDetailPage = () => {
               </Row>
 
               {/* Estimated Stay Box if dates selected */}
-              {stayNights > 0 && (
+              {stayNights > 0 && detail.estimatedTotal != null && (
                 <div className="hms-estimated-total-box mb-3 d-flex justify-content-between align-items-center">
                   <div>
                     <div className="small fw-bold text-dark">
@@ -283,30 +300,34 @@ export const RoomDetailPage = () => {
                     </div>
                   </div>
                   <div className="fs-4 fw-bold" style={{ color: '#B45309' }}>
-                    {formatVND(
-                      detail.estimatedTotal ?? Number(detail.basePrice || 0) * stayNights
-                    )}
+                    {formatVND(detail.estimatedTotal)}
                   </div>
                 </div>
               )}
 
-              <div className="mt-auto pt-2 d-flex gap-2">
-                <Button
-                  className="btn-hms-accent flex-grow-1"
-                  disabled={detail.availableRoomsCount === 0}
-                  onClick={() => {
-                    const q = new URLSearchParams();
-                    q.set('roomTypeId', String(detail.roomTypeId));
-                    if (checkInDate) q.set('checkInDate', checkInDate);
-                    if (checkOutDate) q.set('checkOutDate', checkOutDate);
-                    if (guests) q.set('guests', guests);
-                    navigate(`/booking/checkout?${q.toString()}`);
-                  }}
-                >
-                  <i className="bi bi-calendar2-check me-2"></i>
-                  Đặt Hạng Phòng Này
-                </Button>
-              </div>
+              {!isBlockedRole && (
+                <div className="mt-auto pt-2 d-flex gap-2">
+                  <Button
+                    className="btn-hms-accent flex-grow-1"
+                    disabled={detail.availableRoomsCount === 0}
+                    onClick={() => {
+                      // Guests (not logged in) keep the button, but go to
+                      // /login first — booking itself requires CUSTOMER or
+                      // FRONT_DESK (backend POST /reservations enforces it).
+                      // Logged-in customers open the direct booking modal
+                      // for this room type; no checkout page exists.
+                      if (!isAuthenticated) {
+                        navigate('/login');
+                        return;
+                      }
+                      setBookingOpen(true);
+                    }}
+                  >
+                    <i className="bi bi-calendar2-check me-2"></i>
+                    Đặt Hạng Phòng Này
+                  </Button>
+                </div>
+              )}
             </Card.Body>
           </Col>
         </Row>
@@ -442,6 +463,30 @@ export const RoomDetailPage = () => {
           )}
         </Card.Body>
       </Card>
+
+      {/* UC-23 direct booking modal (same as /rooms). detail already has
+          roomTypeId/typeName/basePrice/capacity/imageUrl, and the modal
+          reloads full details by roomTypeId anyway. Dates chosen on this
+          page (query params) are passed through so the modal starts with
+          them; otherwise it defaults to today -> tomorrow. After a
+          successful booking the receipt stays inside the modal (same
+          behaviour as /rooms) with the VNPay deposit button and the
+          "Xem Đặt phòng của tôi" button. */}
+      <RoomCategoryModal
+        selectedCategory={bookingOpen ? detail : null}
+        onClose={() => setBookingOpen(false)}
+        isSearchActive={Boolean(checkInDate && checkOutDate)}
+        activeSearchMeta={
+          checkInDate && checkOutDate
+            ? {
+                checkInDate,
+                checkOutDate,
+                guests: Number(guests) || 2,
+                nights: stayNights,
+              }
+            : null
+        }
+      />
     </Container>
   );
 };

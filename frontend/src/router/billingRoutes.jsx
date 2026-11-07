@@ -1,8 +1,30 @@
 import { Route } from 'react-router-dom';
 import { ServicesAndBillingPage } from '../pages/services-billing/ServicesAndBillingPage';
+import { CustomerServiceOrderPage } from '../pages/services-billing/CustomerServiceOrderPage';
 import { ReportsDashboardPage } from '../pages/reports-reviews/ReportsDashboardPage';
 import { RoleGuard } from '../components/common/RoleGuard';
 import { ROLES } from '../config/constants';
+
+export const billingCustomerRoutes = (
+  <>
+    <Route
+      path="/customer/room-service"
+      element={
+        <RoleGuard allowedRoles={[ROLES.CUSTOMER]}>
+          <CustomerServiceOrderPage />
+        </RoleGuard>
+      }
+    />
+    <Route
+      path="/services"
+      element={
+        <RoleGuard allowedRoles={[ROLES.CUSTOMER]}>
+          <CustomerServiceOrderPage />
+        </RoleGuard>
+      }
+    />
+  </>
+);
 
 export const billingStaffRoutes = (
   <>

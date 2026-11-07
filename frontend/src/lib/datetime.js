@@ -3,11 +3,21 @@
  * Business dates use yyyy-MM-dd strings; event instants convert from ISO UTC to Asia/Ho_Chi_Minh.
  */
 
-export function formatDate(yyyyMmDd) {
-  if (!yyyyMmDd) return '-';
-  const parts = String(yyyyMmDd).split('-');
-  if (parts.length !== 3) return yyyyMmDd;
-  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+export function formatDate(val) {
+  if (!val) return '-';
+  if (Array.isArray(val)) {
+    const [y, m, d] = val;
+    return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+  }
+  const str = String(val).trim();
+  if (str.includes('T')) {
+    const datePart = str.split('T')[0];
+    const parts = datePart.split('-');
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  const parts = str.split('-');
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  return str;
 }
 
 export function formatDateTime(isoInstant) {

@@ -32,16 +32,23 @@ body {
 }
 
 .hms-hero-title {
-  font-size: 34px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 44px;
+  font-weight: 400;
+  line-height: 1.14;
   letter-spacing: -0.02em;
   color: #faf9f5;
 }
 
+.hms-hero-title em {
+  font-style: italic;
+  color: #f5e6d3;
+}
+
 .hms-hero-subtitle {
   color: #e8e6dc;
-  font-size: 15.5px;
-  line-height: 1.6;
+  font-size: 16px;
+  line-height: 1.65;
   max-width: 720px;
 }
 
