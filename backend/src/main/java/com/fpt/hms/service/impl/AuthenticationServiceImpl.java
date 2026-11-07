@@ -23,12 +23,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import javax.naming.NameNotFoundException;
+import javax.naming.NamingException;
+import javax.naming.directory.Attributes;
+import javax.naming.directory.DirContext;
+import javax.naming.directory.InitialDirContext;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -42,6 +49,22 @@ public class AuthenticationServiceImpl implements AuthenticationService {
 
     private static final int MAX_FAILED_ATTEMPTS = 5;
     private static final int LOCK_DURATION_MINUTES = 15;
+    private static final int MAX_OTP_ATTEMPTS = 5;
+    private static final int OTP_EXPIRATION_MINUTES = 15;
+
+    private static final Pattern STRICT_EMAIL_PATTERN =
+            Pattern.compile("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
+
+    private static final Set<String> DISPOSABLE_EMAIL_DOMAINS = Set.of(
+            "mailinator.com", "yopmail.com", "10minutemail.com", "tempmail.com",
+            "temp-mail.org", "guerrillamail.com", "guerrillamailblock.com", "sharklasers.com",
+            "trashmail.com", "dispostable.com", "fakeinbox.com", "maildrop.cc",
+            "getnada.com", "throwawaymail.com", "mohmal.com", "emailondeck.com",
+            "minutemail.com", "tempmailo.com", "example.com", "example.org",
+            "example.net", "test.com", "localhost", "invalid"
+    );
+
+    private final SecureRandom secureRandom = new SecureRandom();
 
     private final AccountRepository accountRepository;
     private final RoleRepository roleRepository;
@@ -61,15 +84,31 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     // In-memory store for 6-digit password reset codes (email -> ResetCodeEntry)
     private final Map<String, ResetCodeEntry> resetCodeStore = new ConcurrentHashMap<>();
 
+    // In-memory store for pending customer registrations awaiting email OTP verification
+    private final Map<String, PendingRegistrationEntry> pendingRegistrationStore = new ConcurrentHashMap<>();
+
     private record ResetCodeEntry(String code, Instant expiresAt) {}
 
+    private record PendingRegistrationEntry(
+            String fullName,
+            String email,
+            String phone,
+            String identityNumber,
+            String passwordHash,
+            String otpCode,
+            Instant expiresAt,
+            int failedAttempts
+    ) {}
+
     // =========================================================================
-    // UC-01: CUSTOMER REGISTRATION
+    // UC-01: CUSTOMER REGISTRATION (2-STEP WITH EMAIL OTP VERIFICATION)
     // =========================================================================
     @Override
-    @Transactional
-    public UserProfileDto registerCustomer(RegisterRequest request) {
+    @Transactional(readOnly = true)
+    public Map<String, String> requestRegistrationOtp(RegisterRequest request) {
         String normalizedEmail = request.getEmail().trim().toLowerCase();
+        validateDeliverableEmail(normalizedEmail);
+
         if (accountRepository.existsByEmailIgnoreCase(normalizedEmail)) {
             throw new BusinessException("BR-02", "Email này đã được đăng ký trên hệ thống.", HttpStatus.CONFLICT);
         }
@@ -79,28 +118,145 @@ public class AuthenticationServiceImpl implements AuthenticationService {
             throw new BusinessException("VAL-ID", "Số CCCD/Passport này đã được đăng ký trên hệ thống.", HttpStatus.CONFLICT);
         }
 
+        String otpCode = generateSixDigitCode();
+        String fullName = request.getFullName().trim();
+        String phone = request.getPhone().trim();
+        String passwordHash = passwordEncoder.encode(request.getPassword());
+
+        boolean emailSent = sendRegistrationVerificationEmail(normalizedEmail, fullName, otpCode);
+
+        pendingRegistrationStore.put(
+                normalizedEmail,
+                new PendingRegistrationEntry(
+                        fullName,
+                        normalizedEmail,
+                        phone,
+                        trimmedIdentity,
+                        passwordHash,
+                        otpCode,
+                        Instant.now().plus(OTP_EXPIRATION_MINUTES, ChronoUnit.MINUTES),
+                        0
+                )
+        );
+
+        return buildRegistrationOtpResponse(normalizedEmail, otpCode, emailSent, false);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, String> resendRegistrationOtp(ResendRegistrationOtpRequest request) {
+        String normalizedEmail = request.getEmail().trim().toLowerCase();
+        PendingRegistrationEntry existing = pendingRegistrationStore.get(normalizedEmail);
+        if (existing == null) {
+            throw new BusinessException(
+                    "REG-01",
+                    "Phiên đăng ký đã hết hạn hoặc chưa được khởi tạo. Vui lòng nhập lại thông tin đăng ký."
+            );
+        }
+
+        if (accountRepository.existsByEmailIgnoreCase(normalizedEmail)) {
+            pendingRegistrationStore.remove(normalizedEmail);
+            throw new BusinessException("BR-02", "Email này đã được đăng ký trên hệ thống.", HttpStatus.CONFLICT);
+        }
+
+        String newOtpCode = generateSixDigitCode();
+        boolean emailSent = sendRegistrationVerificationEmail(normalizedEmail, existing.fullName(), newOtpCode);
+
+        pendingRegistrationStore.put(
+                normalizedEmail,
+                new PendingRegistrationEntry(
+                        existing.fullName(),
+                        existing.email(),
+                        existing.phone(),
+                        existing.identityNumber(),
+                        existing.passwordHash(),
+                        newOtpCode,
+                        Instant.now().plus(OTP_EXPIRATION_MINUTES, ChronoUnit.MINUTES),
+                        0
+                )
+        );
+
+        return buildRegistrationOtpResponse(normalizedEmail, newOtpCode, emailSent, true);
+    }
+
+    @Override
+    @Transactional
+    public UserProfileDto verifyRegistrationOtp(VerifyRegistrationOtpRequest request) {
+        String normalizedEmail = request.getEmail().trim().toLowerCase();
+        PendingRegistrationEntry pending = pendingRegistrationStore.get(normalizedEmail);
+
+        if (pending == null || pending.expiresAt().isBefore(Instant.now())) {
+            pendingRegistrationStore.remove(normalizedEmail);
+            throw new BusinessException(
+                    "AUTH-04",
+                    "Mã xác thực đã hết hạn (15 phút) hoặc phiên đăng ký không tồn tại. Vui lòng bấm gửi lại mã mới."
+            );
+        }
+
+        String submittedCode = request.getOtpCode().trim();
+        if (!pending.otpCode().equals(submittedCode)) {
+            int attempts = pending.failedAttempts() + 1;
+            if (attempts >= MAX_OTP_ATTEMPTS) {
+                pendingRegistrationStore.remove(normalizedEmail);
+                throw new BusinessException(
+                        "AUTH-06",
+                        "Bạn đã nhập sai mã xác thực quá 5 lần liên tiếp. Vui lòng quay lại bước đăng ký hoặc nhận mã mới."
+                );
+            }
+            pendingRegistrationStore.put(
+                    normalizedEmail,
+                    new PendingRegistrationEntry(
+                            pending.fullName(),
+                            pending.email(),
+                            pending.phone(),
+                            pending.identityNumber(),
+                            pending.passwordHash(),
+                            pending.otpCode(),
+                            pending.expiresAt(),
+                            attempts
+                    )
+            );
+            int remaining = MAX_OTP_ATTEMPTS - attempts;
+            throw new BusinessException(
+                    "AUTH-04",
+                    "Mã xác thực không chính xác (Còn " + remaining + " lần thử)."
+            );
+        }
+
+        // Re-verify uniqueness right before committing to DB
+        if (accountRepository.existsByEmailIgnoreCase(normalizedEmail)) {
+            pendingRegistrationStore.remove(normalizedEmail);
+            throw new BusinessException("BR-02", "Email này đã được đăng ký trên hệ thống.", HttpStatus.CONFLICT);
+        }
+        if (pending.identityNumber() != null && customerRepository.existsByIdentityNumberIgnoreCase(pending.identityNumber())) {
+            pendingRegistrationStore.remove(normalizedEmail);
+            throw new BusinessException("VAL-ID", "Số CCCD/Passport này đã được đăng ký trên hệ thống.", HttpStatus.CONFLICT);
+        }
+
         Role customerRole = roleRepository.findByRoleName(RoleName.CUSTOMER.name())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò CUSTOMER"));
 
         Account account = Account.builder()
                 .role(customerRole)
                 .email(normalizedEmail)
-                .passwordHash(passwordEncoder.encode(request.getPassword()))
+                .passwordHash(pending.passwordHash())
                 .status(AccountStatus.ACTIVE.name())
                 .tokenVersion(0)
                 .failedLoginAttempts(0)
                 .createdAt(Instant.now())
                 .build();
-        Account savedAccount = accountRepository.save(account);
+        Account savedAccount = accountRepository.saveAndFlush(account);
 
         Customer customer = Customer.builder()
                 .account(savedAccount)
-                .fullName(request.getFullName().trim())
+                .fullName(pending.fullName())
                 .email(normalizedEmail)
-                .phone(request.getPhone().trim())
-                .identityNumber(StringUtils.hasText(request.getIdentityNumber()) ? request.getIdentityNumber().trim() : null)
+                .phone(pending.phone())
+                .identityNumber(pending.identityNumber())
                 .build();
-        customerRepository.save(customer);
+        customerRepository.saveAndFlush(customer);
+
+        pendingRegistrationStore.remove(normalizedEmail);
 
         auditService.recordAction(
                 savedAccount.getAccountId(),
@@ -109,11 +265,141 @@ public class AuthenticationServiceImpl implements AuthenticationService {
                 "Account",
                 savedAccount.getAccountId(),
                 null,
-                "email=" + normalizedEmail + ", role=CUSTOMER",
-                "Khách hàng tự đăng ký tài khoản"
+                "email=" + normalizedEmail + ", role=CUSTOMER, emailVerified=true",
+                "Khách hàng đăng ký và xác thực email thành công"
         );
 
+        log.info("[AUTH-REGISTER] Đã xác thực OTP và tạo tài khoản CUSTOMER thành công cho '{}'", normalizedEmail);
         return mapToUserProfileDto(savedAccount);
+    }
+
+    private String generateSixDigitCode() {
+        return String.format("%06d", secureRandom.nextInt(900_000) + 100_000);
+    }
+
+    private boolean isRealSmtpConfigured() {
+        return StringUtils.hasText(mailFrom) && !"your-email@gmail.com".equalsIgnoreCase(mailFrom.trim());
+    }
+
+    private void validateDeliverableEmail(String normalizedEmail) {
+        if (!STRICT_EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+            throw new BusinessException("VAL-EMAIL", "Định dạng địa chỉ email không hợp lệ (ví dụ: ten@gmail.com).");
+        }
+        int atIdx = normalizedEmail.lastIndexOf('@');
+        String domain = normalizedEmail.substring(atIdx + 1).toLowerCase(Locale.ROOT);
+
+        if (DISPOSABLE_EMAIL_DOMAINS.contains(domain)) {
+            throw new BusinessException(
+                    "VAL-EMAIL",
+                    "Vui lòng sử dụng địa chỉ email cá nhân hợp lệ (hệ thống không chấp nhận email ảo / email dùng một lần)."
+            );
+        }
+
+        if (isRealSmtpConfigured()) {
+            verifyDomainHasMailServer(domain);
+        }
+    }
+
+    private void verifyDomainHasMailServer(String domain) {
+        Hashtable<String, String> env = new Hashtable<>();
+        env.put("java.naming.factory.initial", "com.sun.jndi.dns.DnsContextFactory");
+        env.put("com.sun.jndi.dns.timeout.initial", "2500");
+        env.put("com.sun.jndi.dns.timeout.retries", "1");
+        DirContext ctx = null;
+        try {
+            ctx = new InitialDirContext(env);
+            Attributes mxAttrs = ctx.getAttributes(domain, new String[]{"MX"});
+            if (mxAttrs != null && mxAttrs.get("MX") != null && mxAttrs.get("MX").size() > 0) {
+                return;
+            }
+            Attributes aAttrs = ctx.getAttributes(domain, new String[]{"A"});
+            if (aAttrs == null || aAttrs.get("A") == null || aAttrs.get("A").size() == 0) {
+                throw new BusinessException(
+                        "VAL-EMAIL",
+                        "Tên miền email '@" + domain + "' không hỗ trợ nhận thư. Vui lòng kiểm tra lại địa chỉ email."
+                );
+            }
+        } catch (NameNotFoundException ex) {
+            throw new BusinessException(
+                    "VAL-EMAIL",
+                    "Tên miền email '@" + domain + "' không tồn tại. Vui lòng kiểm tra lại chính tả địa chỉ email."
+            );
+        } catch (NamingException ex) {
+            // Network / firewall blocked UDP 53: allow SMTP delivery step to handle verification gracefully
+            log.debug("[AUTH-DNS] Bỏ qua kiểm tra DNS MX cho '{}' do mạng nội bộ: {}", domain, ex.getMessage());
+        } finally {
+            if (ctx != null) {
+                try {
+                    ctx.close();
+                } catch (NamingException ignored) {
+                }
+            }
+        }
+    }
+
+    private boolean sendRegistrationVerificationEmail(String recipientEmail, String fullName, String otpCode) {
+        if (!isRealSmtpConfigured()) {
+            log.info("[HMS-MAIL-DEV] Chưa cấu hình MAIL_USERNAME thật. Mã OTP kích hoạt đăng ký cho {} là: {}", recipientEmail, otpCode);
+            return false;
+        }
+        try {
+            MimeMessage mimeMessage = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, false, "UTF-8");
+            helper.setFrom(mailFrom);
+            helper.setTo(recipientEmail);
+            helper.setSubject("[HMS Luxury Hotel] Mã xác thực đăng ký tài khoản");
+            String htmlContent = """
+                    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 10px; background: #faf9f5; color: #141413;">
+                        <h2 style="margin-top: 0; color: #16233b;">HMS Luxury Hotel — Xác thực Đăng ký Tài khoản</h2>
+                        <p>Xin chào <strong>%s</strong>,</p>
+                        <p>Cảm ơn bạn đã đăng ký tài khoản khách hàng tại <strong>HMS Luxury Hotel</strong> với địa chỉ email <strong>%s</strong>.</p>
+                        <p>Vui lòng nhập mã xác thực 6 chữ số dưới đây để hoàn tất kích hoạt tài khoản:</p>
+                        <div style="text-align: center; margin: 22px 0;">
+                            <span style="display: inline-block; padding: 12px 28px; font-size: 26px; font-weight: 700; letter-spacing: 6px; color: #faf9f5; background: #16233b; border-radius: 8px;">%s</span>
+                        </div>
+                        <p style="font-size: 13px; color: #5e5d59;">Mã xác thực có hiệu lực trong vòng <strong>15 phút</strong>. Tài khoản sẽ chỉ được tạo sau khi bạn xác nhận thành công mã này.</p>
+                        <hr style="border: none; border-top: 1px solid #e8e6dc; margin: 20px 0;" />
+                        <p style="font-size: 12px; color: #64748b; margin: 0;">Trân trọng,<br/>Ban Quản trị Hệ thống HMS Luxury Hotel</p>
+                    </div>
+                    """.formatted(fullName, recipientEmail, otpCode);
+            helper.setText(htmlContent, true);
+            mailSender.send(mimeMessage);
+            log.info("[AUTH-REGISTER] Đã gửi mã OTP xác thực đăng ký tới {}", recipientEmail);
+            return true;
+        } catch (Exception ex) {
+            log.error("[AUTH-REGISTER] Gửi email xác thực đăng ký thất bại tới {}: {}", recipientEmail, ex.getMessage());
+            throw new BusinessException(
+                    "MAIL-01",
+                    "Không thể gửi email xác thực tới địa chỉ " + recipientEmail + ". Vui lòng kiểm tra lại email hợp lệ và kết nối mạng."
+            );
+        }
+    }
+
+    private Map<String, String> buildRegistrationOtpResponse(
+            String normalizedEmail,
+            String otpCode,
+            boolean emailSent,
+            boolean isResend
+    ) {
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("email", normalizedEmail);
+        result.put("mailSent", String.valueOf(emailSent));
+        if (emailSent) {
+            result.put(
+                    "message",
+                    (isResend
+                            ? "Đã gửi lại mã xác thực (6 chữ số) mới tới hộp thư "
+                            : "Mã xác thực (6 chữ số) đã được gửi tới hộp thư ")
+                            + normalizedEmail + ". Vui lòng kiểm tra hộp thư (kể cả mục Thư rác/Spam) trong vòng 15 phút."
+            );
+        } else {
+            result.put("verificationCode", otpCode);
+            result.put(
+                    "message",
+                    "Chế độ phát triển (chưa cấu hình SMTP Gmail trong application.yml): Mã xác thực kiểm thử có hiệu lực 15 phút."
+            );
+        }
+        return result;
     }
 
     // =========================================================================
@@ -285,7 +571,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         Account account = accountRepository.findByEmailIgnoreCase(normalizedEmail)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tài khoản với email: " + normalizedEmail));
 
-        String code = String.format("%06d", new Random().nextInt(900000) + 100000);
+        String code = generateSixDigitCode();
         resetCodeStore.put(normalizedEmail, new ResetCodeEntry(code, Instant.now().plus(15, ChronoUnit.MINUTES)));
 
         boolean emailSent = sendPasswordResetEmail(normalizedEmail, code);
@@ -314,7 +600,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     }
 
     private boolean sendPasswordResetEmail(String recipientEmail, String code) {
-        if (!StringUtils.hasText(mailFrom) || "your-email@gmail.com".equalsIgnoreCase(mailFrom.trim())) {
+        if (!isRealSmtpConfigured()) {
             log.info("[HMS-MAIL-DEV] Chưa cấu hình MAIL_USERNAME thật. Mã OTP khôi phục mật khẩu cho {} là: {}", recipientEmail, code);
             return false;
         }
@@ -457,7 +743,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     // =========================================================================
     @Override
     @Transactional
-    public void changePassword(String email, ChangePasswordRequest request) {
+    public Map<String, String> changePassword(String email, ChangePasswordRequest request) {
         Account account = accountRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tài khoản"));
 
@@ -472,18 +758,26 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         }
 
         account.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        // Increment tokenVersion to revoke tokens on other devices, then issue a fresh JWT for the current session
         account.setTokenVersion(account.getTokenVersion() + 1);
-        accountRepository.save(account);
+        Account savedAccount = accountRepository.saveAndFlush(account);
+
+        String refreshedAccessToken = jwtTokenProvider.generateAccessToken(new UserPrincipal(savedAccount));
 
         auditService.recordAction(
-                account.getAccountId(),
-                account.getRole().getRoleName(),
+                savedAccount.getAccountId(),
+                savedAccount.getRole().getRoleName(),
                 "CHANGE_PASSWORD",
                 "Account",
-                account.getAccountId(),
+                savedAccount.getAccountId(),
                 null,
-                "tokenVersion=" + account.getTokenVersion(),
+                "tokenVersion=" + savedAccount.getTokenVersion(),
                 "Người dùng đổi mật khẩu cá nhân"
+        );
+
+        return Map.of(
+                "message", "Đổi mật khẩu thành công.",
+                "accessToken", refreshedAccessToken
         );
     }
 
@@ -538,6 +832,26 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         Role role = roleRepository.findByRoleName(request.getRoleName().trim().toUpperCase())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Role: " + request.getRoleName()));
 
+        boolean isCustomerRole = RoleName.CUSTOMER.name().equalsIgnoreCase(role.getRoleName());
+        String normalizedIdentity = StringUtils.hasText(request.getIdentityNumber())
+                ? request.getIdentityNumber().trim()
+                : null;
+        if (isCustomerRole && normalizedIdentity != null
+                && customerRepository.existsByIdentityNumberIgnoreCase(normalizedIdentity)) {
+            throw new BusinessException("VAL-ID", "Số CCCD/Passport này đã được đăng ký cho một khách hàng khác.", HttpStatus.CONFLICT);
+        }
+
+        Department staffDepartment = null;
+        if (!isCustomerRole) {
+            Integer expectedDeptId = resolveDefaultDepartmentId(role.getRoleName());
+            Integer deptId = request.getDepartmentId() != null ? request.getDepartmentId() : expectedDeptId;
+            if (!expectedDeptId.equals(deptId)) {
+                throw new BusinessException("VAL-DEPT", "Vai trò " + role.getRoleName() + " không thuộc phòng ban đã chọn.");
+            }
+            staffDepartment = departmentRepository.findById(deptId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Phòng ban #" + deptId));
+        }
+
         Account account = Account.builder()
                 .role(role)
                 .email(normalizedEmail)
@@ -549,28 +863,20 @@ public class AuthenticationServiceImpl implements AuthenticationService {
                 .build();
         Account savedAccount = accountRepository.save(account);
 
-        if (RoleName.CUSTOMER.name().equalsIgnoreCase(role.getRoleName())) {
+        if (isCustomerRole) {
             Customer customer = Customer.builder()
                     .account(savedAccount)
                     .fullName(request.getFullName().trim())
                     .email(normalizedEmail)
                     .phone(request.getPhone().trim())
-                    .identityNumber(request.getIdentityNumber())
+                    .identityNumber(normalizedIdentity)
                     .build();
             customerRepository.save(customer);
         } else {
-            Integer expectedDeptId = resolveDefaultDepartmentId(role.getRoleName());
-            Integer deptId = request.getDepartmentId() != null ? request.getDepartmentId() : expectedDeptId;
-            if (!expectedDeptId.equals(deptId)) {
-                throw new BusinessException("VAL-DEPT", "Vai trò " + role.getRoleName() + " không thuộc phòng ban đã chọn.");
-            }
-            Department dept = departmentRepository.findById(deptId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Phòng ban #" + deptId));
-
             String generatedStaffCode = String.format("STF-%03d", savedAccount.getAccountId());
             Staff staff = Staff.builder()
                     .account(savedAccount)
-                    .department(dept)
+                    .department(staffDepartment)
                     .staffCode(generatedStaffCode)
                     .fullName(request.getFullName().trim())
                     .email(normalizedEmail)
@@ -611,7 +917,12 @@ public class AuthenticationServiceImpl implements AuthenticationService {
             customer.setFullName(request.getFullName().trim());
             customer.setPhone(request.getPhone().trim());
             if (request.getIdentityNumber() != null) {
-                customer.setIdentityNumber(request.getIdentityNumber().trim());
+                String trimmedId = request.getIdentityNumber().trim();
+                if (!trimmedId.isEmpty()
+                        && customerRepository.existsByIdentityNumberIgnoreCaseAndCustomerIdNot(trimmedId, customer.getCustomerId())) {
+                    throw new BusinessException("VAL-ID", "Số CCCD/Passport này đã thuộc về một khách hàng khác.", HttpStatus.CONFLICT);
+                }
+                customer.setIdentityNumber(trimmedId.isEmpty() ? null : trimmedId);
             }
             customerRepository.save(customer);
         } else {
@@ -620,6 +931,13 @@ public class AuthenticationServiceImpl implements AuthenticationService {
                 staff.setFullName(request.getFullName().trim());
                 staff.setPhone(request.getPhone().trim());
                 if (request.getDepartmentId() != null) {
+                    Integer expectedDeptId = resolveDefaultDepartmentId(account.getRole().getRoleName());
+                    if (!expectedDeptId.equals(request.getDepartmentId())) {
+                        throw new BusinessException(
+                                "VAL-DEPT",
+                                "Phòng ban đã chọn không khớp với vai trò hiện tại (" + account.getRole().getRoleName() + "). Vui lòng cập nhật vai trò tương ứng."
+                        );
+                    }
                     Department dept = departmentRepository.findById(request.getDepartmentId())
                             .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Phòng ban #" + request.getDepartmentId()));
                     staff.setDepartment(dept);
@@ -668,7 +986,16 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tài khoản #" + accountId));
 
+        if (!StringUtils.hasText(newStatus)) {
+            throw new BusinessException("VAL-STATUS", "Trạng thái tài khoản không được để trống.");
+        }
         String normalizedStatus = newStatus.trim().toUpperCase();
+        try {
+            AccountStatus.valueOf(normalizedStatus);
+        } catch (IllegalArgumentException ex) {
+            throw new BusinessException("VAL-STATUS", "Trạng thái tài khoản không hợp lệ (chỉ chấp nhận ACTIVE, LOCKED hoặc INACTIVE).");
+        }
+
         String oldStatus = account.getStatus();
         account.setStatus(normalizedStatus);
 
@@ -711,20 +1038,32 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         Role newRole = roleRepository.findByRoleName(roleName.trim().toUpperCase())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy vai trò: " + roleName));
 
+        boolean currentIsCustomer = RoleName.CUSTOMER.name().equalsIgnoreCase(account.getRole().getRoleName());
+        boolean targetIsCustomer = RoleName.CUSTOMER.name().equalsIgnoreCase(newRole.getRoleName());
+        if (currentIsCustomer != targetIsCustomer) {
+            throw new BusinessException("BR-04", "Không thể chuyển đổi trực tiếp giữa tài khoản Khách hàng và Nhân sự nội bộ.");
+        }
+
+        Integer expectedDeptId = targetIsCustomer ? null : resolveDefaultDepartmentId(newRole.getRoleName());
+        if (!targetIsCustomer && departmentId != null && !expectedDeptId.equals(departmentId)) {
+            throw new BusinessException("VAL-DEPT", "Vai trò " + newRole.getRoleName() + " không thuộc phòng ban đã chọn.");
+        }
+
         String oldRole = account.getRole().getRoleName();
         account.setRole(newRole);
         account.setTokenVersion(account.getTokenVersion() + 1);
         accountRepository.save(account);
 
         // Update Staff department if applicable
-        Staff staff = staffRepository.findByAccount_AccountId(accountId).orElse(null);
-        if (staff != null) {
-            Integer targetDeptId = departmentId != null ? departmentId : resolveDefaultDepartmentId(newRole.getRoleName());
-            departmentRepository.findById(targetDeptId).ifPresent(dept -> {
+        if (!targetIsCustomer && expectedDeptId != null) {
+            Staff staff = staffRepository.findByAccount_AccountId(accountId).orElse(null);
+            if (staff != null) {
+                Department dept = departmentRepository.findById(expectedDeptId)
+                        .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Phòng ban #" + expectedDeptId));
                 staff.setDepartment(dept);
                 staff.setUpdatedAt(Instant.now());
                 staffRepository.save(staff);
-            });
+            }
         }
 
         auditService.recordAction(

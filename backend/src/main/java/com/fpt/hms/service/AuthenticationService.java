@@ -12,8 +12,10 @@ import java.util.Map;
  */
 public interface AuthenticationService {
 
-    // UC-01: Customer Self-Registration
-    UserProfileDto registerCustomer(RegisterRequest request);
+    // UC-01: Customer Self-Registration (2-step with Email OTP Verification)
+    Map<String, String> requestRegistrationOtp(RegisterRequest request);
+    Map<String, String> resendRegistrationOtp(ResendRegistrationOtpRequest request);
+    UserProfileDto verifyRegistrationOtp(VerifyRegistrationOtpRequest request);
 
     // UC-02: Login with 5-attempt lockout (BR-03) & JWT generation
     LoginResponse login(LoginRequest request);
@@ -29,8 +31,8 @@ public interface AuthenticationService {
     UserProfileDto getCurrentUserProfile(String email);
     UserProfileDto updateCurrentUserProfile(String email, UpdateProfileRequest request);
 
-    // UC-06: Change Password
-    void changePassword(String email, ChangePasswordRequest request);
+    // UC-06: Change Password (keeps current session alive with refreshed JWT)
+    Map<String, String> changePassword(String email, ChangePasswordRequest request);
 
     // UC-07: Admin User Management (Search, Detail, Create, Update)
     List<UserProfileDto> listAllUsers(String keyword, String role, String status);

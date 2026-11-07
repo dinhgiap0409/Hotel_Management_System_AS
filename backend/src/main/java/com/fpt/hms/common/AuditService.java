@@ -25,7 +25,7 @@ public class AuditService {
             "LOGIN_SUCCESS", "LOGIN_FAILED", "LOGIN_LOCKED", "LOGOUT",
             "REGISTER_ACCOUNT", "CHANGE_PASSWORD", "PASSWORD_RESET_REQUEST",
             "PASSWORD_RESET_COMPLETE", "USER_STATUS_CHANGE", "ROLE_CHANGE",
-            "CREATE_USER", "UPDATE_AUDIT_CONFIG"
+            "CREATE_USER", "UPDATE_USER", "UPDATE_PROFILE", "UPDATE_AUDIT_CONFIG"
     );
 
     private final AuditLogRepository auditLogRepository;
@@ -58,7 +58,8 @@ public class AuditService {
         this.auditEnabled = request.isAuditEnabled();
         this.logSecurityEvents = request.isLogSecurityEvents();
         this.logOperationalEvents = request.isLogOperationalEvents();
-        this.retentionDays = Math.max(30, request.getRetentionDays());
+        // Enforce SRS BR-42 minimum 12-month (365 days) retention policy
+        this.retentionDays = Math.max(365, request.getRetentionDays());
         this.configUpdatedAt = Instant.now();
         this.configUpdatedBy = actorEmail;
 
@@ -66,8 +67,8 @@ public class AuditService {
                 this.auditEnabled, this.logSecurityEvents, this.logOperationalEvents, this.retentionDays);
 
         // Always record changes to audit configuration itself
-        saveLogEntry(actorAccountId, actorRole, "UPDATE_AUDIT_CONFIG", "Audit_Config", 1,
-                oldSummary, newSummary, "Updated audit parameters");
+        saveLogEntry(actorAccountId, actorRole, "UPDATE_AUDIT_CONFIG", "AuditConfig", 1,
+                oldSummary, newSummary, "Cập nhật cấu hình tham số kiểm toán");
 
         return getAuditConfig();
     }

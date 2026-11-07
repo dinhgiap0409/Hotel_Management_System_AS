@@ -9,6 +9,7 @@ import { AUDIT_ACTION_LABELS, getAuditActionLabel } from '../../config/constants
 const ENTITY_LABELS = {
   Account: 'Tài khoản',
   AuditConfig: 'Cấu hình Audit',
+  Audit_Config: 'Cấu hình Audit',
   Reservation: 'Đặt phòng',
   Room: 'Phòng',
   RoomType: 'Hạng phòng',
@@ -39,18 +40,22 @@ export const AuditLogPage = () => {
   const [keyword, setKeyword] = useState('');
   const [actionFilter, setActionFilter] = useState('');
   const [feedback, setFeedback] = useState(null);
+  const [error, setError] = useState(null);
 
-  const loadAuditLogs = () => {
+  const loadAuditLogs = (overrides = {}) => {
+    const nextKeyword = overrides.keyword !== undefined ? overrides.keyword : keyword;
+    const nextAction = overrides.action !== undefined ? overrides.action : actionFilter;
+
     authApi
       .getAuditLogs({
-        keyword: keyword || undefined,
-        action: actionFilter || undefined,
+        keyword: nextKeyword || undefined,
+        action: nextAction || undefined,
       })
       .then((res) => {
         const list = Array.isArray(res.data) ? res.data : res.data?.content || res.data?.data || [];
         setLogs(list);
       })
-      .catch(() => {});
+      .catch((err) => setError(err.response?.data?.message || 'Không thể tải danh sách nhật ký kiểm toán.'));
   };
 
   const loadAuditConfig = () => {
@@ -78,18 +83,48 @@ export const AuditLogPage = () => {
     loadAuditLogs();
   };
 
+  const handleResetFilters = () => {
+    const shouldManualFetch = actionFilter === '';
+    setKeyword('');
+    setActionFilter('');
+    if (shouldManualFetch) {
+      loadAuditLogs({ keyword: '', action: '' });
+    }
+  };
+
   const handleSaveConfig = async (e) => {
     e.preventDefault();
     setFeedback(null);
-    const res = await authApi.updateAuditConfig(config);
-    setConfig(res.data);
-    setFeedback('Đã lưu cấu hình tham số kiểm toán thành công!');
-    loadAuditLogs();
+    setError(null);
+
+    if (!config.retentionDays || Number(config.retentionDays) < 365) {
+      setError('Thời hạn lưu trữ tối thiểu phải từ 365 ngày (12 tháng) trở lên theo quy định bảo mật.');
+      return;
+    }
+
+    try {
+      const res = await authApi.updateAuditConfig({
+        ...config,
+        retentionDays: Number(config.retentionDays),
+      });
+      setConfig(res.data);
+      setFeedback('Đã lưu cấu hình tham số kiểm toán thành công!');
+      loadAuditLogs();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Không thể lưu cấu hình tham số kiểm toán.');
+    }
   };
 
   const handleResolveError = async (id) => {
-    await authApi.updateErrorLogStatus(id, 'RESOLVED');
-    loadErrorLogs();
+    setFeedback(null);
+    setError(null);
+    try {
+      await authApi.updateErrorLogStatus(id, 'RESOLVED');
+      setFeedback(`Đã đánh dấu xử lý bản ghi lỗi hệ thống #${id}.`);
+      loadErrorLogs();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Không thể cập nhật trạng thái bản ghi lỗi.');
+    }
   };
 
   const tabButtonStyle = (tabKey) => ({
@@ -128,6 +163,11 @@ export const AuditLogPage = () => {
           {feedback}
         </div>
       )}
+      {error && (
+        <div style={{ padding: 12, background: '#fee2e2', color: '#991b1b', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
+          {error}
+        </div>
+      )}
 
       {/* TAB 1: AUDIT LOGS */}
       {activeTab === 'audit' && (
@@ -137,6 +177,7 @@ export const AuditLogPage = () => {
             style={{
               display: 'flex',
               gap: 10,
+              flexWrap: 'wrap',
               background: '#fff',
               padding: 14,
               borderRadius: 10,
@@ -149,7 +190,7 @@ export const AuditLogPage = () => {
               placeholder="Tìm theo email người thực hiện, lý do, giá trị thay đổi, mã truy vết..."
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
-              style={{ flex: 1, padding: '8px 12px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 13 }}
+              style={{ flex: 1, minWidth: 240, padding: '8px 12px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 13 }}
             />
             <select
               value={actionFilter}
@@ -168,6 +209,13 @@ export const AuditLogPage = () => {
               style={{ background: '#0f172a', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
             >
               Lọc Nhật ký
+            </button>
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
+            >
+              Đặt lại
             </button>
           </form>
 
@@ -243,7 +291,7 @@ export const AuditLogPage = () => {
                   checked={config.logSecurityEvents}
                   onChange={(e) => setConfig({ ...config, logSecurityEvents: e.target.checked })}
                 />
-                Ghi nhận sự kiện Bảo mật & Phân quyền (Đăng nhập, Khóa TK, Đổi Vai trò, Đổi mật khẩu)
+                Ghi nhận sự kiện Bảo mật & Phân quyền (Đăng nhập, Khóa TK, Đổi Vai trò, Đổi mật khẩu, Cập nhật hồ sơ)
               </label>
             </div>
 
@@ -261,11 +309,11 @@ export const AuditLogPage = () => {
 
             <div style={{ marginBottom: 18 }}>
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 600 }}>
-                Thời hạn lưu trữ tối thiểu (số ngày, tối thiểu 30 ngày):
+                Thời hạn lưu trữ tối thiểu (số ngày, tối thiểu 365 ngày - 12 tháng):
               </label>
               <input
                 type="number"
-                min={30}
+                min={365}
                 max={3650}
                 disabled={!isAdmin}
                 value={config.retentionDays}
