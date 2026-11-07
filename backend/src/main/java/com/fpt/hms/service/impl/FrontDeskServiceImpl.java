@@ -4,7 +4,12 @@ import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.dto.booking.ReservationDto;
 import com.fpt.hms.dto.frontdesk.CheckInRequest;
 import com.fpt.hms.dto.frontdesk.DirectBookingRequest;
+import com.fpt.hms.dto.frontdesk.ExtendStayRequest;
+import com.fpt.hms.dto.frontdesk.FrontDeskBookingQuoteRequest;
+import com.fpt.hms.dto.frontdesk.FrontDeskBookingQuoteResponse;
+import com.fpt.hms.dto.frontdesk.FrontDeskRoomTypeAvailabilityDto;
 import com.fpt.hms.dto.frontdesk.GuestStayDto;
+import com.fpt.hms.dto.frontdesk.RoomTransferRequest;
 import com.fpt.hms.dto.room.RoomDto;
 import com.fpt.hms.entity.*;
 import com.fpt.hms.enums.*;
@@ -37,6 +42,7 @@ public class FrontDeskServiceImpl implements FrontDeskService {
     private final CustomerRepository customerRepository;
     private final StaffRepository staffRepository;
     private final GuestStayRepository guestStayRepository;
+    private final StayRoomAssignmentRepository stayRoomAssignmentRepository;
     private final FolioRepository folioRepository;
     private final InvoiceRepository invoiceRepository;
     private final MessageResolver messageResolver;
@@ -52,26 +58,49 @@ public class FrontDeskServiceImpl implements FrontDeskService {
             throw new BusinessException("MSG04A", "Ngày nhận phòng không được ở quá khứ và ngày trả phòng phải sau ngày nhận phòng.");
         }
 
-        RoomType roomType = roomTypeRepository.findById(request.getRoomTypeId())
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hạng phòng #" + request.getRoomTypeId()));
-
-        if (Boolean.FALSE.equals(roomType.getIsActive())) {
-            throw new BusinessException("BR-18", "Hạng phòng này hiện đang tạm ngưng mở đặt phòng.");
+        // Hỗ trợ chọn nhiều hạng phòng cùng lúc
+        List<DirectBookingRequest.SelectedRoomItem> items = new ArrayList<>();
+        if (request.getRoomItems() != null && !request.getRoomItems().isEmpty()) {
+            items.addAll(request.getRoomItems());
+        } else if (request.getRoomTypeId() != null) {
+            items.add(DirectBookingRequest.SelectedRoomItem.builder()
+                    .roomTypeId(request.getRoomTypeId())
+                    .quantity(Math.max(1, request.getQuantity()))
+                    .build());
+        } else {
+            throw new BusinessException("MSG04A", "Vui lòng chọn ít nhất một hạng phòng cần đặt.");
         }
 
-        int qty = Math.max(1, request.getQuantity());
-        int maxCapacity = (roomType.getCapacity() != null ? roomType.getCapacity() : 2) * qty;
-        if (request.getGuestCount() > maxCapacity) {
-            throw new BusinessException("BR-17",
-                    "Số lượng khách (" + request.getGuestCount() + " người) vượt quá sức chứa tối đa của "
-                            + qty + " phòng " + roomType.getTypeName() + " (Tối đa " + maxCapacity + " khách).");
+        int totalCalculatedCapacity = 0;
+        Map<Integer, RoomType> loadedRoomTypes = new HashMap<>();
+
+        for (DirectBookingRequest.SelectedRoomItem item : items) {
+            RoomType rt = roomTypeRepository.findById(item.getRoomTypeId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hạng phòng #" + item.getRoomTypeId()));
+
+            if (Boolean.FALSE.equals(rt.getIsActive())) {
+                throw new BusinessException("BR-18", "Hạng phòng '" + rt.getTypeName() + "' hiện đang tạm ngưng mở đặt phòng.");
+            }
+
+            int qty = Math.max(1, item.getQuantity());
+            int availableQuota = computeAvailableQuota(rt.getRoomTypeId(), request.getCheckInDate(), request.getCheckOutDate(), today);
+            if (qty > availableQuota) {
+                throw new BusinessException("BR-18",
+                        "Hạng phòng '" + rt.getTypeName() + "' không đủ phòng trống (Yêu cầu "
+                                + qty + " phòng, hiện chỉ còn " + availableQuota + " phòng trống).");
+            }
+
+            totalCalculatedCapacity += (rt.getCapacity() != null ? rt.getCapacity() : 2) * qty;
+            loadedRoomTypes.put(rt.getRoomTypeId(), rt);
         }
 
-        int availableQuota = computeAvailableQuota(roomType.getRoomTypeId(), request.getCheckInDate(), request.getCheckOutDate(), today);
-        if (qty > availableQuota) {
-            throw new BusinessException("BR-18",
-                    "Số lượng phòng trống của hạng '" + roomType.getTypeName()
-                            + "' không đủ trong khoảng ngày đã chọn (Hiện chỉ còn " + availableQuota + " phòng).");
+        int finalGuestCount = request.getGuestCount() > 0 ? request.getGuestCount() : totalCalculatedCapacity;
+
+        if (request.getContactPhone() == null || request.getContactPhone().trim().isBlank()) {
+            throw new BusinessException("MSG04A", "Số điện thoại liên hệ là bắt buộc.");
+        }
+        if (request.getContactName() == null || request.getContactName().trim().isBlank()) {
+            throw new BusinessException("MSG04A", "Họ và tên khách hàng là bắt buộc.");
         }
 
         Staff staff = staffAccountId != null
@@ -110,7 +139,7 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .reservationDate(now)
                 .checkInDate(request.getCheckInDate())
                 .checkOutDate(request.getCheckOutDate())
-                .guestCount(request.getGuestCount())
+                .guestCount(finalGuestCount)
                 .specialNotes(request.getSpecialNotes())
                 .status(ReservationStatus.CONFIRMED.name())
                 .contactName(request.getContactName().trim())
@@ -119,25 +148,31 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .holdExpiresAt(now.plus(30, ChronoUnit.DAYS))
                 .build();
 
-        ReservationDetail detail = ReservationDetail.builder()
-                .reservation(reservation)
-                .roomType(roomType)
-                .quantity(qty)
-                .build();
+        for (DirectBookingRequest.SelectedRoomItem item : items) {
+            RoomType rt = loadedRoomTypes.get(item.getRoomTypeId());
+            int qty = Math.max(1, item.getQuantity());
 
-        Map<Integer, BigDecimal> tariffByDay = loadTariffMap(roomType.getRoomTypeId());
-        for (LocalDate d = request.getCheckInDate(); d.isBefore(request.getCheckOutDate()); d = d.plusDays(1)) {
-            int dow = d.getDayOfWeek().getValue();
-            BigDecimal nightPrice = tariffByDay.getOrDefault(dow, roomType.getBasePrice());
+            ReservationDetail detail = ReservationDetail.builder()
+                    .reservation(reservation)
+                    .roomType(rt)
+                    .quantity(qty)
+                    .build();
 
-            detail.getNightlyRates().add(ReservationNightlyRate.builder()
-                    .reservationDetail(detail)
-                    .stayDate(d)
-                    .unitPrice(nightPrice)
-                    .build());
+            Map<Integer, BigDecimal> tariffByDay = loadTariffMap(rt.getRoomTypeId());
+            for (LocalDate d = request.getCheckInDate(); d.isBefore(request.getCheckOutDate()); d = d.plusDays(1)) {
+                int dow = d.getDayOfWeek().getValue();
+                BigDecimal nightPrice = tariffByDay.getOrDefault(dow, rt.getBasePrice());
+
+                detail.getNightlyRates().add(ReservationNightlyRate.builder()
+                        .reservationDetail(detail)
+                        .stayDate(d)
+                        .unitPrice(nightPrice)
+                        .build());
+            }
+
+            reservation.getDetails().add(detail);
         }
 
-        reservation.getDetails().add(detail);
         Reservation savedReservation = reservationRepository.save(reservation);
 
         return toReservationDto(savedReservation);
@@ -145,21 +180,81 @@ public class FrontDeskServiceImpl implements FrontDeskService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ReservationDto> getPendingReservations() {
-        return reservationRepository.findAll().stream()
-                .filter(r -> ReservationStatus.PENDING.name().equalsIgnoreCase(r.getStatus()))
-                .sorted(Comparator.comparing(Reservation::getReservationDate).reversed())
-                .map(this::toReservationDto)
-                .toList();
+    public List<FrontDeskRoomTypeAvailabilityDto> getAvailableRoomTypes(LocalDate checkInDate, LocalDate checkOutDate, Integer guests) {
+        if (checkInDate == null || checkOutDate == null || !checkOutDate.isAfter(checkInDate)) {
+            throw new BusinessException("MSG01A", "Ngày nhận và ngày trả phòng không hợp lệ.");
+        }
+
+        LocalDate today = LocalDate.now(hotelClock);
+        List<RoomType> activeTypes = roomTypeRepository.findByIsActiveTrue();
+        List<Room> nonArchivedRooms = roomRepository.findByRoomStatusNot(RoomStatus.ARCHIVED.name());
+
+        return activeTypes.stream().map(rt -> {
+            int availableQuota = computeAvailableQuota(rt.getRoomTypeId(), checkInDate, checkOutDate, today);
+            long totalActive = nonArchivedRooms.stream()
+                    .filter(r -> r.getRoomType() != null && rt.getRoomTypeId().equals(r.getRoomType().getRoomTypeId()))
+                    .filter(r -> RoomStatus.ACTIVE.name().equalsIgnoreCase(r.getRoomStatus()))
+                    .count();
+
+            Map<Integer, BigDecimal> tariffMap = loadTariffMap(rt.getRoomTypeId());
+            BigDecimal periodTotal = BigDecimal.ZERO;
+            List<FrontDeskRoomTypeAvailabilityDto.DailyTariffDto> dailyTariffs = new ArrayList<>();
+
+            for (LocalDate d = checkInDate; d.isBefore(checkOutDate); d = d.plusDays(1)) {
+                int dow = d.getDayOfWeek().getValue();
+                BigDecimal nightPrice = tariffMap.getOrDefault(dow, rt.getBasePrice());
+                periodTotal = periodTotal.add(nightPrice);
+
+                String dowName = toDowFullName(dow);
+
+                dailyTariffs.add(FrontDeskRoomTypeAvailabilityDto.DailyTariffDto.builder()
+                        .stayDate(d)
+                        .dayOfWeek(dow)
+                        .dayOfWeekName(dowName)
+                        .price(nightPrice)
+                        .build());
+            }
+
+            // Gộp các khoảng biểu giá theo các ngày trong tuần (Ví dụ: "Thứ Hai - Thứ Năm": 850.000)
+            List<FrontDeskRoomTypeAvailabilityDto.PriceRangeDto> priceRanges = groupTariffRanges(tariffMap, rt.getBasePrice());
+            Map<String, BigDecimal> priceRangeMap = new LinkedHashMap<>();
+            for (FrontDeskRoomTypeAvailabilityDto.PriceRangeDto pr : priceRanges) {
+                priceRangeMap.put(pr.getDayRange(), pr.getPrice());
+            }
+
+            return FrontDeskRoomTypeAvailabilityDto.builder()
+                    .roomTypeId(rt.getRoomTypeId())
+                    .typeName(rt.getTypeName())
+                    .capacity(rt.getCapacity() != null ? rt.getCapacity() : 2)
+                    .basePrice(rt.getBasePrice())
+                    .totalPeriodPrice(periodTotal)
+                    .dailyTariffs(dailyTariffs)
+                    .priceRanges(priceRanges)
+                    .priceRangeMap(priceRangeMap)
+                    .totalActiveRooms((int) totalActive)
+                    .availableRoomsCount(availableQuota)
+                    .imageUrl(rt.getImageUrl())
+                    .build();
+        }).toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<ReservationDto> getArrivals() {
         return reservationRepository.findAll().stream()
-                .filter(r -> ReservationStatus.CONFIRMED.name().equalsIgnoreCase(r.getStatus()))
-                .sorted(Comparator.comparing(Reservation::getCheckInDate))
                 .map(this::toReservationDto)
+                .filter(dto -> {
+                    if (ReservationStatus.CONFIRMED.name().equalsIgnoreCase(dto.getStatus())) {
+                        return true;
+                    }
+                    if (ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(dto.getStatus())) {
+                        return dto.getCheckedInRoomsCount() != null
+                                && dto.getTotalBookedRoomsCount() != null
+                                && dto.getCheckedInRoomsCount() < dto.getTotalBookedRoomsCount();
+                    }
+                    return false;
+                })
+                .sorted(Comparator.comparing(ReservationDto::getCheckInDate))
                 .toList();
     }
 
@@ -190,39 +285,46 @@ public class FrontDeskServiceImpl implements FrontDeskService {
 
     @Override
     @Transactional
-    public ReservationDto confirmReservation(Integer reservationId) {
-        Reservation r = reservationRepository.findById(reservationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Reservation not found"));
-        if (!ReservationStatus.PENDING.name().equalsIgnoreCase(r.getStatus())) {
-            throw new BusinessException("BR-22", "Only PENDING reservations can be confirmed.");
-        }
-        r.setStatus(ReservationStatus.CONFIRMED.name());
-        reservationRepository.save(r);
-
-        return toReservationDto(r);
-    }
-
-    @Override
-    @Transactional
     public GuestStayDto checkInGuest(CheckInRequest request) {
         Reservation reservation = reservationRepository.findById(request.getReservationId())
                 .orElseThrow(() -> new ResourceNotFoundException("Reservation not found"));
 
-        if (!ReservationStatus.CONFIRMED.name().equalsIgnoreCase(reservation.getStatus())) {
-            throw new BusinessException("BR-23", "Check-in requires a CONFIRMED reservation.");
+        if (!ReservationStatus.CONFIRMED.name().equalsIgnoreCase(reservation.getStatus())
+                && !ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(reservation.getStatus())) {
+            throw new BusinessException("BR-23", "Thủ tục nhận phòng yêu cầu đơn đặt ở trạng thái CONFIRMED hoặc CHECKED_IN (đang nhận phòng dở).");
         }
 
         Room room = roomRepository.findById(request.getRoomId())
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
 
-        // Validate room type matches booked room type
-        ReservationDetail detail = (reservation.getDetails() != null && !reservation.getDetails().isEmpty())
-                ? reservation.getDetails().getFirst()
-                : null;
-        if (detail != null && detail.getRoomType() != null && room.getRoomType() != null
-                && !room.getRoomType().getRoomTypeId().equals(detail.getRoomType().getRoomTypeId())) {
-            throw new BusinessException("BR-14", "Phòng " + room.getRoomNumber() + " (" + room.getRoomType().getTypeName()
-                    + ") không thuộc hạng phòng đã đặt (" + detail.getRoomType().getTypeName() + ").");
+        // Validate room matches one of the booked room types
+        boolean matchedType = reservation.getDetails() != null && reservation.getDetails().stream()
+                .anyMatch(d -> d.getRoomType() != null && room.getRoomType() != null
+                        && room.getRoomType().getRoomTypeId().equals(d.getRoomType().getRoomTypeId()));
+
+        if (!matchedType) {
+            throw new BusinessException("BR-14", "Phòng " + room.getRoomNumber() + " (" + (room.getRoomType() != null ? room.getRoomType().getTypeName() : "")
+                    + ") không thuộc hạng phòng nào trong đơn đặt này.");
+        }
+
+        // Count already checked-in rooms for this reservation & roomType
+        List<GuestStay> existingStays = guestStayRepository.findAllByReservation_ReservationId(reservation.getReservationId());
+        long checkedInForThisType = existingStays.stream()
+                .filter(s -> s.getRoomAssignments() != null && !s.getRoomAssignments().isEmpty())
+                .map(s -> s.getRoomAssignments().getLast().getRoom())
+                .filter(r -> r.getRoomType() != null && room.getRoomType() != null
+                        && r.getRoomType().getRoomTypeId().equals(room.getRoomType().getRoomTypeId()))
+                .count();
+
+        int allowedForThisType = reservation.getDetails().stream()
+                .filter(d -> d.getRoomType() != null && room.getRoomType() != null
+                        && d.getRoomType().getRoomTypeId().equals(room.getRoomType().getRoomTypeId()))
+                .mapToInt(d -> d.getQuantity() != null ? d.getQuantity() : 1)
+                .sum();
+
+        if (checkedInForThisType >= allowedForThisType) {
+            throw new BusinessException("BR-23", "Hạng phòng " + (room.getRoomType() != null ? room.getRoomType().getTypeName() : "")
+                    + " đã nhận đủ số lượng đặt (" + allowedForThisType + " phòng).");
         }
 
         // BR-14: Only Vacant and Inspected/Clean rooms can be assigned at check-in
@@ -245,7 +347,6 @@ public class FrontDeskServiceImpl implements FrontDeskService {
             }
         }
 
-        // Atomic transaction (SDD 4.1.10): 1. Update Reservation -> 2. Create GuestStay & Assignment -> 3. Initialize Folio -> 4. Mark Room OCCUPIED
         reservation.setStatus(ReservationStatus.CHECKED_IN.name());
         reservationRepository.save(reservation);
 
@@ -265,8 +366,29 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         stay.getRoomAssignments().add(assignment);
         GuestStay savedStay = guestStayRepository.save(stay);
 
-        long nights = Math.max(1, ChronoUnit.DAYS.between(reservation.getCheckInDate(), reservation.getCheckOutDate()));
-        BigDecimal roomCharges = room.getRoomType().getBasePrice().multiply(BigDecimal.valueOf(nights));
+        BigDecimal roomCharges = BigDecimal.ZERO;
+        if (reservation.getDetails() != null) {
+            for (ReservationDetail d : reservation.getDetails()) {
+                if (d.getRoomType() != null && room.getRoomType() != null
+                        && d.getRoomType().getRoomTypeId().equals(room.getRoomType().getRoomTypeId())) {
+                    if (d.getNightlyRates() != null && !d.getNightlyRates().isEmpty()) {
+                        for (ReservationNightlyRate nr : d.getNightlyRates()) {
+                            if (nr.getUnitPrice() != null) {
+                                roomCharges = roomCharges.add(nr.getUnitPrice());
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        if (roomCharges.compareTo(BigDecimal.ZERO) <= 0) {
+            Map<Integer, BigDecimal> tariffMap = loadTariffMap(room.getRoomType().getRoomTypeId());
+            for (LocalDate d = reservation.getCheckInDate(); d.isBefore(reservation.getCheckOutDate()); d = d.plusDays(1)) {
+                int dow = d.getDayOfWeek().getValue();
+                roomCharges = roomCharges.add(tariffMap.getOrDefault(dow, room.getRoomType().getBasePrice()));
+            }
+        }
 
         Folio folio = Folio.builder()
                 .guestStay(savedStay)
@@ -306,8 +428,9 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .orElseThrow(() -> new ResourceNotFoundException("Folio not found for stay"));
 
         Invoice invoice = invoiceRepository.findByFolio_FolioId(folio.getFolioId()).orElse(null);
-        // BR-26: Check-out requires zero outstanding balance (Invoice PAID)
-        if (invoice == null || !InvoiceStatus.PAID.name().equalsIgnoreCase(invoice.getStatus())) {
+        // BR-26: Check-out requires zero outstanding balance (Invoice PAID or zero folio)
+        boolean hasOutstanding = folio.getTotalAmount() != null && folio.getTotalAmount().compareTo(BigDecimal.ZERO) > 0;
+        if (hasOutstanding && (invoice == null || !InvoiceStatus.PAID.name().equalsIgnoreCase(invoice.getStatus()))) {
             throw new BusinessException("MSG10", messageResolver.resolve("MSG10"));
         }
 
@@ -316,8 +439,12 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         guestStayRepository.save(stay);
 
         Reservation reservation = stay.getReservation();
-        reservation.setStatus(ReservationStatus.COMPLETED.name());
-        reservationRepository.save(reservation);
+        List<GuestStay> allStays = guestStayRepository.findAllByReservation_ReservationId(reservation.getReservationId());
+        boolean allCompleted = allStays.stream().allMatch(s -> GuestStayStatus.COMPLETED.name().equalsIgnoreCase(s.getStatus()));
+        if (allCompleted) {
+            reservation.setStatus(ReservationStatus.COMPLETED.name());
+            reservationRepository.save(reservation);
+        }
 
         folio.setStatus(FolioStatus.CLOSED.name());
         folioRepository.save(folio);
@@ -334,6 +461,166 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         }
 
         return toStayDto(stay, roomNum, folio);
+    }
+
+    @Override
+    @Transactional
+    public GuestStayDto extendStay(Integer stayId, ExtendStayRequest request) {
+        GuestStay stay = guestStayRepository.findById(stayId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông tin lưu trú."));
+
+        if (!GuestStayStatus.ACTIVE.name().equalsIgnoreCase(stay.getStatus())) {
+            throw new BusinessException("BR-29", "Chỉ có thể gia hạn cho phòng đang ở trạng thái lưu trú ACTIVE.");
+        }
+
+        Reservation reservation = stay.getReservation();
+        LocalDate currentCheckOut = reservation.getCheckOutDate();
+        LocalDate newCheckOut = request.getNewCheckOutDate();
+
+        if (newCheckOut == null || !newCheckOut.isAfter(currentCheckOut)) {
+            throw new BusinessException("MSG01A", "Ngày trả phòng mới phải sau ngày trả phòng hiện tại (" + currentCheckOut + ").");
+        }
+
+        Room currentRoom = stay.getRoomAssignments().isEmpty()
+                ? null
+                : stay.getRoomAssignments().getLast().getRoom();
+
+        if (currentRoom == null || currentRoom.getRoomType() == null) {
+            throw new BusinessException("BR-29", "Không xác định được phòng vật lý của lượt lưu trú này.");
+        }
+
+        RoomType roomType = currentRoom.getRoomType();
+        LocalDate today = LocalDate.now(hotelClock);
+
+        int availableQuota = computeAvailableQuota(roomType.getRoomTypeId(), currentCheckOut, newCheckOut, today);
+        if (availableQuota <= 0) {
+            throw new BusinessException("BR-18", "Hạng phòng " + roomType.getTypeName() + " đã kín chỗ trong khoảng ngày gia hạn ("
+                    + currentCheckOut + " đến " + newCheckOut + ").");
+        }
+
+        Map<Integer, BigDecimal> tariffMap = loadTariffMap(roomType.getRoomTypeId());
+        BigDecimal additionalCharges = BigDecimal.ZERO;
+        for (LocalDate d = currentCheckOut; d.isBefore(newCheckOut); d = d.plusDays(1)) {
+            int dow = d.getDayOfWeek().getValue();
+            BigDecimal nightRate = tariffMap.getOrDefault(dow, roomType.getBasePrice());
+            additionalCharges = additionalCharges.add(nightRate);
+        }
+
+        if (reservation.getDetails() != null) {
+            for (ReservationDetail d : reservation.getDetails()) {
+                if (d.getRoomType() != null && d.getRoomType().getRoomTypeId().equals(roomType.getRoomTypeId())) {
+                    for (LocalDate dDate = currentCheckOut; dDate.isBefore(newCheckOut); dDate = dDate.plusDays(1)) {
+                        int dow = dDate.getDayOfWeek().getValue();
+                        BigDecimal nightRate = tariffMap.getOrDefault(dow, roomType.getBasePrice());
+                        d.getNightlyRates().add(ReservationNightlyRate.builder()
+                                .reservationDetail(d)
+                                .stayDate(dDate)
+                                .unitPrice(nightRate)
+                                .build());
+                    }
+                    break;
+                }
+            }
+        }
+
+        reservation.setCheckOutDate(newCheckOut);
+        if (request.getReason() != null && !request.getReason().isBlank()) {
+            String note = "[Gia hạn đến " + newCheckOut + ": " + request.getReason().trim() + "]";
+            reservation.setSpecialNotes(reservation.getSpecialNotes() != null
+                    ? reservation.getSpecialNotes() + " " + note
+                    : note);
+        }
+        reservationRepository.save(reservation);
+
+        Folio folio = folioRepository.findByGuestStay_StayId(stayId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tài khoản Folio cho lượt lưu trú này."));
+
+        folio.setTotalAmount(folio.getTotalAmount().add(additionalCharges));
+        Folio savedFolio = folioRepository.save(folio);
+
+        return toStayDto(stay, currentRoom.getRoomNumber(), savedFolio);
+    }
+
+    @Override
+    @Transactional
+    public GuestStayDto transferRoom(Integer stayId, RoomTransferRequest request) {
+        GuestStay stay = guestStayRepository.findById(stayId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông tin lưu trú."));
+
+        if (!GuestStayStatus.ACTIVE.name().equalsIgnoreCase(stay.getStatus())) {
+            throw new BusinessException("BR-28", "Chỉ có thể đổi phòng cho lượt lưu trú đang ở trạng thái ACTIVE.");
+        }
+
+        Room targetRoom = roomRepository.findById(request.getTargetRoomId())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy phòng mục tiêu #" + request.getTargetRoomId()));
+
+        if (!StayStatus.VACANT.name().equalsIgnoreCase(targetRoom.getStayStatus())) {
+            throw new BusinessException("BR-28", "Phòng " + targetRoom.getRoomNumber() + " hiện không trống (Trạng thái: " + targetRoom.getStayStatus() + ").");
+        }
+
+        if (CleaningStatus.DIRTY.name().equalsIgnoreCase(targetRoom.getCleaningStatus())) {
+            throw new BusinessException("BR-28", "Phòng " + targetRoom.getRoomNumber() + " đang dơ (DIRTY), chưa dọn dẹp xong nên không thể nhận khách.");
+        }
+
+        StayRoomAssignment currentAssignment = stay.getRoomAssignments().isEmpty()
+                ? null
+                : stay.getRoomAssignments().getLast();
+
+        Room oldRoom = currentAssignment != null ? currentAssignment.getRoom() : null;
+        if (oldRoom != null && oldRoom.getRoomId().equals(targetRoom.getRoomId())) {
+            throw new BusinessException("BR-28", "Phòng mới trùng với phòng hiện tại đang ở.");
+        }
+
+        Instant now = Instant.now();
+
+        // 1. Đóng assignment cũ
+        if (currentAssignment != null) {
+            currentAssignment.setAssignedTo(now);
+            if (request.getReason() != null && !request.getReason().isBlank()) {
+                currentAssignment.setTransferReason(request.getReason().trim());
+            }
+            stayRoomAssignmentRepository.save(currentAssignment);
+        }
+
+        // 2. Chuyển phòng cũ thành VACANT & DIRTY (BR-26: Room becomes dirty after leaving)
+        if (oldRoom != null) {
+            oldRoom.setStayStatus(StayStatus.VACANT.name());
+            oldRoom.setCleaningStatus(CleaningStatus.DIRTY.name());
+            roomRepository.save(oldRoom);
+        }
+
+        // 3. Chuyển phòng mới thành OCCUPIED
+        targetRoom.setStayStatus(StayStatus.OCCUPIED.name());
+        roomRepository.save(targetRoom);
+
+        // 4. Tạo assignment mới
+        StayRoomAssignment newAssignment = StayRoomAssignment.builder()
+                .guestStay(stay)
+                .room(targetRoom)
+                .assignedFrom(now)
+                .assignedTo(null)
+                .build();
+        stayRoomAssignmentRepository.save(newAssignment);
+        stay.getRoomAssignments().add(newAssignment);
+
+        // 5. Phụ thu đổi phòng / nâng hạng (nếu có)
+        Folio folio = folioRepository.findByGuestStay_StayId(stayId).orElse(null);
+        if (request.getAdditionalCharge() != null && request.getAdditionalCharge().compareTo(BigDecimal.ZERO) > 0 && folio != null) {
+            folio.setTotalAmount(folio.getTotalAmount().add(request.getAdditionalCharge()));
+            folioRepository.save(folio);
+        }
+
+        // 6. Ghi chú lịch sử đổi phòng vào Reservation
+        Reservation reservation = stay.getReservation();
+        String oldRoomNum = oldRoom != null ? oldRoom.getRoomNumber() : "N/A";
+        String note = "[Đổi phòng từ " + oldRoomNum + " sang " + targetRoom.getRoomNumber()
+                + (request.getReason() != null && !request.getReason().isBlank() ? ": " + request.getReason().trim() : "") + "]";
+        reservation.setSpecialNotes(reservation.getSpecialNotes() != null
+                ? reservation.getSpecialNotes() + " " + note
+                : note);
+        reservationRepository.save(reservation);
+
+        return toStayDto(stay, targetRoom.getRoomNumber(), folio);
     }
 
     private int computeAvailableQuota(Integer roomTypeId, LocalDate checkInDate, LocalDate checkOutDate, LocalDate today) {
@@ -390,30 +677,81 @@ public class FrontDeskServiceImpl implements FrontDeskService {
     }
 
     private ReservationDto toReservationDto(Reservation r) {
-        ReservationDetail detail = (r.getDetails() != null && !r.getDetails().isEmpty())
-                ? r.getDetails().getFirst()
-                : null;
-        RoomType rt = detail != null ? detail.getRoomType() : null;
         long nights = (r.getCheckInDate() != null && r.getCheckOutDate() != null)
                 ? Math.max(1, ChronoUnit.DAYS.between(r.getCheckInDate(), r.getCheckOutDate()))
                 : 1;
 
         BigDecimal total = BigDecimal.ZERO;
-        if (detail != null && detail.getNightlyRates() != null && !detail.getNightlyRates().isEmpty()) {
-            total = detail.getNightlyRates().stream()
-                    .map(nr -> nr.getUnitPrice().multiply(BigDecimal.valueOf(detail.getQuantity() != null ? detail.getQuantity() : 1)))
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-        } else if (rt != null && rt.getBasePrice() != null) {
-            total = rt.getBasePrice().multiply(BigDecimal.valueOf(nights * (detail != null && detail.getQuantity() != null ? detail.getQuantity() : 1)));
+        StringJoiner typeNames = new StringJoiner(", ");
+        int totalQuantity = 0;
+        Integer firstRoomTypeId = null;
+        String firstImageUrl = null;
+
+        List<GuestStay> stays = (r.getReservationId() != null)
+                ? guestStayRepository.findAllByReservation_ReservationId(r.getReservationId())
+                : Collections.emptyList();
+        int checkedInRooms = stays.size();
+
+        Map<Integer, ReservationDto.BookedRoomDetailDto> detailsMap = new LinkedHashMap<>();
+
+        if (r.getDetails() != null && !r.getDetails().isEmpty()) {
+            for (ReservationDetail detail : r.getDetails()) {
+                int qty = detail.getQuantity() != null ? detail.getQuantity() : 1;
+                totalQuantity += qty;
+
+                RoomType rt = detail.getRoomType();
+                if (rt != null) {
+                    if (firstRoomTypeId == null) {
+                        firstRoomTypeId = rt.getRoomTypeId();
+                        firstImageUrl = rt.getImageUrl();
+                    }
+
+                    ReservationDto.BookedRoomDetailDto existing = detailsMap.get(rt.getRoomTypeId());
+                    if (existing != null) {
+                        existing.setQuantity(existing.getQuantity() + qty);
+                    } else {
+                        List<String> assignedNumbers = new ArrayList<>();
+                        for (GuestStay s : stays) {
+                            if (s.getRoomAssignments() != null && !s.getRoomAssignments().isEmpty()) {
+                                Room rm = s.getRoomAssignments().getLast().getRoom();
+                                if (rm.getRoomType() != null && rt.getRoomTypeId().equals(rm.getRoomType().getRoomTypeId())) {
+                                    assignedNumbers.add(rm.getRoomNumber());
+                                }
+                            }
+                        }
+                        detailsMap.put(rt.getRoomTypeId(), ReservationDto.BookedRoomDetailDto.builder()
+                                .roomTypeId(rt.getRoomTypeId())
+                                .roomTypeName(rt.getTypeName())
+                                .quantity(qty)
+                                .unitPrice(rt.getBasePrice())
+                                .checkedInRoomNumbers(assignedNumbers)
+                                .build());
+                    }
+                }
+
+                if (detail.getNightlyRates() != null && !detail.getNightlyRates().isEmpty()) {
+                    BigDecimal detailSum = detail.getNightlyRates().stream()
+                            .map(nr -> nr.getUnitPrice().multiply(BigDecimal.valueOf(qty)))
+                            .reduce(BigDecimal.ZERO, BigDecimal::add);
+                    total = total.add(detailSum);
+                } else if (rt != null && rt.getBasePrice() != null) {
+                    total = total.add(rt.getBasePrice().multiply(BigDecimal.valueOf(nights * qty)));
+                }
+            }
         }
+
+        for (ReservationDto.BookedRoomDetailDto dto : detailsMap.values()) {
+            typeNames.add(dto.getRoomTypeName() + " (x" + dto.getQuantity() + ")");
+        }
+        List<ReservationDto.BookedRoomDetailDto> bookedDetails = new ArrayList<>(detailsMap.values());
 
         return ReservationDto.builder()
                 .reservationId(r.getReservationId())
                 .reservationCode(r.getReservationCode())
-                .roomTypeId(rt != null ? rt.getRoomTypeId() : null)
-                .roomTypeName(rt != null ? rt.getTypeName() : null)
-                .roomImageUrl(rt != null ? rt.getImageUrl() : null)
-                .roomQuantity(detail != null ? detail.getQuantity() : 1)
+                .roomTypeId(firstRoomTypeId)
+                .roomTypeName(typeNames.length() > 0 ? typeNames.toString() : "Chưa chọn")
+                .roomImageUrl(firstImageUrl)
+                .roomQuantity(totalQuantity > 0 ? totalQuantity : 1)
                 .checkInDate(r.getCheckInDate())
                 .checkOutDate(r.getCheckOutDate())
                 .nights(nights)
@@ -426,10 +764,18 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .estimatedTotal(total)
                 .reservationDate(r.getReservationDate())
                 .holdExpiresAt(r.getHoldExpiresAt())
+                .bookedDetails(bookedDetails)
+                .checkedInRoomsCount(checkedInRooms)
+                .totalBookedRoomsCount(totalQuantity)
                 .build();
     }
 
     private GuestStayDto toStayDto(GuestStay stay, String roomNumber, Folio folio) {
+        Room room = stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty()
+                ? stay.getRoomAssignments().getLast().getRoom()
+                : null;
+        RoomType rt = room != null ? room.getRoomType() : null;
+
         return GuestStayDto.builder()
                 .stayId(stay.getStayId())
                 .reservationId(stay.getReservation().getReservationId())
@@ -437,6 +783,9 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .guestName(stay.getReservation().getContactName())
                 .guestIdNumber(stay.getGuestIdNumber())
                 .roomNumber(roomNumber)
+                .roomTypeId(rt != null ? rt.getRoomTypeId() : null)
+                .roomTypeName(rt != null ? rt.getTypeName() : null)
+                .roomPrice(rt != null ? rt.getBasePrice() : null)
                 .checkInDate(stay.getReservation().getCheckInDate())
                 .checkOutDate(stay.getReservation().getCheckOutDate())
                 .actualCheckIn(stay.getActualCheckIn())
@@ -445,5 +794,214 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .folioId(folio != null ? folio.getFolioId() : null)
                 .folioTotalAmount(folio != null ? folio.getTotalAmount() : BigDecimal.ZERO)
                 .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public FrontDeskBookingQuoteResponse calculateBookingQuote(FrontDeskBookingQuoteRequest request) {
+        LocalDate checkIn = request.getCheckInDate();
+        LocalDate checkOut = request.getCheckOutDate();
+
+        if (checkIn == null || checkOut == null || !checkOut.isAfter(checkIn)) {
+            throw new BusinessException("MSG01A", "Ngày nhận và ngày trả phòng không hợp lệ.");
+        }
+
+        int totalNights = (int) ChronoUnit.DAYS.between(checkIn, checkOut);
+        List<FrontDeskBookingQuoteResponse.QuoteRoomTypeItemDto> items = new ArrayList<>();
+        BigDecimal totalRoomCharge = BigDecimal.ZERO;
+        int totalRoomsCount = 0;
+        int totalCapacity = 0;
+
+        if (request.getRoomItems() != null) {
+            for (FrontDeskBookingQuoteRequest.SelectedRoomItem it : request.getRoomItems()) {
+                if (it.getQuantity() <= 0) continue;
+
+                RoomType rt = roomTypeRepository.findById(it.getRoomTypeId())
+                        .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hạng phòng #" + it.getRoomTypeId()));
+
+                Map<Integer, BigDecimal> tariffMap = loadTariffMap(rt.getRoomTypeId());
+                BigDecimal periodPricePerRoom = BigDecimal.ZERO;
+                List<FrontDeskBookingQuoteResponse.QuoteDailyBreakdownDto> breakdowns = new ArrayList<>();
+
+                // Thu thập các đêm
+                List<DailyNightInfo> nights = new ArrayList<>();
+                for (LocalDate d = checkIn; d.isBefore(checkOut); d = d.plusDays(1)) {
+                    int dow = d.getDayOfWeek().getValue();
+                    BigDecimal nightPrice = tariffMap.getOrDefault(dow, rt.getBasePrice());
+                    nights.add(new DailyNightInfo(d, dow, nightPrice));
+                    periodPricePerRoom = periodPricePerRoom.add(nightPrice);
+                }
+
+                // Gom các đêm liên tiếp cùng mức giá
+                if (!nights.isEmpty()) {
+                    LocalDate blockStart = nights.get(0).date;
+                    LocalDate blockEnd = nights.get(0).date;
+                    int blockStartDow = nights.get(0).dow;
+                    int blockEndDow = nights.get(0).dow;
+                    BigDecimal blockPrice = nights.get(0).price;
+                    int blockNights = 1;
+
+                    for (int i = 1; i < nights.size(); i++) {
+                        DailyNightInfo cur = nights.get(i);
+                        if (cur.price.compareTo(blockPrice) == 0) {
+                            blockEnd = cur.date;
+                            blockEndDow = cur.dow;
+                            blockNights++;
+                        } else {
+                            breakdowns.add(buildBreakdownDto(blockStart, blockEnd, blockStartDow, blockEndDow, blockNights, blockPrice));
+                            blockStart = cur.date;
+                            blockEnd = cur.date;
+                            blockStartDow = cur.dow;
+                            blockEndDow = cur.dow;
+                            blockPrice = cur.price;
+                            blockNights = 1;
+                        }
+                    }
+                    breakdowns.add(buildBreakdownDto(blockStart, blockEnd, blockStartDow, blockEndDow, blockNights, blockPrice));
+                }
+
+                BigDecimal lineTotal = periodPricePerRoom.multiply(BigDecimal.valueOf(it.getQuantity()));
+                totalRoomCharge = totalRoomCharge.add(lineTotal);
+                totalRoomsCount += it.getQuantity();
+                int capPerRoom = rt.getCapacity() != null ? rt.getCapacity() : 2;
+                totalCapacity += capPerRoom * it.getQuantity();
+
+                items.add(FrontDeskBookingQuoteResponse.QuoteRoomTypeItemDto.builder()
+                        .roomTypeId(rt.getRoomTypeId())
+                        .typeName(rt.getTypeName())
+                        .quantity(it.getQuantity())
+                        .capacityPerRoom(capPerRoom)
+                        .lineCapacity(capPerRoom * it.getQuantity())
+                        .periodPricePerRoom(periodPricePerRoom)
+                        .lineTotal(lineTotal)
+                        .breakdowns(breakdowns)
+                        .build());
+            }
+        }
+
+        return FrontDeskBookingQuoteResponse.builder()
+                .checkInDate(checkIn)
+                .checkOutDate(checkOut)
+                .checkInDayOfWeek(toDowFullName(checkIn.getDayOfWeek().getValue()))
+                .checkOutDayOfWeek(toDowFullName(checkOut.getDayOfWeek().getValue()))
+                .totalNights(totalNights)
+                .totalRoomsCount(totalRoomsCount)
+                .totalCapacity(totalCapacity)
+                .items(items)
+                .totalRoomCharge(totalRoomCharge)
+                .grandTotal(totalRoomCharge) // Đã loại bỏ phí dịch vụ (5%) và thuế VAT (8%)
+                .note("Đã áp dụng biểu giá tự động theo ngày trong tuần. Miễn phí dịch vụ và thuế VAT.")
+                .build();
+    }
+
+    private FrontDeskBookingQuoteResponse.QuoteDailyBreakdownDto buildBreakdownDto(
+            LocalDate startDate, LocalDate endDate, int startDow, int endDow, int nights, BigDecimal unitPrice) {
+        java.time.format.DateTimeFormatter dtfShort = java.time.format.DateTimeFormatter.ofPattern("dd/MM");
+        java.time.format.DateTimeFormatter dtfFull = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy");
+
+        String fullLabel;
+        String shortLabel;
+        boolean isWeekend = (startDow == 6 || startDow == 7 || endDow == 6 || endDow == 7);
+
+        if (nights == 1) {
+            fullLabel = toDowFullName(startDow) + " (" + startDate.format(dtfFull) + ")";
+            shortLabel = toDowShortName(startDow) + ", " + startDate.format(dtfShort);
+        } else {
+            fullLabel = toDowFullName(startDow) + " (" + startDate.format(dtfFull) + ") → "
+                    + toDowFullName(endDow) + " (" + endDate.format(dtfFull) + ")";
+            shortLabel = toDowShortName(startDow) + ", " + startDate.format(dtfShort) + " – "
+                    + toDowShortName(endDow) + ", " + endDate.format(dtfShort);
+        }
+
+        BigDecimal subtotal = unitPrice.multiply(BigDecimal.valueOf(nights));
+        String explanation = nights + " đêm × " + String.format("%,d", unitPrice.longValue()) + " ₫ = " + String.format("%,d", subtotal.longValue()) + " ₫";
+
+        return FrontDeskBookingQuoteResponse.QuoteDailyBreakdownDto.builder()
+                .periodLabel(fullLabel)
+                .shortLabel(shortLabel)
+                .nights(nights)
+                .unitPrice(unitPrice)
+                .subtotalPerRoom(subtotal)
+                .explanation(explanation)
+                .isWeekend(isWeekend)
+                .build();
+    }
+
+    private List<FrontDeskRoomTypeAvailabilityDto.PriceRangeDto> groupTariffRanges(Map<Integer, BigDecimal> tariffMap, BigDecimal fallbackPrice) {
+        List<FrontDeskRoomTypeAvailabilityDto.PriceRangeDto> ranges = new ArrayList<>();
+        BigDecimal defaultRate = fallbackPrice != null ? fallbackPrice : BigDecimal.ZERO;
+
+        int currentStart = 1;
+        BigDecimal currentPrice = tariffMap.getOrDefault(1, defaultRate);
+
+        for (int dow = 2; dow <= 7; dow++) {
+            BigDecimal price = tariffMap.getOrDefault(dow, defaultRate);
+            if (!price.equals(currentPrice)) {
+                ranges.add(createPriceRangeDto(currentStart, dow - 1, currentPrice));
+                currentStart = dow;
+                currentPrice = price;
+            }
+        }
+        ranges.add(createPriceRangeDto(currentStart, 7, currentPrice));
+
+        return ranges;
+    }
+
+    private FrontDeskRoomTypeAvailabilityDto.PriceRangeDto createPriceRangeDto(int startDow, int endDow, BigDecimal price) {
+        String dayRange;
+        String shortRange;
+        if (startDow == endDow) {
+            dayRange = toDowFullName(startDow);
+            shortRange = toDowShortName(startDow);
+        } else {
+            dayRange = toDowFullName(startDow) + " - " + toDowFullName(endDow);
+            shortRange = toDowShortName(startDow) + " - " + toDowShortName(endDow);
+        }
+
+        return FrontDeskRoomTypeAvailabilityDto.PriceRangeDto.builder()
+                .dayRange(dayRange)
+                .shortRange(shortRange)
+                .price(price)
+                .startDayOfWeek(startDow)
+                .endDayOfWeek(endDow)
+                .build();
+    }
+
+    private String toDowFullName(int dow) {
+        return switch (dow) {
+            case 1 -> "Thứ Hai";
+            case 2 -> "Thứ Ba";
+            case 3 -> "Thứ Tư";
+            case 4 -> "Thứ Năm";
+            case 5 -> "Thứ Sáu";
+            case 6 -> "Thứ Bảy";
+            case 7 -> "Chủ Nhật";
+            default -> "Ngày " + dow;
+        };
+    }
+
+    private String toDowShortName(int dow) {
+        return switch (dow) {
+            case 1 -> "T2";
+            case 2 -> "T3";
+            case 3 -> "T4";
+            case 4 -> "T5";
+            case 5 -> "T6";
+            case 6 -> "T7";
+            case 7 -> "CN";
+            default -> "T" + dow;
+        };
+    }
+
+    private static class DailyNightInfo {
+        LocalDate date;
+        int dow;
+        BigDecimal price;
+
+        DailyNightInfo(LocalDate date, int dow, BigDecimal price) {
+            this.date = date;
+            this.dow = dow;
+            this.price = price;
+        }
     }
 }

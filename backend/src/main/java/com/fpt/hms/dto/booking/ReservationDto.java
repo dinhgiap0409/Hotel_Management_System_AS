@@ -37,6 +37,21 @@ public class ReservationDto {
     private Instant reservationDate;
     private Instant holdExpiresAt;
     private List<NightlyRateItemDto> nightlyBreakdown;
+    private List<BookedRoomDetailDto> bookedDetails;
+    private Integer checkedInRoomsCount;
+    private Integer totalBookedRoomsCount;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class BookedRoomDetailDto {
+        private Integer roomTypeId;
+        private String roomTypeName;
+        private Integer quantity;
+        private BigDecimal unitPrice;
+        private List<String> checkedInRoomNumbers;
+    }
 
     @Data
     @Builder

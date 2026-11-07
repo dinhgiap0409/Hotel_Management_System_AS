@@ -27,4 +27,7 @@ public class GuestStayDto {
     private String status;
     private Integer folioId;
     private BigDecimal folioTotalAmount;
+    private Integer roomTypeId;
+    private String roomTypeName;
+    private BigDecimal roomPrice;
 }
