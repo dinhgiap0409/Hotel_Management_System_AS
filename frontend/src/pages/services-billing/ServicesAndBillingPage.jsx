@@ -13,11 +13,18 @@ import { VoucherManagementTab } from './VoucherManagementTab';
 // Phân quyền theo ma trận nghiệp vụ SDD/SRS
 const CATALOG_MANAGERS = [ROLES.SERVICE_MANAGER, ROLES.ADMIN];
 const CATALOG_VIEW_ALL = [ROLES.SERVICE_MANAGER, ROLES.GENERAL_MANAGER, ROLES.ADMIN];
+const CATALOG_TAB_VIEWERS = [
+  ROLES.SERVICE_STAFF,
+  ROLES.SERVICE_MANAGER,
+  ROLES.FRONT_DESK,
+  ROLES.SALES_MANAGER,
+  ROLES.GENERAL_MANAGER,
+  ROLES.ADMIN,
+];
 const ORDER_VIEWERS = [
   ROLES.SERVICE_STAFF,
   ROLES.SERVICE_MANAGER,
   ROLES.FRONT_DESK,
-  ROLES.ACCOUNTANT,
   ROLES.GENERAL_MANAGER,
   ROLES.ADMIN,
 ];
@@ -175,6 +182,7 @@ export const ServicesAndBillingPage = () => {
   const { user } = useAuth();
   const role = user?.role;
 
+  const canViewCatalog = CATALOG_TAB_VIEWERS.includes(role);
   const canManageCatalog = CATALOG_MANAGERS.includes(role);
   const canViewOrders = ORDER_VIEWERS.includes(role);
   const canCreateOrder = ORDER_CREATORS.includes(role);
@@ -240,9 +248,10 @@ export const ServicesAndBillingPage = () => {
   const [preOrderPageSize, setPreOrderPageSize] = useState(5);
 
   const loadServices = useCallback(() => {
+    if (!canViewCatalog) return Promise.resolve();
     const call = CATALOG_VIEW_ALL.includes(role) ? billingApi.getAllServices : billingApi.getActiveServices;
     return call().then((r) => setServices(r.data || [])).catch(() => {});
-  }, [role]);
+  }, [role, canViewCatalog]);
 
   const loadOrders = useCallback(() => {
     if (!canViewOrders) return Promise.resolve();
@@ -744,6 +753,25 @@ export const ServicesAndBillingPage = () => {
 
   const openFoliosCount = (activeStays || []).filter((s) => s?.folioStatus !== 'CLOSED').length;
   const closedFoliosCount = (activeStays || []).filter((s) => s?.folioStatus === 'CLOSED').length;
+  const currentMonthStr = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }, []);
+  const currentMonthLabel = useMemo(() => {
+    const now = new Date();
+    return `Tháng ${now.getMonth() + 1}/${now.getFullYear()}`;
+  }, []);
+  const settledFoliosRevenueThisMonth = useMemo(() => {
+    return (activeStays || [])
+      .filter((s) => {
+        if (s?.folioStatus !== 'CLOSED') return false;
+        const d = s.actualCheckOut || s.checkOutDate || s.actualCheckIn || s.checkInDate;
+        return d && typeof d === 'string' && d.startsWith(currentMonthStr);
+      })
+      .reduce((sum, s) => sum + (Number(s.totalAmount) || 0), 0);
+  }, [activeStays, currentMonthStr]);
   const totalVouchersCount = (vouchers || []).length;
   const activeVouchersCount = (vouchers || []).filter((v) => v?.status === 'ACTIVE').length;
   const usedVouchersCount = (vouchers || []).reduce((acc, v) => acc + (v?.usedCount || 0), 0);
@@ -768,9 +796,9 @@ export const ServicesAndBillingPage = () => {
     }
     if (role === ROLES.ACCOUNTANT) {
       return {
-        title: 'Đối Soát Doanh Thu Phòng, Dịch Vụ & Hóa Đơn',
+        title: 'Quản Lý Hóa Đơn & Quyết Toán Tiền Phòng',
         subtitle:
-          'Kiểm tra chi tiết thanh toán Folio, đối soát hóa đơn VAT, doanh thu dịch vụ phòng và chiết khấu voucher.',
+          'Đối soát bảng kê chi phí phòng lưu trú, dịch vụ phát sinh, phụ thu, trừ tiền cọc và kiểm tra xuất hóa đơn VAT.',
       };
     }
     return {
@@ -997,41 +1025,37 @@ export const ServicesAndBillingPage = () => {
           </div>
         </div>
       ) : role === ROLES.ACCOUNTANT ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, marginBottom: 24 }}>
           <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Tổng Phòng Đang Ở</div>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Hồ Sơ Phòng Lưu Trú</div>
             <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
               {(activeStays || []).length}{' '}
-              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>Folio</span>
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>phòng</span>
             </div>
+            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>Đang theo dõi chi phí</div>
           </div>
           <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Folio Đã Quyết Toán</div>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Hóa Đơn Đã Quyết Toán</div>
             <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
               {closedFoliosCount}{' '}
               <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>hóa đơn</span>
             </div>
+            <div style={{ fontSize: 12, color: '#16a34a', marginTop: 4 }}>Đã thu tiền &amp; xuất bill</div>
           </div>
           <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Folio Chờ Đối Soát</div>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Chưa Quyết Toán (Đang Ở)</div>
             <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
               {openFoliosCount}{' '}
-              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>chưa thu</span>
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>phòng</span>
             </div>
+            <div style={{ fontSize: 12, color: '#d97706', marginTop: 4 }}>Chờ thu khi checkout</div>
           </div>
           <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Tổng Đơn Dịch Vụ</div>
-            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
-              {(orders || []).length}{' '}
-              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>đơn</span>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Doanh Thu Thực Thu ({currentMonthLabel})</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: '#0f172a', marginTop: 6 }}>
+              {formatVND(settledFoliosRevenueThisMonth)}
             </div>
-          </div>
-          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Mã Giảm Giá Khả Dụng</div>
-            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
-              {activeVouchersCount}{' '}
-              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>mã active</span>
-            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>Từ {closedFoliosCount} hóa đơn đã đóng</div>
           </div>
         </div>
       ) : (
@@ -1083,23 +1107,25 @@ export const ServicesAndBillingPage = () => {
           marginBottom: 20,
         }}
       >
-        <button
-          type="button"
-          onClick={() => setActiveTab('services')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'services' ? '2px solid #0284c7' : '2px solid transparent',
-            color: activeTab === 'services' ? '#0284c7' : '#64748b',
-            fontWeight: activeTab === 'services' ? 700 : 500,
-            padding: '10px 18px',
-            fontSize: 14,
-            cursor: 'pointer',
-            marginBottom: -2,
-          }}
-        >
-          1. Danh Mục Dịch Vụ ({services.length})
-        </button>
+        {canViewCatalog && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('services')}
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === 'services' ? '2px solid #0284c7' : '2px solid transparent',
+              color: activeTab === 'services' ? '#0284c7' : '#64748b',
+              fontWeight: activeTab === 'services' ? 700 : 500,
+              padding: '10px 18px',
+              fontSize: 14,
+              cursor: 'pointer',
+              marginBottom: -2,
+            }}
+          >
+            Danh Mục Dịch Vụ ({services.length})
+          </button>
+        )}
 
         {canViewOrders && (
           <button
@@ -1117,7 +1143,7 @@ export const ServicesAndBillingPage = () => {
               marginBottom: -2,
             }}
           >
-            2. Đơn Gọi Dịch Vụ Phòng ({orders.length})
+            Đơn Dịch Vụ Phòng ({orders.length})
           </button>
         )}
 
@@ -1137,7 +1163,7 @@ export const ServicesAndBillingPage = () => {
               marginBottom: -2,
             }}
           >
-            3. Lịch Đặt Trước Của Khách ({upcomingPreOrders.length})
+            Lịch Khách Đặt Trước ({upcomingPreOrders.length})
           </button>
         )}
 
@@ -1157,7 +1183,7 @@ export const ServicesAndBillingPage = () => {
               marginBottom: -2,
             }}
           >
-            4. Quyết Toán &amp; Hóa Đơn Phòng ({activeStays.length})
+            Hóa Đơn &amp; Quyết Toán Tiền Phòng ({activeStays.length})
           </button>
         )}
 
@@ -1177,7 +1203,7 @@ export const ServicesAndBillingPage = () => {
               marginBottom: -2,
             }}
           >
-            5. Quản Lý Khuyến Mãi ({vouchers.length})
+            Chương Trình Khuyến Mãi ({vouchers.length})
           </button>
         )}
       </div>

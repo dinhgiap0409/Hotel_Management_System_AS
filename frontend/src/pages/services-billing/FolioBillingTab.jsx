@@ -22,6 +22,7 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
   // Filters
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL'); // 'ALL' | 'OPEN' | 'CLOSED'
+  const [monthFilter, setMonthFilter] = useState('ALL');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
@@ -254,20 +255,41 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
     }
   };
 
+  // Danh sách các tháng có dữ liệu lưu trú
+  const availableMonths = useMemo(() => {
+    const set = new Set();
+    (activeStays || []).forEach((s) => {
+      const d = s.actualCheckOut || s.checkOutDate || s.actualCheckIn || s.checkInDate;
+      if (d && typeof d === 'string' && d.length >= 7) {
+        set.add(d.substring(0, 7)); // 'YYYY-MM'
+      }
+    });
+    return Array.from(set).sort().reverse();
+  }, [activeStays]);
+
   const filteredStays = useMemo(() => {
     return (activeStays || []).filter((s) => {
+      if (statusFilter !== 'ALL') {
+        if (statusFilter === 'CLOSED' && s.folioStatus !== 'CLOSED') return false;
+        if (statusFilter === 'OPEN' && s.folioStatus === 'CLOSED') return false;
+      }
+      if (monthFilter !== 'ALL') {
+        const d = s.actualCheckOut || s.checkOutDate || s.actualCheckIn || s.checkInDate;
+        if (!d || !d.startsWith(monthFilter)) return false;
+      }
       if (keyword.trim()) {
         const kw = keyword.trim().toLowerCase();
         const room = (s.roomNumber || '').toLowerCase();
         const name = (s.guestName || '').toLowerCase();
         const code = (s.reservationCode || '').toLowerCase();
-        if (!room.includes(kw) && !name.includes(kw) && !code.includes(kw)) {
+        const phone = (s.phoneNumber || '').toLowerCase();
+        if (!room.includes(kw) && !name.includes(kw) && !code.includes(kw) && !phone.includes(kw)) {
           return false;
         }
       }
       return true;
     });
-  }, [activeStays, keyword]);
+  }, [activeStays, keyword, statusFilter, monthFilter]);
 
   const totalPages = Math.ceil(filteredStays.length / pageSize) || 1;
   const paginatedStays = useMemo(() => {
@@ -290,10 +312,10 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
       >
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#0f172a' }}>
-            Quyết Toán &amp; Hóa Đơn Phòng (Folio Billing &amp; Settlement)
+            Hóa Đơn &amp; Quyết Toán Tiền Phòng
           </h2>
           <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>
-            Tra cứu bảng kê chi phí phòng, thêm phụ thu thực tế, áp mã giảm giá, thu tiền quyết toán và xuất hóa đơn VAT chuẩn khách sạn.
+            Tra cứu bảng kê chi phí phòng, phụ thu phát sinh, áp mã giảm giá, thu tiền quyết toán và xuất hóa đơn VAT chuẩn.
           </div>
         </div>
 
@@ -333,10 +355,10 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
           border: '1px solid #e2e8f0',
         }}
       >
-        <div style={{ flex: '1 1 280px', minWidth: 220 }}>
+        <div style={{ flex: '1 1 260px', minWidth: 200 }}>
           <input
             type="text"
-            placeholder="Tìm theo số phòng, mã đặt phòng (#BK...), tên khách..."
+            placeholder="Tìm theo số phòng, mã đặt phòng (#BK...), tên khách, SĐT..."
             value={keyword}
             onChange={(e) => {
               setKeyword(e.target.value);
@@ -352,18 +374,96 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
             }}
           />
         </div>
+
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 13, color: '#64748b', fontWeight: 500, whiteSpace: 'nowrap' }}>Trạng thái:</span>
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setPage(1);
+              }}
+              style={{
+                padding: '7px 10px',
+                borderRadius: 6,
+                border: '1px solid #cbd5e1',
+                fontSize: 13,
+                background: '#fff',
+                color: '#1e293b',
+              }}
+            >
+              <option value="ALL">Tất cả trạng thái</option>
+              <option value="OPEN">Chưa thanh toán (Đang ở)</option>
+              <option value="CLOSED">Đã quyết toán (Đã thu tiền)</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 13, color: '#64748b', fontWeight: 500, whiteSpace: 'nowrap' }}>Kỳ thời gian:</span>
+            <select
+              value={monthFilter}
+              onChange={(e) => {
+                setMonthFilter(e.target.value);
+                setPage(1);
+              }}
+              style={{
+                padding: '7px 10px',
+                borderRadius: 6,
+                border: '1px solid #cbd5e1',
+                fontSize: 13,
+                background: '#fff',
+                color: '#1e293b',
+              }}
+            >
+              <option value="ALL">Tất cả các tháng</option>
+              {availableMonths.map((m) => {
+                const [y, mm] = m.split('-');
+                return (
+                  <option key={m} value={m}>
+                    Tháng {mm}/{y}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          {(keyword || statusFilter !== 'ALL' || monthFilter !== 'ALL') && (
+            <button
+              type="button"
+              onClick={() => {
+                setKeyword('');
+                setStatusFilter('ALL');
+                setMonthFilter('ALL');
+                setPage(1);
+              }}
+              style={{
+                background: '#f1f5f9',
+                border: '1px solid #cbd5e1',
+                color: '#475569',
+                padding: '7px 12px',
+                borderRadius: 6,
+                fontSize: 12.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Xóa bộ lọc
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Bảng Danh Sách Phòng Đang Lưu Trú */}
       <DataTable
         keyField="stayId"
         data={paginatedStays}
-        emptyMessage="Hiện không có phòng nào đang lưu trú."
+        emptyMessage="Không tìm thấy hồ sơ phòng lưu trú nào phù hợp với bộ lọc."
         columns={[
           {
-            header: 'Stay ID',
-            width: 80,
-            minWidth: 70,
+            header: '#Mã Lưu Trú',
+            width: 95,
+            minWidth: 85,
             nowrap: true,
             render: (s) => <span style={{ color: '#64748b', fontWeight: 500 }}>#{s.stayId}</span>,
           },
@@ -419,8 +519,8 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
             ),
           },
           {
-            header: 'Hóa Đơn Folio',
-            minWidth: 140,
+            header: 'Tổng Tiền Hóa Đơn',
+            minWidth: 150,
             nowrap: true,
             render: (s) => (
               <div>
@@ -428,14 +528,14 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
                   {formatVND(s.totalAmount || 0)}
                 </div>
                 <div style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>
-                  {s.folioStatus === 'CLOSED' ? 'Đã quyết toán' : 'Chưa quyết toán'}
+                  {s.folioStatus === 'CLOSED' ? 'Đã hoàn tất thanh toán' : 'Tạm tính (chưa thu)'}
                 </div>
               </div>
             ),
           },
           {
             header: 'Trạng Thái',
-            minWidth: 130,
+            minWidth: 140,
             nowrap: true,
             render: (s) => (
               <span
@@ -451,7 +551,7 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
                   whiteSpace: 'nowrap',
                 }}
               >
-                {s.folioStatus === 'CLOSED' ? 'Đã quyết toán' : 'Đang hoạt động'}
+                {s.folioStatus === 'CLOSED' ? 'Đã thanh toán' : 'Chưa thanh toán (Đang ở)'}
               </span>
             ),
           },
@@ -482,7 +582,7 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
                   }}
                 >
                   <span>{s.folioStatus === 'CLOSED' ? '📄' : '💳'}</span>
-                  {s.folioStatus === 'CLOSED' ? 'Xem Chi Tiết' : 'Quyết Toán Folio'}
+                  {s.folioStatus === 'CLOSED' ? 'Xem Chi Tiết' : 'Quyết Toán'}
                 </button>
 
                 {s.folioStatus === 'CLOSED' && (
@@ -1345,7 +1445,7 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
                                   boxShadow: '0 2px 4px rgba(2, 132, 199, 0.3)',
                                 }}
                               >
-                                Xác Nhận Quyết Toán &amp; Đóng Folio
+                                Xác Nhận Quyết Toán &amp; Đóng Hóa Đơn
                               </button>
                             )
                           )}
@@ -1396,7 +1496,7 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
                 <li>Phương thức: <strong>{paymentMethod}</strong></li>
                 {appliedVoucher && <li>Mã giảm giá áp dụng: <strong>{appliedVoucher.code}</strong></li>}
               </ul>
-              Khi hoàn tất, hệ thống sẽ <strong>đóng Folio phòng</strong>, tạo hóa đơn <strong>Invoice trạng thái PAID</strong> và kích hoạt điều kiện để Lễ tân thực hiện Check-out trả phòng (UC-30).
+              Khi hoàn tất, hệ thống sẽ <strong>đóng bảng kê chi phí phòng</strong>, tạo hóa đơn <strong>Invoice trạng thái PAID</strong> và kích hoạt điều kiện để Lễ tân thực hiện Check-out trả phòng (UC-30).
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
