@@ -11,6 +11,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @Data
 @Builder
@@ -18,8 +19,13 @@ import java.time.LocalDate;
 @AllArgsConstructor
 public class DirectBookingRequest {
 
-    @NotNull(message = "Vui lòng chọn hạng phòng cần đặt")
+    // Hỗ trợ chọn nhiều hạng phòng khác nhau trong 1 đơn
+    private List<SelectedRoomItem> roomItems;
+
+    // Fallback nếu đặt 1 hạng phòng đơn lẻ
     private Integer roomTypeId;
+    @Builder.Default
+    private int quantity = 1;
 
     @NotNull(message = "Vui lòng chọn ngày nhận phòng (Check-in)")
     private LocalDate checkInDate;
@@ -27,13 +33,9 @@ public class DirectBookingRequest {
     @NotNull(message = "Vui lòng chọn ngày trả phòng (Check-out)")
     private LocalDate checkOutDate;
 
-    @Min(value = 1, message = "Số lượng khách tối thiểu là 1 người")
+    // Số khách có thể tự động tính theo sức chứa phòng
     @Builder.Default
-    private int guestCount = 1;
-
-    @Min(value = 1, message = "Số lượng phòng tối thiểu là 1 phòng")
-    @Builder.Default
-    private int quantity = 1;
+    private int guestCount = 0;
 
     @NotBlank(message = "Họ và tên khách hàng không được để trống")
     @Size(max = 100, message = "Họ và tên tối đa 100 ký tự")
@@ -52,5 +54,17 @@ public class DirectBookingRequest {
 
     @Size(max = 500, message = "Ghi chú đặc biệt tối đa 500 ký tự")
     private String specialNotes;
-}
 
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class SelectedRoomItem {
+        @NotNull(message = "Vui lòng chọn hạng phòng")
+        private Integer roomTypeId;
+
+        @Min(value = 1, message = "Số lượng phòng tối thiểu là 1")
+        @Builder.Default
+        private int quantity = 1;
+    }
+}
