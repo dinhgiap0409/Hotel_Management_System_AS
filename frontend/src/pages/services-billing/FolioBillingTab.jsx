@@ -255,6 +255,25 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
     }
   };
 
+  // Kiểm tra thông tin quá hạn trả phòng (Overdue / Late Check-out)
+  const getOverdueInfo = (stay) => {
+    if (!stay || stay.folioStatus === 'CLOSED') return { isOverdue: false, days: 0 };
+    if (!stay.checkOutDate) return { isOverdue: false, days: 0 };
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const checkOutStr = typeof stay.checkOutDate === 'string' ? stay.checkOutDate.substring(0, 10) : '';
+    if (checkOutStr && checkOutStr < todayStr) {
+      const diffMs = new Date(todayStr).getTime() - new Date(checkOutStr).getTime();
+      const days = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)));
+      return { isOverdue: true, days, checkOutStr };
+    }
+    return { isOverdue: false, days: 0, checkOutStr };
+  };
+
+  const overdueStaysCount = useMemo(() => {
+    return (activeStays || []).filter((s) => getOverdueInfo(s).isOverdue).length;
+  }, [activeStays]);
+
   // Danh sách các tháng có dữ liệu lưu trú
   const availableMonths = useMemo(() => {
     const set = new Set();
@@ -269,9 +288,11 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
 
   const filteredStays = useMemo(() => {
     return (activeStays || []).filter((s) => {
+      const ov = getOverdueInfo(s);
       if (statusFilter !== 'ALL') {
         if (statusFilter === 'CLOSED' && s.folioStatus !== 'CLOSED') return false;
-        if (statusFilter === 'OPEN' && s.folioStatus === 'CLOSED') return false;
+        if (statusFilter === 'OVERDUE' && (!ov.isOverdue || s.folioStatus === 'CLOSED')) return false;
+        if (statusFilter === 'OPEN_NORMAL' && (s.folioStatus === 'CLOSED' || ov.isOverdue)) return false;
       }
       if (monthFilter !== 'ALL') {
         const d = s.actualCheckOut || s.checkOutDate || s.actualCheckIn || s.checkInDate;
@@ -387,14 +408,18 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
               style={{
                 padding: '7px 10px',
                 borderRadius: 6,
-                border: '1px solid #cbd5e1',
+                border: statusFilter === 'OVERDUE' ? '1px solid #f87171' : '1px solid #cbd5e1',
                 fontSize: 13,
-                background: '#fff',
-                color: '#1e293b',
+                background: statusFilter === 'OVERDUE' ? '#fef2f2' : '#fff',
+                color: statusFilter === 'OVERDUE' ? '#b91c1c' : '#1e293b',
+                fontWeight: statusFilter === 'OVERDUE' ? 700 : 500,
               }}
             >
               <option value="ALL">Tất cả trạng thái</option>
-              <option value="OPEN">Chưa thanh toán (Đang ở)</option>
+              <option value="OPEN_NORMAL">Đang ở đúng hạn</option>
+              <option value="OVERDUE">
+                ⚠️ Quá hạn trả phòng ({overdueStaysCount})
+              </option>
               <option value="CLOSED">Đã quyết toán (Đã thu tiền)</option>
             </select>
           </div>
@@ -507,16 +532,35 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
             ),
           },
           {
-            header: 'Giờ Check-in',
-            minWidth: 140,
+            header: 'Thời Gian Lưu Trú',
+            minWidth: 160,
             nowrap: true,
-            render: (s) => (
-              <span style={{ color: '#475569', fontSize: 13, whiteSpace: 'nowrap' }}>
-                {s.actualCheckIn
-                  ? formatDateTime(s.actualCheckIn)
-                  : (s.checkInDate ? formatDate(s.checkInDate) : 'N/A')}
-              </span>
-            ),
+            render: (s) => {
+              const ov = getOverdueInfo(s);
+              return (
+                <div>
+                  <div style={{ color: '#475569', fontSize: 13, whiteSpace: 'nowrap' }}>
+                    Vào: {s.actualCheckIn ? formatDateTime(s.actualCheckIn) : (s.checkInDate ? formatDate(s.checkInDate) : 'N/A')}
+                  </div>
+                  {s.checkOutDate && (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: ov.isOverdue ? '#dc2626' : '#64748b',
+                        fontWeight: ov.isOverdue ? 600 : 400,
+                        marginTop: 2,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Dự kiến ra: {formatDate(s.checkOutDate)}
+                      {ov.isOverdue && (
+                        <span style={{ marginLeft: 4, color: '#dc2626', fontWeight: 700 }}>(Trễ {ov.days}n)</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            },
           },
           {
             header: 'Tổng Tiền Hóa Đơn',
@@ -535,82 +579,130 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
           },
           {
             header: 'Trạng Thái',
-            minWidth: 140,
+            minWidth: 155,
             nowrap: true,
-            render: (s) => (
-              <span
-                style={{
-                  background: s.folioStatus === 'CLOSED' ? '#f1f5f9' : '#dcfce7',
-                  color: s.folioStatus === 'CLOSED' ? '#475569' : '#15803d',
-                  padding: '4px 10px',
-                  borderRadius: 14,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {s.folioStatus === 'CLOSED' ? 'Đã thanh toán' : 'Chưa thanh toán (Đang ở)'}
-              </span>
-            ),
-          },
-          {
-            header: 'Thao Tác',
-            minWidth: 170,
-            nowrap: true,
-            render: (s) => (
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
-                <button
-                  type="button"
-                  onClick={() => handleOpenFolio(s)}
-                  disabled={busy}
-                  style={{
-                    background: s.folioStatus === 'CLOSED' ? '#0284c7' : '#dc2626',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '7px 14px',
-                    borderRadius: 6,
-                    fontSize: 12.5,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    boxShadow: s.folioStatus === 'CLOSED' ? '0 1px 2px rgba(2, 132, 199, 0.2)' : '0 1px 2px rgba(220, 38, 38, 0.2)',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <span>{s.folioStatus === 'CLOSED' ? '📄' : '💳'}</span>
-                  {s.folioStatus === 'CLOSED' ? 'Xem Chi Tiết' : 'Quyết Toán'}
-                </button>
-
-                {s.folioStatus === 'CLOSED' && (
-                  <button
-                    type="button"
-                    onClick={() => handleOpenPrintInvoice(s.stayId)}
-                    disabled={busy}
+            render: (s) => {
+              const ov = getOverdueInfo(s);
+              if (s.folioStatus === 'CLOSED') {
+                return (
+                  <span
                     style={{
-                      background: '#fff',
-                      border: '1px solid #cbd5e1',
-                      color: '#334155',
-                      padding: '7px 10px',
-                      borderRadius: 6,
-                      fontSize: 12.5,
+                      background: '#f1f5f9',
+                      color: '#475569',
+                      padding: '4px 10px',
+                      borderRadius: 14,
+                      fontSize: 12,
                       fontWeight: 600,
-                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Đã thanh toán
+                  </span>
+                );
+              }
+              if (ov.isOverdue) {
+                return (
+                  <span
+                    style={{
+                      background: '#fef2f2',
+                      color: '#b91c1c',
+                      border: '1px solid #fecaca',
+                      padding: '4px 10px',
+                      borderRadius: 14,
+                      fontSize: 12,
+                      fontWeight: 700,
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 4,
                       whiteSpace: 'nowrap',
                     }}
-                    title="In hóa đơn thanh toán"
                   >
-                    <span>🖨️</span> In Bill
+                    <span>⚠️</span> Quá hạn ({ov.days} ngày)
+                  </span>
+                );
+              }
+              return (
+                <span
+                  style={{
+                    background: '#dcfce7',
+                    color: '#15803d',
+                    padding: '4px 10px',
+                    borderRadius: 14,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Chưa thanh toán (Đang ở)
+                </span>
+              );
+            },
+          },
+          {
+            header: 'Thao Tác',
+            minWidth: 170,
+            nowrap: true,
+            render: (s) => {
+              const ov = getOverdueInfo(s);
+              return (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenFolio(s)}
+                    disabled={busy}
+                    style={{
+                      background: s.folioStatus === 'CLOSED' ? '#0284c7' : (ov.isOverdue ? '#ea580c' : '#dc2626'),
+                      color: '#fff',
+                      border: 'none',
+                      padding: '7px 14px',
+                      borderRadius: 6,
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      boxShadow: s.folioStatus === 'CLOSED'
+                        ? '0 1px 2px rgba(2, 132, 199, 0.2)'
+                        : (ov.isOverdue ? '0 1px 2px rgba(234, 88, 12, 0.3)' : '0 1px 2px rgba(220, 38, 38, 0.2)'),
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <span>{s.folioStatus === 'CLOSED' ? '📄' : (ov.isOverdue ? '⚠️' : '💳')}</span>
+                    {s.folioStatus === 'CLOSED' ? 'Xem Chi Tiết' : (ov.isOverdue ? 'Quyết Toán Trễ' : 'Quyết Toán')}
                   </button>
-                )}
-              </div>
-            ),
+
+                  {s.folioStatus === 'CLOSED' && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenPrintInvoice(s.stayId)}
+                      disabled={busy}
+                      style={{
+                        background: '#fff',
+                        border: '1px solid #cbd5e1',
+                        color: '#334155',
+                        padding: '7px 10px',
+                        borderRadius: 6,
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        whiteSpace: 'nowrap',
+                      }}
+                      title="In hóa đơn thanh toán"
+                    >
+                      <span>🖨️</span> In Bill
+                    </button>
+                  )}
+                </div>
+              );
+            },
           },
         ]}
       />
@@ -815,6 +907,70 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], onRefresh, b
                 </div>
               ) : (
                 <div>
+                  {/* Cảnh báo quá hạn trả phòng (Overdue / Late Check-out) */}
+                  {(() => {
+                    const ov = getOverdueInfo(selectedStay || folioDetail);
+                    if (!ov.isOverdue || folioDetail.folioStatus === 'CLOSED') return null;
+                    return (
+                      <div
+                        style={{
+                          background: '#fffbeb',
+                          border: '1px solid #fde68a',
+                          borderRadius: 8,
+                          padding: '12px 16px',
+                          marginBottom: 18,
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 12,
+                        }}
+                      >
+                        <span style={{ fontSize: 20 }}>⚠️</span>
+                        <div style={{ flex: 1, fontSize: 13, color: '#92400e', lineHeight: 1.5 }}>
+                          <div style={{ fontWeight: 700, color: '#b45309', fontSize: 13.5 }}>
+                            CẢNH BÁO: Phòng này đã quá hạn trả phòng {ov.days} ngày!
+                          </div>
+                          <div style={{ marginTop: 2 }}>
+                            Dự kiến trả phòng:{' '}
+                            <strong>
+                              {formatDate(folioDetail?.checkOutDate || selectedStay?.checkOutDate)}
+                            </strong>
+                            . Khách lưu trú lố ngày so với đăng ký ban đầu.
+                          </div>
+                          <div style={{ marginTop: 4, color: '#78350f' }}>
+                            👉 Vui lòng kiểm tra và tính thêm <strong>&ldquo;Phụ thu trả phòng muộn (Late check-out)&rdquo;</strong> ở bảng Phụ Thu bên dưới trước khi quyết toán.
+                          </div>
+                        </div>
+                        {canManageCharges && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setChargeForm({
+                                chargeType: 'LATE_CHECKOUT',
+                                description: `Phụ thu quá hạn trả phòng (${ov.days} ngày trễ)`,
+                                amount: '',
+                              });
+                              setShowAddChargeForm(true);
+                            }}
+                            style={{
+                              background: '#d97706',
+                              color: '#fff',
+                              border: 'none',
+                              padding: '7px 14px',
+                              borderRadius: 6,
+                              fontSize: 12.5,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                              boxShadow: '0 1px 2px rgba(217, 119, 6, 0.3)',
+                            }}
+                          >
+                            + Tính Phụ Thu Trễ Hạn
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* BẢNG 1: TIỀN PHÒNG THEO ĐÊM */}
                   <div style={{ marginBottom: 20 }}>
                     <div

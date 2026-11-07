@@ -753,6 +753,15 @@ export const ServicesAndBillingPage = () => {
 
   const openFoliosCount = (activeStays || []).filter((s) => s?.folioStatus !== 'CLOSED').length;
   const closedFoliosCount = (activeStays || []).filter((s) => s?.folioStatus === 'CLOSED').length;
+  const overdueFoliosCount = useMemo(() => {
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    return (activeStays || []).filter((s) => {
+      if (s?.folioStatus === 'CLOSED') return false;
+      const co = typeof s?.checkOutDate === 'string' ? s.checkOutDate.substring(0, 10) : '';
+      return co && co < todayStr;
+    }).length;
+  }, [activeStays]);
   const currentMonthStr = useMemo(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -1048,7 +1057,16 @@ export const ServicesAndBillingPage = () => {
               {openFoliosCount}{' '}
               <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>phòng</span>
             </div>
-            <div style={{ fontSize: 12, color: '#d97706', marginTop: 4 }}>Chờ thu khi checkout</div>
+            <div
+              style={{
+                fontSize: 12,
+                color: overdueFoliosCount > 0 ? '#dc2626' : '#d97706',
+                marginTop: 4,
+                fontWeight: overdueFoliosCount > 0 ? 600 : 400,
+              }}
+            >
+              {overdueFoliosCount > 0 ? `⚠️ Có ${overdueFoliosCount} phòng quá hạn trả` : 'Chờ thu khi checkout'}
+            </div>
           </div>
           <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
             <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Doanh Thu Thực Thu ({currentMonthLabel})</div>
