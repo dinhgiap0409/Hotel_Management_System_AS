@@ -25,10 +25,22 @@ public class AuthenticationController {
 
     private final AuthenticationService authenticationService;
 
-    @PostMapping("/register")
-    @Operation(summary = "UC-01: Register a new Customer account")
-    public ResponseEntity<UserProfileDto> register(@Valid @RequestBody RegisterRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(authenticationService.registerCustomer(request));
+    @PostMapping({"/register/request-otp", "/register"})
+    @Operation(summary = "UC-01 (Step 1): Validate registration info and send 6-digit OTP verification email")
+    public ResponseEntity<Map<String, String>> requestRegisterOtp(@Valid @RequestBody RegisterRequest request) {
+        return ResponseEntity.ok(authenticationService.requestRegistrationOtp(request));
+    }
+
+    @PostMapping("/register/resend-otp")
+    @Operation(summary = "UC-01 (Resend): Resend 6-digit registration OTP to pending email")
+    public ResponseEntity<Map<String, String>> resendRegisterOtp(@Valid @RequestBody ResendRegistrationOtpRequest request) {
+        return ResponseEntity.ok(authenticationService.resendRegistrationOtp(request));
+    }
+
+    @PostMapping("/register/verify")
+    @Operation(summary = "UC-01 (Step 2): Verify 6-digit email OTP and complete Customer account creation")
+    public ResponseEntity<UserProfileDto> verifyRegisterOtp(@Valid @RequestBody VerifyRegistrationOtpRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(authenticationService.verifyRegistrationOtp(request));
     }
 
     @PostMapping("/login")
@@ -74,11 +86,10 @@ public class AuthenticationController {
     }
 
     @PostMapping("/change-password")
-    @Operation(summary = "UC-06: Change current logged-in user password")
+    @Operation(summary = "UC-06: Change current logged-in user password and refresh current JWT session")
     public ResponseEntity<Map<String, String>> changePassword(
             @AuthenticationPrincipal UserPrincipal principal,
             @Valid @RequestBody ChangePasswordRequest request) {
-        authenticationService.changePassword(principal.getEmail(), request);
-        return ResponseEntity.ok(Map.of("message", "Đổi mật khẩu thành công."));
+        return ResponseEntity.ok(authenticationService.changePassword(principal.getEmail(), request));
     }
 }

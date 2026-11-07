@@ -5,8 +5,11 @@ import { http } from '../lib/http';
  * Covers UC-01 to UC-10, UC-48, UC-49.
  */
 export const authApi = {
-  // UC-01: Customer Registration
-  register: (payload) => http.post('/auth/register', payload),
+  // UC-01: Customer Registration (2-step with Email OTP Verification)
+  requestRegisterOtp: (payload) => http.post('/auth/register/request-otp', payload),
+  resendRegisterOtp: (email) => http.post('/auth/register/resend-otp', { email }),
+  verifyRegisterOtp: (email, otpCode) => http.post('/auth/register/verify', { email, otpCode }),
+  register: (payload) => http.post('/auth/register/request-otp', payload),
 
   // UC-02: Login
   login: (email, password) => http.post('/auth/login', { email, password }),

@@ -35,6 +35,7 @@ export const UserManagementPage = () => {
   const [editingUser, setEditingUser] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [error, setError] = useState(null);
+  const [modalError, setModalError] = useState(null);
 
   const [createForm, setCreateForm] = useState({
     email: '',
@@ -46,6 +47,14 @@ export const UserManagementPage = () => {
     gender: 'Nam',
     address: '',
   });
+
+  const extractErrorMessage = (err, fallback) => {
+    const validationMsg = err.response?.data?.validationErrors
+      ?.map((v) => v.message)
+      .filter(Boolean)
+      .join('; ');
+    return validationMsg || err.response?.data?.message || fallback;
+  };
 
   const getAllowedRolesForDepartment = (deptId) => {
     const allowed = DEPARTMENT_ROLES_MAP[Number(deptId)];
@@ -60,18 +69,22 @@ export const UserManagementPage = () => {
     authApi.getDepartments().then((res) => setDepartments(res.data || [])).catch(() => {});
   };
 
-  const fetchUsers = () => {
+  const fetchUsers = (overrides = {}) => {
+    const nextKeyword = overrides.keyword !== undefined ? overrides.keyword : keyword;
+    const nextRole = overrides.role !== undefined ? overrides.role : roleFilter;
+    const nextStatus = overrides.status !== undefined ? overrides.status : statusFilter;
+
     authApi
       .getUsers({
-        keyword: keyword || undefined,
-        role: roleFilter || undefined,
-        status: statusFilter || undefined,
+        keyword: nextKeyword || undefined,
+        role: nextRole || undefined,
+        status: nextStatus || undefined,
       })
       .then((res) => {
         const list = Array.isArray(res.data) ? res.data : res.data?.content || res.data?.data || [];
         setUsers(list);
       })
-      .catch((err) => setError(err.response?.data?.message || 'Không thể tải danh sách tài khoản.'));
+      .catch((err) => setError(extractErrorMessage(err, 'Không thể tải danh sách tài khoản.')));
   };
 
   useEffect(() => {
@@ -85,6 +98,16 @@ export const UserManagementPage = () => {
   const handleSearchSubmit = (e) => {
     e.preventDefault();
     fetchUsers();
+  };
+
+  const handleResetFilters = () => {
+    const shouldManualFetch = roleFilter === '' && statusFilter === '';
+    setKeyword('');
+    setRoleFilter('');
+    setStatusFilter('');
+    if (shouldManualFetch) {
+      fetchUsers({ keyword: '', role: '', status: '' });
+    }
   };
 
   const handleCreateDepartmentChange = (newDeptId) => {
@@ -115,7 +138,7 @@ export const UserManagementPage = () => {
       setFeedback(`Đã chuyển trạng thái tài khoản ${account.email} sang "${getStatusLabel(nextStatus)}".`);
       fetchUsers();
     } catch (err) {
-      setError(err.response?.data?.message || 'Không thể thay đổi trạng thái tài khoản.');
+      setError(extractErrorMessage(err, 'Không thể thay đổi trạng thái tài khoản.'));
     }
   };
 
@@ -128,7 +151,7 @@ export const UserManagementPage = () => {
       setFeedback(`Đã phân quyền "${getRoleLabel(newRoleName)}" cho tài khoản ${account.email}.`);
       fetchUsers();
     } catch (err) {
-      setError(err.response?.data?.message || 'Không thể cập nhật vai trò.');
+      setError(extractErrorMessage(err, 'Không thể cập nhật vai trò.'));
     }
   };
 
@@ -136,13 +159,25 @@ export const UserManagementPage = () => {
     e.preventDefault();
     setFeedback(null);
     setError(null);
+    setModalError(null);
+
+    const trimmedPhone = createForm.phone.trim();
+    if (!/^(0|\+84)\d{9}$/.test(trimmedPhone)) {
+      setModalError('Số điện thoại Việt Nam không hợp lệ (10 chữ số, bắt đầu bằng 0 hoặc +84).');
+      return;
+    }
+
     try {
       await authApi.createUser({
         ...createForm,
+        email: createForm.email.trim(),
+        fullName: createForm.fullName.trim(),
+        phone: trimmedPhone,
         departmentId: Number(createForm.departmentId),
       });
-      setFeedback(`Đã tạo mới tài khoản nhân sự ${createForm.email} (${getRoleLabel(createForm.roleName)}).`);
+      setFeedback(`Đã tạo mới tài khoản nhân sự ${createForm.email.trim()} (${getRoleLabel(createForm.roleName)}).`);
       setShowCreateModal(false);
+      setModalError(null);
       setCreateForm({
         email: '',
         password: '',
@@ -155,7 +190,7 @@ export const UserManagementPage = () => {
       });
       fetchUsers();
     } catch (err) {
-      setError(err.response?.data?.message || 'Không thể tạo tài khoản mới.');
+      setModalError(extractErrorMessage(err, 'Không thể tạo tài khoản mới.'));
     }
   };
 
@@ -164,24 +199,48 @@ export const UserManagementPage = () => {
     if (!editingUser) return;
     setFeedback(null);
     setError(null);
+    setModalError(null);
+
+    const trimmedPhone = (editingUser.phone || '').trim();
+    if (!/^(0|\+84)\d{9}$/.test(trimmedPhone)) {
+      setModalError('Số điện thoại Việt Nam không hợp lệ (10 chữ số, bắt đầu bằng 0 hoặc +84).');
+      return;
+    }
+
+    const trimmedIdentity = (editingUser.identityNumber || '').trim();
+    if (editingUser.role === 'CUSTOMER' && trimmedIdentity && !/^[A-Za-z0-9]{9,12}$/.test(trimmedIdentity)) {
+      setModalError('Số CCCD/Passport không hợp lệ (gồm 9 đến 12 ký tự chữ hoặc số).');
+      return;
+    }
+
     try {
+      if (
+        editingUser.role !== 'CUSTOMER' &&
+        editingUser.accountId !== currentUser?.accountId &&
+        editingUser.role !== editingUser.originalRole
+      ) {
+        await authApi.assignUserRole(editingUser.accountId, editingUser.role, Number(editingUser.departmentId));
+      }
+
       await authApi.updateUser(editingUser.accountId, {
-        fullName: editingUser.fullName,
-        phone: editingUser.phone,
-        departmentId: editingUser.departmentId ? Number(editingUser.departmentId) : null,
+        fullName: (editingUser.fullName || '').trim(),
+        phone: trimmedPhone,
+        departmentId:
+          editingUser.role !== 'CUSTOMER' && editingUser.departmentId
+            ? Number(editingUser.departmentId)
+            : null,
         gender: editingUser.gender,
         address: editingUser.address,
         employmentStatus: editingUser.employmentStatus,
-        identityNumber: editingUser.identityNumber,
+        identityNumber: editingUser.role === 'CUSTOMER' ? trimmedIdentity : null,
       });
-      if (editingUser.role !== 'CUSTOMER' && editingUser.accountId !== currentUser?.accountId) {
-        await authApi.assignUserRole(editingUser.accountId, editingUser.role, Number(editingUser.departmentId));
-      }
+
       setFeedback(`Đã cập nhật thông tin người dùng ${editingUser.email}.`);
       setEditingUser(null);
+      setModalError(null);
       fetchUsers();
     } catch (err) {
-      setError(err.response?.data?.message || 'Cập nhật thông tin thất bại.');
+      setModalError(extractErrorMessage(err, 'Cập nhật thông tin thất bại.'));
     }
   };
 
@@ -213,7 +272,10 @@ export const UserManagementPage = () => {
         </div>
         {isAdmin && (
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => {
+              setModalError(null);
+              setShowCreateModal(true);
+            }}
             style={{
               background: '#0284c7',
               color: '#fff',
@@ -303,12 +365,7 @@ export const UserManagementPage = () => {
         </button>
         <button
           type="button"
-          onClick={() => {
-            setKeyword('');
-            setRoleFilter('');
-            setStatusFilter('');
-            setTimeout(fetchUsers, 0);
-          }}
+          onClick={handleResetFilters}
           style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}
         >
           Đặt lại
@@ -396,7 +453,10 @@ export const UserManagementPage = () => {
               isAdmin ? (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <button
-                    onClick={() => setEditingUser({ ...u })}
+                    onClick={() => {
+                      setModalError(null);
+                      setEditingUser({ ...u, originalRole: u.role });
+                    }}
                     style={{
                       padding: '5px 10px',
                       fontSize: 12,
@@ -410,22 +470,71 @@ export const UserManagementPage = () => {
                   </button>
                   {u.accountId !== currentUser?.accountId && (
                     <>
-                      {u.status === 'ACTIVE' ? (
-                        <button
-                          onClick={() => handleStatusChange(u, 'LOCKED')}
-                          style={{
-                            padding: '5px 10px',
-                            fontSize: 12,
-                            borderRadius: 5,
-                            border: 'none',
-                            background: '#dc2626',
-                            color: '#fff',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Khóa
-                        </button>
-                      ) : (
+                      {u.status === 'ACTIVE' && (
+                        <>
+                          <button
+                            onClick={() => handleStatusChange(u, 'LOCKED')}
+                            style={{
+                              padding: '5px 10px',
+                              fontSize: 12,
+                              borderRadius: 5,
+                              border: 'none',
+                              background: '#dc2626',
+                              color: '#fff',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Khóa
+                          </button>
+                          <button
+                            onClick={() => handleStatusChange(u, 'INACTIVE')}
+                            style={{
+                              padding: '5px 10px',
+                              fontSize: 12,
+                              borderRadius: 5,
+                              border: 'none',
+                              background: '#475569',
+                              color: '#fff',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Vô hiệu hóa
+                          </button>
+                        </>
+                      )}
+                      {u.status === 'LOCKED' && (
+                        <>
+                          <button
+                            onClick={() => handleStatusChange(u, 'ACTIVE')}
+                            style={{
+                              padding: '5px 10px',
+                              fontSize: 12,
+                              borderRadius: 5,
+                              border: 'none',
+                              background: '#16a34a',
+                              color: '#fff',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Mở khóa
+                          </button>
+                          <button
+                            onClick={() => handleStatusChange(u, 'INACTIVE')}
+                            style={{
+                              padding: '5px 10px',
+                              fontSize: 12,
+                              borderRadius: 5,
+                              border: 'none',
+                              background: '#475569',
+                              color: '#fff',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Vô hiệu hóa
+                          </button>
+                        </>
+                      )}
+                      {u.status === 'INACTIVE' && (
                         <button
                           onClick={() => handleStatusChange(u, 'ACTIVE')}
                           style={{
@@ -438,7 +547,7 @@ export const UserManagementPage = () => {
                             cursor: 'pointer',
                           }}
                         >
-                          Mở khóa
+                          Kích hoạt
                         </button>
                       )}
                     </>
@@ -466,9 +575,14 @@ export const UserManagementPage = () => {
         >
           <div style={{ background: '#fff', padding: 28, borderRadius: 12, width: '100%', maxWidth: 540 }}>
             <h3 style={{ marginTop: 0, marginBottom: 6 }}>Tạo Tài khoản Nhân sự Mới</h3>
-            <p style={{ marginTop: 0, marginBottom: 18, fontSize: 13, color: '#64748b' }}>
+            <p style={{ marginTop: 0, marginBottom: 16, fontSize: 13, color: '#64748b' }}>
               Chọn <strong>Phòng ban</strong> trước, hệ thống sẽ hiển thị các <strong>Vai trò</strong> thuộc đúng phòng ban đó.
             </p>
+            {modalError && (
+              <div style={{ padding: '10px 12px', background: '#fee2e2', color: '#991b1b', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>
+                {modalError}
+              </div>
+            )}
             <form onSubmit={handleCreateUser}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                 <div>
@@ -554,7 +668,10 @@ export const UserManagementPage = () => {
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => {
+                    setModalError(null);
+                    setShowCreateModal(false);
+                  }}
                   style={{ padding: '9px 16px', borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}
                 >
                   Hủy
@@ -586,6 +703,11 @@ export const UserManagementPage = () => {
         >
           <div style={{ background: '#fff', padding: 28, borderRadius: 12, width: '100%', maxWidth: 500 }}>
             <h3 style={{ marginTop: 0 }}>Cập nhật Tài khoản #{editingUser.accountId} ({editingUser.email})</h3>
+            {modalError && (
+              <div style={{ padding: '10px 12px', background: '#fee2e2', color: '#991b1b', borderRadius: 8, marginBottom: 14, fontSize: 13 }}>
+                {modalError}
+              </div>
+            )}
             <form onSubmit={handleUpdateUser}>
               <div style={{ marginBottom: 12 }}>
                 <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Họ và tên *</label>
@@ -605,7 +727,19 @@ export const UserManagementPage = () => {
                   style={{ ...inputStyle, width: '100%' }}
                 />
               </div>
-              {editingUser.role !== 'CUSTOMER' && (
+              {editingUser.role === 'CUSTOMER' ? (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>
+                    Số CCCD / Hộ chiếu (Tùy chọn)
+                  </label>
+                  <input
+                    placeholder="9 đến 12 ký tự chữ hoặc số..."
+                    value={editingUser.identityNumber || ''}
+                    onChange={(e) => setEditingUser({ ...editingUser, identityNumber: e.target.value })}
+                    style={{ ...inputStyle, width: '100%' }}
+                  />
+                </div>
+              ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                   <div>
                     <label style={{ display: 'block', marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Phòng ban</label>
@@ -642,7 +776,10 @@ export const UserManagementPage = () => {
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
                 <button
                   type="button"
-                  onClick={() => setEditingUser(null)}
+                  onClick={() => {
+                    setModalError(null);
+                    setEditingUser(null);
+                  }}
                   style={{ padding: '9px 16px', borderRadius: 6, border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer' }}
                 >
                   Đóng
