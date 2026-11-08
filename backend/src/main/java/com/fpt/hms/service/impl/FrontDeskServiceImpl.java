@@ -223,16 +223,6 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .expiredAt(now.plus(1, ChronoUnit.DAYS))
                 .build());
 
-        // Gửi email thông báo đơn đặt phòng tại sảnh cho khách (nếu có email hợp lệ)
-        if (savedReservation.getContactEmail() != null && !savedReservation.getContactEmail().isBlank()
-                && !savedReservation.getContactEmail().endsWith("@walkin.hotel.local")) {
-            mailNotificationService.sendBookingConfirmation(
-                    savedReservation.getContactEmail().trim(),
-                    savedReservation.getReservationCode(),
-                    savedReservation.getContactName()
-            );
-        }
-
         return toReservationDto(savedReservation);
     }
 
