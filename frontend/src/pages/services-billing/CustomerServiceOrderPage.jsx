@@ -12,6 +12,15 @@ import { formatDateTime, formatDate } from '../../lib/datetime';
 import { notifyToast } from '../../lib/http';
 import { ModuleToastAutoDismiss } from './components/ModuleToastAutoDismiss';
 
+const SERVICE_CATEGORY_META = {
+  'F&B': { icon: '🍽️', label: 'Ẩm thực & Bar', gradient: 'linear-gradient(135deg, #451a03 0%, #78350f 100%)' },
+  SPA: { icon: '💆', label: 'Spa & Massage', gradient: 'linear-gradient(135deg, #064e3b 0%, #047857 100%)' },
+  LAUNDRY: { icon: '🧺', label: 'Giặt là nhanh', gradient: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)' },
+  TRANSPORT: { icon: '🚗', label: 'Xe đưa đón VIP', gradient: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)' },
+  MINIBAR: { icon: '🍷', label: 'Đồ uống phòng', gradient: 'linear-gradient(135deg, #4c0519 0%, #881337 100%)' },
+  OTHER: { icon: '🛎️', label: 'Dịch vụ phòng', gradient: 'linear-gradient(135deg, #1e293b 0%, #475569 100%)' },
+};
+
 // Helper trích xuất từng lượt dịch vụ đặt trước độc lập từ specialNotes của Reservation (KHÔNG gộp cứng)
 const parsePreOrders = (notes) => {
   if (!notes) return [];
@@ -1087,18 +1096,67 @@ export const CustomerServiceOrderPage = () => {
                     {paginatedCatalogServices.map((svc) => (
                       <div key={svc.serviceId} className="col-12 col-md-6 col-xl-4">
                         <Card
-                          className="h-100 border-0 shadow-sm rounded-3 d-flex flex-column justify-content-between"
+                          className="h-100 border-0 shadow-sm rounded-3 d-flex flex-column justify-content-between overflow-hidden"
                           style={{ background: '#FFFFFF', border: '1px solid #E8E6DC' }}
                         >
+                          {/* Banner Hình Ảnh Dịch Vụ */}
+                          <div style={{ height: 160, position: 'relative', overflow: 'hidden', background: '#f1f5f9' }}>
+                            {svc.imageUrl ? (
+                              <img
+                                src={svc.imageUrl}
+                                alt={svc.serviceName}
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  const fb = e.currentTarget.parentElement?.querySelector('.card-svc-fallback');
+                                  if (fb) fb.style.display = 'flex';
+                                }}
+                                style={{
+                                  width: '100%',
+                                  height: '100%',
+                                  objectFit: 'cover',
+                                  transition: 'transform 0.3s ease',
+                                  display: 'block',
+                                }}
+                              />
+                            ) : null}
+                            <div
+                              className="card-svc-fallback"
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                background: (SERVICE_CATEGORY_META[svc.category] || SERVICE_CATEGORY_META.OTHER).gradient,
+                                display: svc.imageUrl ? 'none' : 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 44,
+                              }}
+                            >
+                              {(SERVICE_CATEGORY_META[svc.category] || SERVICE_CATEGORY_META.OTHER).icon}
+                            </div>
+                            <Badge
+                              style={{
+                                position: 'absolute',
+                                top: 12,
+                                left: 12,
+                                background: 'rgba(255, 255, 255, 0.92)',
+                                backdropFilter: 'blur(4px)',
+                                color: '#0f172a',
+                                fontWeight: 600,
+                                fontSize: 11,
+                                border: '1px solid rgba(0,0,0,0.06)',
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+                              }}
+                            >
+                              {svc.category || 'DỊCH VỤ'}
+                            </Badge>
+                          </div>
+
                           <Card.Body className="p-3 d-flex flex-column justify-content-between">
                             <div>
-                              <div className="d-flex justify-content-between align-items-center mb-2">
-                                <Badge bg="light" text="dark" style={{ border: '1px solid #E8E6DC', fontWeight: 600, fontSize: 11 }}>
-                                  {svc.category || 'DỊCH VỤ'}
-                                </Badge>
-                                <span style={{ fontFamily: 'var(--font-mono, monospace)', fontWeight: 700, color: '#C96442', fontSize: 15 }}>
+                              <div className="d-flex justify-content-between align-items-baseline mb-2">
+                                <span style={{ fontFamily: 'var(--font-mono, monospace)', fontWeight: 700, color: '#C96442', fontSize: 16 }}>
                                   {formatVND(svc.unitPrice)}
-                                  <small className="text-muted fw-normal" style={{ fontSize: 11.5 }}> / {svc.unit || svc.billingUnit || 'Lượt'}</small>
+                                  <small className="text-muted fw-normal" style={{ fontSize: 12 }}> / {svc.unit || svc.billingUnit || 'Lượt'}</small>
                                 </span>
                               </div>
                               <h6 className="fw-bold text-dark mb-1" style={{ fontSize: 15.5 }}>
@@ -1120,7 +1178,7 @@ export const CustomerServiceOrderPage = () => {
                                   borderColor: canOrderServices ? '#16233B' : '#94A3B8',
                                   fontWeight: 600,
                                   borderRadius: 6,
-                                  padding: '6px 12px',
+                                  padding: '7px 12px',
                                 }}
                               >
                                 <i className="bi bi-cart-plus me-1"></i> Đặt dịch vụ này
