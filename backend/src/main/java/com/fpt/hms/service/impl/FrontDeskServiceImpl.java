@@ -15,7 +15,6 @@ import com.fpt.hms.entity.*;
 import com.fpt.hms.enums.*;
 import com.fpt.hms.exception.BusinessException;
 import com.fpt.hms.exception.ResourceNotFoundException;
-import com.fpt.hms.integration.MailNotificationService;
 import com.fpt.hms.integration.VnPayGatewayService;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.FrontDeskService;
@@ -53,7 +52,6 @@ public class FrontDeskServiceImpl implements FrontDeskService {
     private final PaymentRepository paymentRepository;
     private final PaymentAttemptRepository paymentAttemptRepository;
     private final VnPayGatewayService vnPayGatewayService;
-    private final MailNotificationService mailNotificationService;
     private final MessageResolver messageResolver;
     private final Clock hotelClock;
 
@@ -1126,18 +1124,6 @@ public class FrontDeskServiceImpl implements FrontDeskService {
             attempt.setBankCode("CASH");
             attempt.setCompletedAt(now);
             paymentAttemptRepository.save(attempt);
-        }
-
-        // Gửi email xác nhận đặt phòng và đã thu tiền cọc tại sảnh (nếu khách cung cấp email hợp lệ)
-        if (reservation.getContactEmail() != null && !reservation.getContactEmail().isBlank()
-                && !reservation.getContactEmail().endsWith("@walkin.hotel.local")) {
-            log.info("Direct booking deposit confirmed with CASH for #{}. Sending confirmation email to: {}",
-                    reservation.getReservationCode(), reservation.getContactEmail().trim());
-            mailNotificationService.sendBookingConfirmation(
-                    reservation.getContactEmail().trim(),
-                    reservation.getReservationCode(),
-                    reservation.getContactName()
-            );
         }
 
         return toReservationDto(reservation);
