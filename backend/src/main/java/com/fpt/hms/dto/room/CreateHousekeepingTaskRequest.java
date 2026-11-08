@@ -35,5 +35,8 @@ public class CreateHousekeepingTaskRequest {
 
     @Size(max = 500, message = "Ghi chú tối đa 500 ký tự")
     private String note;
+
+    @Size(max = 20, message = "Mức ưu tiên tối đa 20 ký tự")
+    private String priority; // LOW, NORMAL, HIGH, URGENT — để trống thì mặc định NORMAL
 }
 

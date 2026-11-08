@@ -44,6 +44,9 @@ public class HousekeepingTask {
     @Column(name = "status", nullable = false, length = 30)
     private String status;
 
+    @Column(name = "priority", length = 20)
+    private String priority; // LOW, NORMAL, HIGH, URGENT (UC-51, V4)
+
     @Column(name = "started_at")
     private Instant startedAt;
 
