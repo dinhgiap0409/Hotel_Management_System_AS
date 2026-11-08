@@ -3,6 +3,7 @@ import { Tabs, Tab, Button, Form, Badge, Table, Spinner, Pagination } from 'reac
 import { roomApi } from '../../services/roomApi';
 import { useAuth } from '../../context/AuthContext';
 import { formatVND } from '../../lib/money';
+import { resolveImageUrl } from '../../lib/imageUrl';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { RoomTypeModal } from './components/RoomTypeModal';
 import { RoomTypePriceModal } from './components/RoomTypePriceModal';
@@ -211,7 +212,7 @@ export const RoomInventoryPage = () => {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                           {rt.imageUrl ? (
                             <img
-                              src={rt.imageUrl}
+                              src={resolveImageUrl(rt.imageUrl)}
                               alt={rt.typeName}
                               style={{ width: 44, height: 44, borderRadius: 6, objectFit: 'cover' }}
                             />

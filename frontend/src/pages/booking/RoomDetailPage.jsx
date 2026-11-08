@@ -15,6 +15,7 @@ import { useAuth } from '../../context/AuthContext';
 import { bookingApi } from '../../services/bookingApi';
 import { formatVND } from '../../lib/money';
 import { formatDateTime } from '../../lib/datetime';
+import { resolveImageUrl } from '../../lib/imageUrl';
 import {
   formatVietnameseDate,
   parseAmenities,
@@ -139,8 +140,8 @@ export const RoomDetailPage = () => {
 
   const photos =
     Array.isArray(detail.photoGallery) && detail.photoGallery.length > 0
-      ? detail.photoGallery
-      : [detail.imageUrl || '/images/hotel-bg.jpg'];
+      ? detail.photoGallery.map((url) => resolveImageUrl(url) || '/images/hotel-bg.jpg')
+      : [resolveImageUrl(detail.imageUrl) || '/images/hotel-bg.jpg'];
   const currentPhoto = photos[activePhotoIdx] || photos[0];
   const amenities = parseAmenities(detail);
   const stayNights = detail.nights || calculateNights(checkInDate, checkOutDate);

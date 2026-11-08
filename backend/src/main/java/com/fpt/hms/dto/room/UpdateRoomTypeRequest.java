@@ -42,6 +42,13 @@ public class UpdateRoomTypeRequest {
     @Size(max = 500, message = "Đường dẫn ảnh tối đa 500 ký tự")
     private String imageUrl;
 
+    /**
+     * Detail-gallery photo URLs (UC-22), comma-separated, stored as-is into
+     * Room_Type.gallery_images. The modal appends paths returned by the
+     * image-upload endpoint to this string.
+     */
+    private String galleryImages;
+
     private Boolean isActive;
 }
 

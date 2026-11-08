@@ -3,16 +3,19 @@ package com.fpt.hms.controller;
 import com.fpt.hms.common.PageResponse;
 import com.fpt.hms.dto.room.*;
 import com.fpt.hms.security.UserPrincipal;
+import com.fpt.hms.service.FileStorageService;
 import com.fpt.hms.service.RoomHousekeepingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -27,6 +30,7 @@ import java.util.List;
 public class HousekeepingController {
 
     private final RoomHousekeepingService roomHousekeepingService;
+    private final FileStorageService fileStorageService;
 
     // =========================================================================
     // 1. ROOM TYPES & DYNAMIC PRICING (UC-11..14)
@@ -66,6 +70,15 @@ public class HousekeepingController {
     @Operation(summary = "UC-13: Toggle room category Active/Inactive status (SALES_MANAGER, ADMIN)")
     public ResponseEntity<RoomTypeDto> toggleRoomTypeStatus(@PathVariable Integer roomTypeId) {
         return ResponseEntity.ok(roomHousekeepingService.toggleRoomTypeStatus(roomTypeId));
+    }
+
+    @PostMapping(value = "/room-types/images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('SALES_MANAGER', 'ADMIN')")
+    @Operation(summary = "Upload room-type images (SALES_MANAGER, ADMIN) — returns public paths to save into imageUrl / gallery_images")
+    public ResponseEntity<ImageUploadResponse> uploadRoomTypeImages(
+            @RequestParam("files") List<MultipartFile> files) {
+        List<String> urls = fileStorageService.storeAll(files, FileStorageService.ROOM_TYPE_SUBDIR);
+        return ResponseEntity.status(HttpStatus.CREATED).body(new ImageUploadResponse(urls));
     }
 
     @GetMapping("/room-types/{roomTypeId}/prices")
