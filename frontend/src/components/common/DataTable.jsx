@@ -1,4 +1,4 @@
-export const DataTable = ({ columns, data, keyField = 'id', emptyMessage = 'Không có dữ liệu' }) => {
+export const DataTable = ({ columns, data, keyField = 'id', emptyMessage = 'Không có dữ liệu', getRowStyle }) => {
   return (
     <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, border: '1px solid #e2e8f0' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 14 }}>
@@ -30,25 +30,34 @@ export const DataTable = ({ columns, data, keyField = 'id', emptyMessage = 'Khô
               </td>
             </tr>
           ) : (
-            data.map((row, rowIdx) => (
-              <tr key={row[keyField] ?? rowIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                {columns.map((col, colIdx) => (
-                  <td
-                    key={colIdx}
-                    style={{
-                      padding: '12px 16px',
-                      color: '#1e293b',
-                      width: col.width,
-                      minWidth: col.minWidth,
-                      whiteSpace: col.whiteSpace || (col.nowrap ? 'nowrap' : undefined),
-                      ...(col.cellStyle || col.style || {}),
-                    }}
-                  >
-                    {col.render ? col.render(row) : row[col.accessor]}
-                  </td>
-                ))}
-              </tr>
-            ))
+            data.map((row, rowIdx) => {
+              const customStyle = getRowStyle ? getRowStyle(row) : {};
+              return (
+                <tr
+                  key={row[keyField] ?? rowIdx}
+                  style={{
+                    borderBottom: '1px solid #f1f5f9',
+                    ...customStyle,
+                  }}
+                >
+                  {columns.map((col, colIdx) => (
+                    <td
+                      key={colIdx}
+                      style={{
+                        padding: '12px 16px',
+                        color: '#1e293b',
+                        width: col.width,
+                        minWidth: col.minWidth,
+                        whiteSpace: col.whiteSpace || (col.nowrap ? 'nowrap' : undefined),
+                        ...(col.cellStyle || col.style || {}),
+                      }}
+                    >
+                      {col.render ? col.render(row) : row[col.accessor]}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })
           )}
         </tbody>
       </table>

@@ -13,6 +13,7 @@ import { InvoicePrintModal } from './components/InvoicePrintModal';
 import { parseAndGroupPreOrders, matchPreOrderItemsToStayOrders, buildPreOrderNote } from './components/serviceUtils';
 
 const CHARGE_TYPE_LABELS = {
+  ROOM_UPGRADE: 'Phụ thu đổi / nâng hạng phòng',
   MINIBAR: 'Minibar / Đồ uống tại phòng',
   DAMAGE: 'Đền bù hư hại / Làm vỡ trang thiết bị',
   LATE_CHECKOUT: 'Phụ thu trả phòng muộn (Late check-out)',
@@ -21,8 +22,9 @@ const CHARGE_TYPE_LABELS = {
 };
 
 export const FolioBillingTab = ({ role, activeStays, vouchers = [], services = [], onRefresh, busy, setBusy }) => {
+  // Lễ tân (FRONT_DESK), Kế toán (ACCOUNTANT), Giám đốc (GENERAL_MANAGER) và ADMIN có quyền lập hóa đơn, thêm phụ thu & quyết toán phòng.
   const canSettle = [ROLES.FRONT_DESK, ROLES.ACCOUNTANT, ROLES.GENERAL_MANAGER, ROLES.ADMIN].includes(role);
-  const canManageCharges = [ROLES.FRONT_DESK, ROLES.ACCOUNTANT, ROLES.ADMIN].includes(role);
+  const canManageCharges = [ROLES.FRONT_DESK, ROLES.ACCOUNTANT, ROLES.GENERAL_MANAGER, ROLES.ADMIN].includes(role);
 
   // Filters
   const [keyword, setKeyword] = useState('');
@@ -577,6 +579,22 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], services = [
         }
       }
       const codeToSend = appliedVoucher ? appliedVoucher.code : (voucherCodeInput.trim() ? voucherCodeInput.trim().toUpperCase() : null);
+      if (paymentMethod === 'VNPAY') {
+        const vnpRes = await billingApi.createFolioVnPayUrl(folioDetail.stayId, {
+          voucherCode: codeToSend,
+          paymentMethod: 'VNPAY',
+          notes: settleNotes.trim() || null,
+        });
+        const vnpData = vnpRes.data?.data || vnpRes.data;
+        if (vnpData?.paymentUrl) {
+          notifyToast({
+            type: 'INFO',
+            message: 'Đang chuyển hướng sang Cổng thanh toán VNPay...',
+          });
+          window.location.href = vnpData.paymentUrl;
+          return;
+        }
+      }
       const res = await billingApi.settleFolio(folioDetail.stayId, {
         voucherCode: codeToSend,
         paymentMethod: paymentMethod,
@@ -607,6 +625,32 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], services = [
     try {
       setBusy(true);
       const codeToSend = appliedVoucher ? appliedVoucher.code : (voucherCodeInput.trim() ? voucherCodeInput.trim().toUpperCase() : null);
+
+      if (paymentMethod === 'VNPAY') {
+        if ((calculatedFinances?.balancePayable || 0) < 5000) {
+          notifyToast({
+            type: 'WARNING',
+            message: 'Số tiền thực thu dưới 5,000 VND (dưới hạn mức tối thiểu của cổng VNPay). Vui lòng chọn Tiền mặt để chốt quyết toán trực tiếp.',
+          });
+          setBusy(false);
+          return;
+        }
+        const vnpRes = await billingApi.createFolioVnPayUrl(folioDetail.stayId, {
+          voucherCode: codeToSend,
+          paymentMethod: 'VNPAY',
+          notes: settleNotes.trim() || null,
+        });
+        const vnpData = vnpRes.data?.data || vnpRes.data;
+        if (vnpData?.paymentUrl) {
+          notifyToast({
+            type: 'INFO',
+            message: 'Đang chuyển hướng sang Cổng thanh toán VNPay...',
+          });
+          window.location.href = vnpData.paymentUrl;
+          return;
+        }
+      }
+
       const res = await billingApi.settleFolio(folioDetail.stayId, {
         voucherCode: codeToSend,
         paymentMethod: paymentMethod,
@@ -707,10 +751,12 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], services = [
       >
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: '#0f172a' }}>
-            Hóa Đơn &amp; Quyết Toán Tiền Phòng
+            {canSettle ? 'Hóa Đơn & Quyết Toán Tiền Phòng' : 'Đối Soát Bảng Kê Folio & Hóa Đơn VAT'}
           </h2>
           <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>
-            Tra cứu bảng kê chi phí phòng, phụ thu phát sinh, áp mã giảm giá, thu tiền quyết toán và xuất hóa đơn VAT chuẩn.
+            {canSettle
+              ? 'Tra cứu bảng kê chi phí phòng, phụ thu phát sinh, áp mã giảm giá, thu tiền quyết toán và xuất hóa đơn VAT chuẩn.'
+              : 'Chế độ Kế toán Hậu kiểm (Read-only): Tra cứu đối soát chi tiết tiền phòng, dịch vụ, phụ thu và in chứng từ hóa đơn VAT.'}
           </div>
         </div>
 
@@ -937,16 +983,22 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], services = [
             },
           },
           {
-            header: 'Tổng Tiền Hóa Đơn',
-            minWidth: 150,
+            header: 'Dư Nợ Folio (Cần Thu)',
+            minWidth: 165,
             nowrap: true,
             render: (s) => (
               <div>
-                <div style={{ fontWeight: 700, color: '#0f172a', fontSize: 14 }}>
-                  {formatVND(s.totalAmount || 0)}
+                <div
+                  style={{
+                    fontWeight: 700,
+                    color: s.folioStatus === 'CLOSED' || Number(s.totalAmount || 0) === 0 ? '#15803d' : '#dc2626',
+                    fontSize: 14,
+                  }}
+                >
+                  {formatVND(s.folioStatus === 'CLOSED' ? 0 : (s.totalAmount || 0))}
                 </div>
                 <div style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>
-                  {s.folioStatus === 'CLOSED' ? 'Đã hoàn tất thanh toán' : 'Tạm tính (chưa thu)'}
+                  {s.folioStatus === 'CLOSED' ? 'Đã hoàn tất thanh toán' : 'Đã gồm 8% VAT & trừ cọc'}
                 </div>
               </div>
             ),
@@ -1029,7 +1081,12 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], services = [
                     onClick={() => handleOpenFolio(s)}
                     disabled={busy}
                     style={{
-                      background: s.folioStatus === 'CLOSED' ? '#0284c7' : (ov.isOverdue ? '#ea580c' : '#dc2626'),
+                      background:
+                        s.folioStatus === 'CLOSED' || !canSettle
+                          ? '#0284c7'
+                          : ov.isOverdue
+                          ? '#ea580c'
+                          : '#dc2626',
                       color: '#fff',
                       border: 'none',
                       padding: '7px 14px',
@@ -1037,17 +1094,34 @@ export const FolioBillingTab = ({ role, activeStays, vouchers = [], services = [
                       fontSize: 12.5,
                       fontWeight: 600,
                       cursor: 'pointer',
-                      boxShadow: s.folioStatus === 'CLOSED'
-                        ? '0 1px 2px rgba(2, 132, 199, 0.2)'
-                        : (ov.isOverdue ? '0 1px 2px rgba(234, 88, 12, 0.3)' : '0 1px 2px rgba(220, 38, 38, 0.2)'),
+                      boxShadow:
+                        s.folioStatus === 'CLOSED' || !canSettle
+                          ? '0 1px 2px rgba(2, 132, 199, 0.2)'
+                          : ov.isOverdue
+                          ? '0 1px 2px rgba(234, 88, 12, 0.3)'
+                          : '0 1px 2px rgba(220, 38, 38, 0.2)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 5,
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    <span>{s.folioStatus === 'CLOSED' ? '📄' : (ov.isOverdue ? '⚠️' : '💳')}</span>
-                    {s.folioStatus === 'CLOSED' ? 'Xem Chi Tiết' : (ov.isOverdue ? 'Quyết Toán Trễ' : 'Quyết Toán')}
+                    <span>
+                      {s.folioStatus === 'CLOSED'
+                        ? '📄'
+                        : !canSettle
+                        ? '🔍'
+                        : ov.isOverdue
+                        ? '⚠️'
+                        : '💳'}
+                    </span>
+                    {s.folioStatus === 'CLOSED'
+                      ? 'Xem Chi Tiết'
+                      : !canSettle
+                      ? 'Đối Soát Folio'
+                      : ov.isOverdue
+                      ? 'Quyết Toán Trễ'
+                      : 'Quyết Toán'}
                   </button>
 
                   {s.folioStatus === 'CLOSED' && (

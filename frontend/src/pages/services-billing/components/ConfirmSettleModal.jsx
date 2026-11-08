@@ -15,6 +15,16 @@ export const ConfirmSettleModal = ({
 }) => {
   if (!show || !folioDetail) return null;
 
+  const isVnPay = paymentMethod === 'VNPAY';
+  const methodLabel =
+    paymentMethod === 'VNPAY'
+      ? '🌐 Cổng thanh toán VNPay (QR / ATM / Quốc tế)'
+      : paymentMethod === 'CASH'
+        ? '💵 Tiền mặt (CASH)'
+        : paymentMethod === 'CREDIT_CARD'
+          ? '💳 Thẻ POS (CREDIT_CARD)'
+          : paymentMethod;
+
   const pendingOrdersAmount = (stayPendingOrders || []).reduce((a, b) => a + (Number(b.totalAmount) || 0), 0);
   const unchargedPreOrdersCount = stayPreOrderAnalysis?.unchargedCount || 0;
   const unchargedPreOrdersAmount = stayPreOrderAnalysis?.unchargedAmount || 0;
@@ -47,7 +57,7 @@ export const ConfirmSettleModal = ({
         onClick={(e) => e.stopPropagation()}
       >
         <h3 style={{ margin: 0, color: '#0f172a', fontSize: 17, fontWeight: 700, marginBottom: 12 }}>
-          Xác Nhận Quyết Toán Hóa Đơn Phòng
+          {isVnPay ? '🌐 Xác Nhận Thanh Toán Quyết Toán Qua VNPay' : 'Xác Nhận Quyết Toán Hóa Đơn Phòng'}
         </h3>
         <div style={{ fontSize: 13, color: '#334155', lineHeight: 1.6, marginBottom: 16 }}>
           Bạn đang chuẩn bị thực hiện quyết toán cho phòng <strong>P.{folioDetail?.roomNumber}</strong> ({folioDetail?.guestName}):
@@ -56,7 +66,7 @@ export const ConfirmSettleModal = ({
               Số tiền thực thu: <strong style={{ color: '#0284c7' }}>{formatVND(balancePayable)}</strong>
             </li>
             <li>
-              Phương thức: <strong>{paymentMethod}</strong>
+              Phương thức: <strong>{methodLabel}</strong>
             </li>
             {appliedVoucher && (
               <li>
@@ -64,7 +74,15 @@ export const ConfirmSettleModal = ({
               </li>
             )}
           </ul>
-          Khi hoàn tất, hệ thống sẽ <strong>đóng bảng kê chi phí phòng</strong>, tạo hóa đơn <strong>Invoice trạng thái PAID</strong> và kích hoạt điều kiện để Lễ tân thực hiện Check-out trả phòng (UC-30).
+          {isVnPay ? (
+            <span>
+              Hệ thống sẽ chuyển hướng sang <strong>Cổng thanh toán VNPay Sandbox</strong>. Sau khi khách hoàn tất giao dịch trên VNPay, hệ thống sẽ tự động <strong>đóng bảng kê chi phí phòng</strong>, tạo hóa đơn <strong>Invoice trạng thái PAID</strong> và xuất biên lai VAT.
+            </span>
+          ) : (
+            <span>
+              Khi hoàn tất, hệ thống sẽ <strong>đóng bảng kê chi phí phòng</strong>, tạo hóa đơn <strong>Invoice trạng thái PAID</strong> và kích hoạt điều kiện để Lễ tân thực hiện thủ tục trả phòng (Check-out).
+            </span>
+          )}
         </div>
 
         {totalUnsettledCount > 0 && (
@@ -142,7 +160,7 @@ export const ConfirmSettleModal = ({
               onClick={onConfirm}
               disabled={busy}
               style={{
-                background: '#0284c7',
+                background: isVnPay ? '#005baa' : '#0284c7',
                 color: '#fff',
                 border: 'none',
                 padding: '8px 18px',
@@ -153,7 +171,13 @@ export const ConfirmSettleModal = ({
                 boxShadow: '0 1px 3px rgba(2, 132, 199, 0.25)',
               }}
             >
-              {busy ? 'Đang quyết toán...' : 'Đồng Ý Quyết Toán'}
+              {busy
+                ? isVnPay
+                  ? 'Đang chuyển sang cổng VNPay...'
+                  : 'Đang quyết toán...'
+                : isVnPay
+                  ? '🌐 Chuyển Đến Cổng VNPay'
+                  : 'Đồng Ý Quyết Toán'}
             </button>
           )}
         </div>

@@ -11,23 +11,32 @@ import com.fpt.hms.enums.PaymentStatus;
 import com.fpt.hms.enums.ServiceOrderStatus;
 import com.fpt.hms.exception.BusinessException;
 import com.fpt.hms.exception.ResourceNotFoundException;
+import com.fpt.hms.integration.VnPayGatewayService;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.BillingService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.UUID;
 
 /**
@@ -41,6 +50,18 @@ public class BillingServiceImpl implements BillingService {
     private static final String SERVICE_INACTIVE = "INACTIVE";
     private static final String FOLIO_CLOSED = "CLOSED";
 
+    @Value("${app.vnpay.tmn-code:GCS1874X}")
+    private String vnpTmnCode;
+
+    @Value("${app.vnpay.hash-secret:CAJSNWRIUUYNJWPIPCRAHLAJXNRZASAB}")
+    private String vnpHashSecret;
+
+    @Value("${app.vnpay.pay-url:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}")
+    private String vnpPayUrl;
+
+    @Value("${app.vnpay.billing-return-url:http://localhost:5173/staff/services-billing/vnpay-callback}")
+    private String vnpBillingReturnUrl;
+
     private final HotelServiceRepository hotelServiceRepository;
     private final GuestStayRepository guestStayRepository;
     private final ServiceOrderRepository serviceOrderRepository;
@@ -48,12 +69,15 @@ public class BillingServiceImpl implements BillingService {
     private final VoucherRepository voucherRepository;
     private final InvoiceRepository invoiceRepository;
     private final PaymentRepository paymentRepository;
+    private final PaymentAttemptRepository paymentAttemptRepository;
     private final StaffRepository staffRepository;
     private final ReservationRepository reservationRepository;
     private final CustomerRepository customerRepository;
     private final AdditionalChargeRepository additionalChargeRepository;
     private final AccountRepository accountRepository;
+    private final RoomTypePriceRepository roomTypePriceRepository;
     private final MessageResolver messageResolver;
+    private final VnPayGatewayService vnPayGatewayService;
 
     // ------------------------------------------------------------------ UC-31..34
 
@@ -111,13 +135,13 @@ public class BillingServiceImpl implements BillingService {
     // ------------------------------------------------------------------ UC-35 / UC-36
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto> getActiveStaysForSelect() {
         return getActiveStaysForSelect(null, null);
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<com.fpt.hms.dto.billing_report.ActiveStaySelectDto> getActiveStaysForSelect(Integer callerAccountId, String callerRole) {
         boolean isCustomer = "CUSTOMER".equalsIgnoreCase(callerRole);
         return guestStayRepository.findByStatus(GuestStayStatus.ACTIVE.name()).stream()
@@ -162,13 +186,34 @@ public class BillingServiceImpl implements BillingService {
 
                     Folio stayFolio = folioRepository.findByGuestStay_StayId(stay.getStayId()).orElse(null);
                     String folioStatus = stayFolio != null ? stayFolio.getStatus() : "OPEN";
-                    BigDecimal totalAmount = BigDecimal.ZERO;
-                    if (stayFolio != null && "CLOSED".equalsIgnoreCase(stayFolio.getStatus()) && stayFolio.getTotalAmount() != null) {
-                        totalAmount = stayFolio.getTotalAmount();
-                    } else if (stayFolio != null && stayFolio.getTotalAmount() != null && stayFolio.getTotalAmount().compareTo(BigDecimal.ZERO) > 0) {
-                        totalAmount = stayFolio.getTotalAmount();
+                    BigDecimal totalAmount;
+
+                    if (stayFolio != null && FOLIO_CLOSED.equalsIgnoreCase(stayFolio.getStatus())) {
+                        Invoice inv = invoiceRepository.findByFolio_FolioId(stayFolio.getFolioId()).orElse(null);
+                        BigDecimal currentSubtotal = calculateEstimatedStaySubtotal(stay, stayFolio, checkInDate, checkOutDate);
+                        if (inv != null && inv.getTotalAmount() != null && currentSubtotal.compareTo(inv.getTotalAmount()) > 0) {
+                            // Phòng đã quyết toán nhưng Thành viên 4 vừa gia hạn thêm ngày hoặc phát sinh thêm chi phí
+                            stayFolio.setStatus("OPEN");
+                            folioStatus = "OPEN";
+                            BigDecimal reopenedBalance = calculateEstimatedStayBalance(stay, stayFolio, checkInDate, checkOutDate);
+                            stayFolio.setTotalAmount(reopenedBalance);
+                            folioRepository.save(stayFolio);
+                            totalAmount = reopenedBalance;
+                        } else {
+                            // Đồng bộ dư nợ Folio về 0 để bên Thành viên 4 Check-out không bị chặn
+                            if (stayFolio.getTotalAmount() != null && stayFolio.getTotalAmount().compareTo(BigDecimal.ZERO) > 0) {
+                                stayFolio.setTotalAmount(BigDecimal.ZERO);
+                                folioRepository.save(stayFolio);
+                            }
+                            totalAmount = BigDecimal.ZERO;
+                        }
                     } else {
-                        totalAmount = calculateEstimatedStayTotal(stay, stayFolio, checkInDate, checkOutDate);
+                        BigDecimal estimatedBalance = calculateEstimatedStayBalance(stay, stayFolio, checkInDate, checkOutDate);
+                        if (stayFolio != null && (stayFolio.getTotalAmount() == null || stayFolio.getTotalAmount().compareTo(estimatedBalance) != 0)) {
+                            stayFolio.setTotalAmount(estimatedBalance);
+                            folioRepository.save(stayFolio);
+                        }
+                        totalAmount = estimatedBalance;
                     }
 
                     return com.fpt.hms.dto.billing_report.ActiveStaySelectDto.builder()
@@ -190,43 +235,11 @@ public class BillingServiceImpl implements BillingService {
                 .toList();
     }
 
-    private BigDecimal calculateEstimatedStayTotal(GuestStay stay, Folio stayFolio, LocalDate checkInDate, LocalDate checkOutDate) {
-        BigDecimal roomSubtotal = BigDecimal.ZERO;
-        Reservation res = stay.getReservation();
-
-        if (res != null && res.getDetails() != null && !res.getDetails().isEmpty()) {
-            for (ReservationDetail detail : res.getDetails()) {
-                int qty = detail.getQuantity() != null ? detail.getQuantity() : 1;
-                if (detail.getNightlyRates() != null && !detail.getNightlyRates().isEmpty()) {
-                    for (ReservationNightlyRate rate : detail.getNightlyRates()) {
-                        roomSubtotal = roomSubtotal.add(rate.getUnitPrice().multiply(BigDecimal.valueOf(qty)));
-                    }
-                }
-            }
-        }
-
-        if (roomSubtotal.compareTo(BigDecimal.ZERO) == 0) {
-            BigDecimal basePrice = BigDecimal.valueOf(500000);
-            if (res != null && res.getDetails() != null && !res.getDetails().isEmpty()
-                    && res.getDetails().get(0).getRoomType() != null
-                    && res.getDetails().get(0).getRoomType().getBasePrice() != null) {
-                basePrice = res.getDetails().get(0).getRoomType().getBasePrice();
-            } else if (stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty()) {
-                Room r = stay.getRoomAssignments().get(stay.getRoomAssignments().size() - 1).getRoom();
-                if (r != null && r.getRoomType() != null && r.getRoomType().getBasePrice() != null) {
-                    basePrice = r.getRoomType().getBasePrice();
-                }
-            }
-            LocalDate cur = checkInDate != null ? checkInDate : LocalDate.now();
-            LocalDate end = checkOutDate != null ? checkOutDate : cur.plusDays(1);
-            if (!end.isAfter(cur)) {
-                end = cur.plusDays(1);
-            }
-            while (cur.isBefore(end)) {
-                roomSubtotal = roomSubtotal.add(basePrice);
-                cur = cur.plusDays(1);
-            }
-        }
+    private BigDecimal calculateEstimatedStaySubtotal(GuestStay stay, Folio stayFolio, LocalDate checkInDate, LocalDate checkOutDate) {
+        List<RoomNightItemDto> nights = buildSynchronizedRoomNights(stay, stay.getReservation(), checkInDate, checkOutDate, "N/A");
+        BigDecimal roomSubtotal = nights.stream()
+                .map(RoomNightItemDto::getLineTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // Add completed services
         List<ServiceOrder> orders = serviceOrderRepository.findByGuestStay_StayIdOrderByOrderTimeDesc(stay.getStayId());
@@ -235,18 +248,219 @@ public class BillingServiceImpl implements BillingService {
                 .map(o -> o.getUnitPrice().multiply(BigDecimal.valueOf(o.getQuantity() != null ? o.getQuantity() : 1)))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // Add additional charges
+        // Add additional charges (including auto-synced room transfer / upgrade surcharges from Stay_Room_Assignment)
         BigDecimal additionalSubtotal = BigDecimal.ZERO;
         if (stayFolio != null) {
+            syncRoomTransferCharges(stay, stayFolio);
             additionalSubtotal = additionalChargeRepository.findByFolio_FolioId(stayFolio.getFolioId()).stream()
                     .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()) && !"VOID".equalsIgnoreCase(c.getStatus()))
                     .map(AdditionalCharge::getAmount)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
         }
 
-        BigDecimal subtotal = roomSubtotal.add(serviceSubtotal).add(additionalSubtotal);
-        BigDecimal tax = subtotal.multiply(new BigDecimal("0.08")).setScale(2, RoundingMode.HALF_UP);
+        return roomSubtotal.add(serviceSubtotal).add(additionalSubtotal);
+    }
+
+    /**
+     * Đồng bộ tự động khoản phụ thu đổi phòng / nâng hạng phòng từ lịch sử Stay_Room_Assignment của Thành viên 4 vào bảng Additional_Charge của Folio.
+     */
+    private void syncRoomTransferCharges(GuestStay stay, Folio folio) {
+        if (stay == null || folio == null || folio.getFolioId() == null) {
+            return;
+        }
+        List<StayRoomAssignment> assignments = stay.getRoomAssignments();
+        if (assignments == null || assignments.size() < 2) {
+            return;
+        }
+
+        List<AdditionalCharge> existingCharges = new ArrayList<>(additionalChargeRepository.findByFolio_FolioId(folio.getFolioId()));
+        Account creatorAccount = null;
+
+        for (int i = 0; i < assignments.size() - 1; i++) {
+            StayRoomAssignment prevAssign = assignments.get(i);
+            StayRoomAssignment nextAssign = assignments.get(i + 1);
+            if (prevAssign == null || nextAssign == null || nextAssign.getAssignmentId() == null) {
+                continue;
+            }
+
+            Room oldRoom = prevAssign.getRoom();
+            Room newRoom = nextAssign.getRoom();
+            BigDecimal oldPrice = (oldRoom != null && oldRoom.getRoomType() != null && oldRoom.getRoomType().getBasePrice() != null)
+                    ? oldRoom.getRoomType().getBasePrice()
+                    : BigDecimal.ZERO;
+            BigDecimal newPrice = (newRoom != null && newRoom.getRoomType() != null && newRoom.getRoomType().getBasePrice() != null)
+                    ? newRoom.getRoomType().getBasePrice()
+                    : BigDecimal.ZERO;
+
+            BigDecimal upgradeSurcharge = newPrice.subtract(oldPrice).setScale(0, RoundingMode.HALF_UP);
+            if (upgradeSurcharge.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+
+            String markerTag = "[ĐP#" + nextAssign.getAssignmentId() + "]";
+            boolean alreadySynced = existingCharges.stream()
+                    .anyMatch(c -> c.getDescription() != null && c.getDescription().contains(markerTag));
+            if (alreadySynced) {
+                continue;
+            }
+
+            if (creatorAccount == null) {
+                creatorAccount = accountRepository.findAll(Sort.by(Sort.Direction.ASC, "accountId"))
+                        .stream()
+                        .findFirst()
+                        .orElse(null);
+                if (creatorAccount == null) {
+                    return;
+                }
+            }
+
+            String oldRoomNum = oldRoom != null && oldRoom.getRoomNumber() != null ? oldRoom.getRoomNumber() : "N/A";
+            String oldTypeName = (oldRoom != null && oldRoom.getRoomType() != null && oldRoom.getRoomType().getTypeName() != null)
+                    ? oldRoom.getRoomType().getTypeName() : "Tiêu chuẩn";
+            String newRoomNum = newRoom != null && newRoom.getRoomNumber() != null ? newRoom.getRoomNumber() : "N/A";
+            String newTypeName = (newRoom != null && newRoom.getRoomType() != null && newRoom.getRoomType().getTypeName() != null)
+                    ? newRoom.getRoomType().getTypeName() : "Nâng hạng";
+            String reasonSuffix = (prevAssign.getTransferReason() != null && !prevAssign.getTransferReason().isBlank())
+                    ? " — Lý do: " + prevAssign.getTransferReason().trim()
+                    : "";
+
+            String desc = "Phụ thu đổi/nâng hạng phòng từ P." + oldRoomNum + " (" + oldTypeName + ") sang P."
+                    + newRoomNum + " (" + newTypeName + ")" + reasonSuffix + " " + markerTag;
+
+            AdditionalCharge autoCharge = AdditionalCharge.builder()
+                    .folio(folio)
+                    .createdByAccount(creatorAccount)
+                    .chargeType("ROOM_UPGRADE")
+                    .description(desc)
+                    .amount(upgradeSurcharge)
+                    .createdAt(nextAssign.getAssignedFrom() != null ? nextAssign.getAssignedFrom() : Instant.now())
+                    .status("ACTIVE")
+                    .build();
+
+            AdditionalCharge savedCharge = additionalChargeRepository.saveAndFlush(autoCharge);
+            existingCharges.add(savedCharge);
+        }
+    }
+
+    private BigDecimal calculateEstimatedStayTotal(GuestStay stay, Folio stayFolio, LocalDate checkInDate, LocalDate checkOutDate) {
+        BigDecimal subtotal = calculateEstimatedStaySubtotal(stay, stayFolio, checkInDate, checkOutDate);
+        BigDecimal tax = subtotal.multiply(new BigDecimal("0.08")).setScale(0, RoundingMode.HALF_UP);
         return subtotal.add(tax);
+    }
+
+    private BigDecimal calculateEstimatedStayBalance(GuestStay stay, Folio stayFolio, LocalDate checkInDate, LocalDate checkOutDate) {
+        BigDecimal estimatedGross = calculateEstimatedStayTotal(stay, stayFolio, checkInDate, checkOutDate);
+        BigDecimal depositPaid = BigDecimal.ZERO;
+        Reservation res = stay != null ? stay.getReservation() : null;
+        if (res != null && res.getReservationId() != null) {
+            Invoice inv = (stayFolio != null && stayFolio.getFolioId() != null)
+                    ? invoiceRepository.findByFolio_FolioId(stayFolio.getFolioId()).orElse(null)
+                    : null;
+            boolean isReopenedFolio = stayFolio == null || !FOLIO_CLOSED.equalsIgnoreCase(stayFolio.getStatus());
+            depositPaid = paymentRepository.findByReservation_ReservationId(res.getReservationId()).stream()
+                    .filter(p -> PaymentStatus.PAID.name().equalsIgnoreCase(p.getStatus())
+                            && ("DEPOSIT".equalsIgnoreCase(p.getPaymentType())
+                            || (isReopenedFolio && "SETTLEMENT".equalsIgnoreCase(p.getPaymentType())
+                                    && p.getInvoice() != null && inv != null && inv.getInvoiceId().equals(p.getInvoice().getInvoiceId()))))
+                    .map(Payment::getAmount)
+                    .filter(java.util.Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+        return estimatedGross.subtract(depositPaid).max(BigDecimal.ZERO).setScale(0, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Đồng bộ chi tiết từng đêm lưu trú từ checkInDate đến checkOutDate mới nhất (kể cả khi Thành viên 4 gia hạn lưu trú hoặc đổi phòng).
+     */
+    private List<RoomNightItemDto> buildSynchronizedRoomNights(
+            GuestStay stay, Reservation res, LocalDate checkInDate, LocalDate checkOutDate, String fallbackRoomTypeName) {
+        Room currentRoom = null;
+        if (stay != null && stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty()) {
+            currentRoom = stay.getRoomAssignments().get(stay.getRoomAssignments().size() - 1).getRoom();
+        }
+        RoomType currentRoomType = (currentRoom != null) ? currentRoom.getRoomType() : null;
+        if (currentRoomType == null && res != null && res.getDetails() != null && !res.getDetails().isEmpty()) {
+            currentRoomType = res.getDetails().get(0).getRoomType();
+        }
+
+        String roomTypeName = (currentRoomType != null && currentRoomType.getTypeName() != null)
+                ? currentRoomType.getTypeName()
+                : (fallbackRoomTypeName != null ? fallbackRoomTypeName : "N/A");
+        BigDecimal basePrice = (currentRoomType != null && currentRoomType.getBasePrice() != null)
+                ? currentRoomType.getBasePrice()
+                : BigDecimal.valueOf(500000);
+
+        // Load bảng giá theo thứ trong tuần từ RoomTypePriceRepository (đồng bộ 100% với thuật toán gia hạn của Thành viên 4)
+        Map<Integer, BigDecimal> tariffMap = new java.util.HashMap<>();
+        if (currentRoomType != null && currentRoomType.getRoomTypeId() != null) {
+            for (RoomTypePrice rtp : roomTypePriceRepository.findByRoomType_RoomTypeIdAndIsActiveTrue(currentRoomType.getRoomTypeId())) {
+                if (rtp.getDayOfWeek() != null && rtp.getPrice() != null) {
+                    tariffMap.put(rtp.getDayOfWeek(), rtp.getPrice());
+                }
+            }
+        }
+
+        // Thu thập các đêm đã được lưu sẵn trong ReservationNightlyRate theo ngày
+        Map<LocalDate, ReservationNightlyRate> matchedTypeRates = new java.util.LinkedHashMap<>();
+        Map<LocalDate, ReservationNightlyRate> anyTypeRates = new java.util.LinkedHashMap<>();
+        if (res != null && res.getDetails() != null) {
+            for (ReservationDetail detail : res.getDetails()) {
+                boolean isSameRoomType = currentRoomType != null && detail.getRoomType() != null
+                        && currentRoomType.getRoomTypeId().equals(detail.getRoomType().getRoomTypeId());
+                if (detail.getNightlyRates() != null) {
+                    for (ReservationNightlyRate rate : detail.getNightlyRates()) {
+                        if (rate.getStayDate() != null && rate.getUnitPrice() != null) {
+                            anyTypeRates.putIfAbsent(rate.getStayDate(), rate);
+                            if (isSameRoomType) {
+                                matchedTypeRates.put(rate.getStayDate(), rate);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        LocalDate start = checkInDate;
+        LocalDate end = checkOutDate;
+        if (start == null && res != null) {
+            start = res.getCheckInDate();
+        }
+        if (end == null && res != null) {
+            end = res.getCheckOutDate();
+        }
+        if (start == null) {
+            start = LocalDate.now();
+        }
+        if (end == null || !end.isAfter(start)) {
+            end = start.plusDays(1);
+        }
+
+        List<RoomNightItemDto> roomNights = new ArrayList<>();
+        int generatedId = 1;
+        for (LocalDate cur = start; cur.isBefore(end); cur = cur.plusDays(1)) {
+            ReservationNightlyRate recorded = matchedTypeRates.getOrDefault(cur, anyTypeRates.get(cur));
+            BigDecimal unitPrice;
+            Integer rateId;
+            if (recorded != null && recorded.getUnitPrice() != null) {
+                unitPrice = recorded.getUnitPrice();
+                rateId = recorded.getNightlyRateId() != null ? recorded.getNightlyRateId() : generatedId++;
+            } else {
+                int dow = cur.getDayOfWeek().getValue();
+                unitPrice = tariffMap.getOrDefault(dow, basePrice);
+                rateId = generatedId++;
+            }
+
+            roomNights.add(RoomNightItemDto.builder()
+                    .nightlyRateId(rateId)
+                    .stayDate(cur)
+                    .roomTypeName(roomTypeName)
+                    .quantity(1)
+                    .unitPrice(unitPrice)
+                    .lineTotal(unitPrice)
+                    .build());
+        }
+
+        return roomNights;
     }
 
     @Override
@@ -364,14 +578,18 @@ public class BillingServiceImpl implements BillingService {
         if (order.getRecordedByStaff() == null) {
             order.setRecordedByStaff(findStaff(callerAccountId));
         }
-        folio.setTotalAmount(folio.getTotalAmount().add(lineAmount(order)));
+        serviceOrderRepository.saveAndFlush(order);
+        GuestStay stay = order.getGuestStay();
+        LocalDate checkInDate = stay.getReservation() != null ? stay.getReservation().getCheckInDate() : null;
+        LocalDate checkOutDate = stay.getReservation() != null ? stay.getReservation().getCheckOutDate() : null;
+        folio.setTotalAmount(calculateEstimatedStayBalance(stay, folio, checkInDate, checkOutDate));
         try {
             folioRepository.saveAndFlush(folio);
         } catch (OptimisticLockingFailureException ex) {
-            throw new BusinessException("FOLIO_CONFLICT", "Folio vá»«a Ä‘Æ°á»£c cáº­p nháº­t bá»Ÿi ngÆ°á»i khÃ¡c. Vui lÃ²ng thá»­ láº¡i.",
+            throw new BusinessException("FOLIO_CONFLICT", "Folio vừa được cập nhật bởi người khác. Vui lòng thử lại.",
                     org.springframework.http.HttpStatus.CONFLICT);
         }
-        return toDto(serviceOrderRepository.save(order));
+        return toDto(order);
     }
 
     @Override
@@ -563,7 +781,7 @@ public class BillingServiceImpl implements BillingService {
             }
             if ("PERCENTAGE".equalsIgnoreCase(v.getDiscountType())) {
                 discount = subtotal.multiply(v.getDiscountValue())
-                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                        .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
                 if (v.getMaxDiscountAmount().compareTo(BigDecimal.ZERO) > 0
                         && discount.compareTo(v.getMaxDiscountAmount()) > 0) {
                     discount = v.getMaxDiscountAmount();
@@ -576,7 +794,7 @@ public class BillingServiceImpl implements BillingService {
         }
 
         BigDecimal taxable = subtotal.subtract(discount).max(BigDecimal.ZERO);
-        BigDecimal tax = taxable.multiply(new BigDecimal("0.08")).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal tax = taxable.multiply(new BigDecimal("0.08")).setScale(0, RoundingMode.HALF_UP);
         BigDecimal finalAmount = taxable.add(tax);
 
         Invoice invoice = invoiceRepository.findByFolio_FolioId(folio.getFolioId())
@@ -607,7 +825,7 @@ public class BillingServiceImpl implements BillingService {
                 .build();
         paymentRepository.save(payment);
 
-        folio.setTotalAmount(finalAmount);
+        folio.setTotalAmount(BigDecimal.ZERO);
         folio.setStatus(FolioStatus.CLOSED.name());
         folioRepository.save(folio);
 
@@ -754,7 +972,7 @@ public class BillingServiceImpl implements BillingService {
         BigDecimal discount = BigDecimal.ZERO;
         if ("PERCENTAGE".equalsIgnoreCase(v.getDiscountType())) {
             discount = subtotal.multiply(v.getDiscountValue())
-                    .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                    .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
             if (v.getMaxDiscountAmount() != null && v.getMaxDiscountAmount().compareTo(BigDecimal.ZERO) > 0
                     && discount.compareTo(v.getMaxDiscountAmount()) > 0) {
                 discount = v.getMaxDiscountAmount();
@@ -826,8 +1044,11 @@ public class BillingServiceImpl implements BillingService {
                 .status("ACTIVE")
                 .build();
 
-        AdditionalCharge saved = additionalChargeRepository.save(charge);
-        folio.setTotalAmount(folio.getTotalAmount().add(saved.getAmount()));
+        AdditionalCharge saved = additionalChargeRepository.saveAndFlush(charge);
+        GuestStay stay = folio.getGuestStay();
+        LocalDate checkInDate = (stay != null && stay.getReservation() != null) ? stay.getReservation().getCheckInDate() : null;
+        LocalDate checkOutDate = (stay != null && stay.getReservation() != null) ? stay.getReservation().getCheckOutDate() : null;
+        folio.setTotalAmount(calculateEstimatedStayBalance(stay, folio, checkInDate, checkOutDate));
         folioRepository.save(folio);
 
         return toAdditionalChargeDto(saved);
@@ -844,10 +1065,14 @@ public class BillingServiceImpl implements BillingService {
             throw new BusinessException("BR-FOLIO-CLOSED", "Không thể xóa phụ thu khi hóa đơn phòng đã quyết toán/đóng.");
         }
 
-        folio.setTotalAmount(folio.getTotalAmount().subtract(charge.getAmount()).max(BigDecimal.ZERO));
-        folioRepository.save(folio);
+        charge.setStatus("CANCELLED");
+        additionalChargeRepository.saveAndFlush(charge);
 
-        additionalChargeRepository.delete(charge);
+        GuestStay stay = folio.getGuestStay();
+        LocalDate checkInDate = (stay != null && stay.getReservation() != null) ? stay.getReservation().getCheckInDate() : null;
+        LocalDate checkOutDate = (stay != null && stay.getReservation() != null) ? stay.getReservation().getCheckOutDate() : null;
+        folio.setTotalAmount(calculateEstimatedStayBalance(stay, folio, checkInDate, checkOutDate));
+        folioRepository.save(folio);
     }
 
     // ------------------------------------------------------------------ UC-39 & UC-40: Settle Folio & Invoices
@@ -860,11 +1085,10 @@ public class BillingServiceImpl implements BillingService {
         Folio folio = folioRepository.findByGuestStay_StayId(stayId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Folio cho stayId: " + stayId));
 
+        FolioDetailDto preview = buildFolioDetailDto(folio, stay);
         if (FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
             return getInvoiceDetailByStay(stayId, callerAccountId, "STAFF");
         }
-
-        FolioDetailDto preview = buildFolioDetailDto(folio, stay);
         BigDecimal subtotal = preview.getSubtotal();
         BigDecimal discount = BigDecimal.ZERO;
         Voucher appliedVoucher = null;
@@ -882,7 +1106,7 @@ public class BillingServiceImpl implements BillingService {
             }
             if ("PERCENTAGE".equalsIgnoreCase(v.getDiscountType())) {
                 discount = subtotal.multiply(v.getDiscountValue())
-                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+                        .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
                 if (v.getMaxDiscountAmount() != null && v.getMaxDiscountAmount().compareTo(BigDecimal.ZERO) > 0
                         && discount.compareTo(v.getMaxDiscountAmount()) > 0) {
                     discount = v.getMaxDiscountAmount();
@@ -895,10 +1119,10 @@ public class BillingServiceImpl implements BillingService {
         }
 
         BigDecimal taxable = subtotal.subtract(discount).max(BigDecimal.ZERO);
-        BigDecimal tax = taxable.multiply(new BigDecimal("0.08")).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal grossWithTax = taxable.add(tax);
-        BigDecimal depositPaid = preview.getDepositPaid();
-        BigDecimal balancePayable = grossWithTax.subtract(depositPaid).max(BigDecimal.ZERO);
+        BigDecimal tax = taxable.multiply(new BigDecimal("0.08")).setScale(0, RoundingMode.HALF_UP);
+        BigDecimal grossWithTax = taxable.add(tax).setScale(0, RoundingMode.HALF_UP);
+        BigDecimal depositPaid = preview.getDepositPaid() != null ? preview.getDepositPaid().setScale(0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        BigDecimal balancePayable = grossWithTax.subtract(depositPaid).max(BigDecimal.ZERO).setScale(0, RoundingMode.HALF_UP);
 
         Instant now = Instant.now();
         String generatedCode = "INV-" + DateTimeFormatter.ofPattern("yyyyMMdd").withZone(ZoneId.systemDefault()).format(now)
@@ -933,7 +1157,7 @@ public class BillingServiceImpl implements BillingService {
                 .build();
         paymentRepository.save(payment);
 
-        folio.setTotalAmount(grossWithTax);
+        folio.setTotalAmount(BigDecimal.ZERO);
         folio.setStatus(FolioStatus.CLOSED.name());
         folioRepository.save(folio);
 
@@ -941,7 +1165,275 @@ public class BillingServiceImpl implements BillingService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
+    public FolioVnPayInitResponse createFolioVnPayUrl(Integer stayId, FolioSettlementRequest request, Integer callerAccountId) {
+        GuestStay stay = guestStayRepository.findById(stayId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông tin lưu trú cho stayId: " + stayId));
+        Folio folio = folioRepository.findByGuestStay_StayId(stayId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Folio cho stayId: " + stayId));
+
+        FolioDetailDto preview = buildFolioDetailDto(folio, stay);
+        if (FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
+            throw new BusinessException("FOLIO_ALREADY_CLOSED", "Hóa đơn phòng này đã được quyết toán và đóng.");
+        }
+        BigDecimal subtotal = preview.getSubtotal();
+        BigDecimal discount = BigDecimal.ZERO;
+        Voucher appliedVoucher = null;
+
+        if (request != null && request.getVoucherCode() != null && !request.getVoucherCode().isBlank()) {
+            Voucher v = voucherRepository.findByCodeIgnoreCase(request.getVoucherCode().trim())
+                    .orElseThrow(() -> new BusinessException("MSG09", "Mã voucher không tồn tại hoặc không hợp lệ."));
+            Instant now = Instant.now();
+            if (!"ACTIVE".equalsIgnoreCase(v.getStatus())
+                    || now.isBefore(v.getValidFrom())
+                    || now.isAfter(v.getValidTo())
+                    || v.getUsedCount() >= v.getUsageLimit()
+                    || subtotal.compareTo(v.getMinSpend()) < 0) {
+                throw new BusinessException("MSG09", "Mã voucher không đủ điều kiện áp dụng.");
+            }
+            if ("PERCENTAGE".equalsIgnoreCase(v.getDiscountType())) {
+                discount = subtotal.multiply(v.getDiscountValue())
+                        .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
+                if (v.getMaxDiscountAmount() != null && v.getMaxDiscountAmount().compareTo(BigDecimal.ZERO) > 0
+                        && discount.compareTo(v.getMaxDiscountAmount()) > 0) {
+                    discount = v.getMaxDiscountAmount();
+                }
+            } else {
+                discount = v.getDiscountValue().min(subtotal);
+            }
+            appliedVoucher = v;
+        }
+
+        BigDecimal taxable = subtotal.subtract(discount).max(BigDecimal.ZERO);
+        BigDecimal tax = taxable.multiply(new BigDecimal("0.08")).setScale(0, RoundingMode.HALF_UP);
+        BigDecimal grossWithTax = taxable.add(tax).setScale(0, RoundingMode.HALF_UP);
+        BigDecimal depositPaid = preview.getDepositPaid() != null ? preview.getDepositPaid().setScale(0, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        BigDecimal balancePayable = grossWithTax.subtract(depositPaid).max(BigDecimal.ZERO).setScale(0, RoundingMode.HALF_UP);
+
+        if (balancePayable.compareTo(BigDecimal.valueOf(5000)) < 0) {
+            throw new BusinessException("VNPAY_AMOUNT_TOO_LOW",
+                    "Số tiền cần thanh toán qua cổng VNPay tối thiểu là 5,000 VND (hiện tại: "
+                            + balancePayable.longValue()
+                            + " VND). Vui lòng chọn hình thức Tiền mặt tại quầy để chốt hóa đơn trực tiếp.");
+        }
+
+        Instant now = Instant.now();
+        String generatedCode = "INV-" + DateTimeFormatter.ofPattern("yyyyMMdd").withZone(ZoneId.systemDefault()).format(now)
+                + "-" + UUID.randomUUID().toString().substring(0, 4).toUpperCase();
+
+        Invoice invoice = invoiceRepository.findByFolio_FolioId(folio.getFolioId())
+                .orElseGet(() -> Invoice.builder()
+                        .folio(folio)
+                        .invoiceCode(generatedCode)
+                        .build());
+
+        invoice.setVoucher(appliedVoucher);
+        invoice.setTotalAmount(subtotal);
+        invoice.setDiscountAmount(discount);
+        invoice.setTaxAmount(tax);
+        invoice.setFinalAmount(grossWithTax);
+        invoice.setStatus(InvoiceStatus.UNPAID.name());
+        invoice.setIssueDate(now);
+        Invoice savedInvoice = invoiceRepository.save(invoice);
+
+        String notesMeta = (request != null && request.getNotes() != null && !request.getNotes().trim().isEmpty())
+                ? request.getNotes().trim()
+                : "";
+        if (notesMeta.length() > 95) {
+            notesMeta = notesMeta.substring(0, 95);
+        }
+
+        String txnRef = "FOLIO-" + stayId + "-" + (System.currentTimeMillis() % 100000000L);
+
+        Payment payment = Payment.builder()
+                .invoice(savedInvoice)
+                .reservation(stay.getReservation())
+                .paymentType("SETTLEMENT")
+                .amount(balancePayable)
+                .currency("VND")
+                .method(PaymentMethod.VNPAY.name())
+                .idempotencyKey(notesMeta.isEmpty() ? txnRef : notesMeta)
+                .status(PaymentStatus.PENDING.name())
+                .createdAt(now)
+                .build();
+        Payment savedPayment = paymentRepository.save(payment);
+
+        PaymentAttempt attempt = PaymentAttempt.builder()
+                .payment(savedPayment)
+                .gatewayProvider("VNPAY")
+                .gatewayRequestRef(txnRef)
+                .status("PENDING")
+                .createdAt(now)
+                .expiredAt(now.plusSeconds(15 * 60))
+                .build();
+        paymentAttemptRepository.save(attempt);
+
+        String orderInfo = "Quyet toan hoa don phong P." + preview.getRoomNumber() + " ma " + savedInvoice.getInvoiceCode();
+        String paymentUrl = buildSignedFolioVnPayUrl(txnRef, balancePayable, orderInfo);
+
+        return FolioVnPayInitResponse.builder()
+                .stayId(stayId)
+                .txnRef(txnRef)
+                .amount(balancePayable)
+                .paymentUrl(paymentUrl)
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public InvoiceDetailDto processFolioVnPayCallback(FolioVnPayCallbackRequest request, Integer callerAccountId) {
+        PaymentAttempt attempt = paymentAttemptRepository.findByGatewayRequestRef(request.getTxnRef().trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy giao dịch VNPay với mã tham chiếu: " + request.getTxnRef()));
+
+        Payment payment = attempt.getPayment();
+        Invoice invoice = payment.getInvoice();
+        if (invoice == null || invoice.getFolio() == null) {
+            throw new BusinessException("INVALID_PAYMENT_LINK", "Giao dịch không liên kết với hóa đơn phòng hợp lệ.");
+        }
+
+        Folio folio = invoice.getFolio();
+        GuestStay stay = folio.getGuestStay();
+
+        // Idempotent: nếu đã đóng Folio và Invoice đã PAID thì trả về kết quả luôn
+        if (FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus()) && InvoiceStatus.PAID.name().equalsIgnoreCase(invoice.getStatus())) {
+            String savedNotes = (payment.getIdempotencyKey() != null && !payment.getIdempotencyKey().startsWith("FOLIO-"))
+                    ? payment.getIdempotencyKey() : null;
+            return buildInvoiceDetailDto(invoice, folio, stay, payment, callerAccountId, savedNotes);
+        }
+
+        // Xác thực chữ ký HMAC-SHA512 từ VNPay
+        if (!vnPayGatewayService.isDemoMode()) {
+            boolean sigValid = vnPayGatewayService.verifyCallbackSignature(request.getVnpParams(), request.getVnpSecureHash());
+            if (!sigValid) {
+                throw new BusinessException("VNPAY_INVALID_SIGNATURE",
+                        "Chữ ký bảo mật VNPay (vnp_SecureHash) không hợp lệ hoặc dữ liệu đã bị thay đổi.");
+            }
+        }
+
+        // Kiểm tra số tiền khớp với Payment theo đơn vị đồng chẵn (VNPay quy đổi vnp_Amount = VND * 100 và cắt bỏ phần xu lẻ thập phân)
+        if (request.getVnpAmount() != null && request.getVnpAmount() > 0 && payment.getAmount() != null) {
+            long expectedVnd = payment.getAmount().setScale(0, RoundingMode.HALF_UP).longValue();
+            long actualVnd = request.getVnpAmount() / 100L;
+            if (Math.abs(actualVnd - expectedVnd) > 10L) {
+                throw new BusinessException("VNPAY_AMOUNT_MISMATCH",
+                        "Số tiền phản hồi từ VNPay không khớp với số tiền cần thanh toán của hóa đơn.");
+            }
+        }
+
+        Instant now = Instant.now();
+
+        if ("00".equals(request.getVnpResponseCode())) {
+            attempt.setStatus("SUCCESS");
+            attempt.setGatewayTransactionId(request.getVnpTransactionNo());
+            attempt.setBankCode(request.getBankCode());
+            attempt.setCompletedAt(now);
+            paymentAttemptRepository.save(attempt);
+
+            payment.setStatus(PaymentStatus.PAID.name());
+            payment.setMethod(PaymentMethod.VNPAY.name());
+            payment.setPaidAt(now);
+            paymentRepository.save(payment);
+
+            Voucher v = invoice.getVoucher();
+            if (v != null) {
+                v.setUsedCount((v.getUsedCount() != null ? v.getUsedCount() : 0) + 1);
+                voucherRepository.save(v);
+            }
+
+            invoice.setStatus(InvoiceStatus.PAID.name());
+            invoice.setIssueDate(now);
+            Invoice savedInvoice = invoiceRepository.save(invoice);
+
+            folio.setTotalAmount(BigDecimal.ZERO);
+            folio.setStatus(FolioStatus.CLOSED.name());
+            folioRepository.save(folio);
+
+            String savedNotes = (payment.getIdempotencyKey() != null && !payment.getIdempotencyKey().startsWith("FOLIO-"))
+                    ? payment.getIdempotencyKey() : null;
+            String vnpNoteSuffix = "Thanh toán qua VNPay"
+                    + (request.getBankCode() != null && !request.getBankCode().isBlank() ? " (" + request.getBankCode() + ")" : "")
+                    + (request.getVnpTransactionNo() != null && !request.getVnpTransactionNo().isBlank() ? " - Mã GD: " + request.getVnpTransactionNo() : "");
+            String combinedNotes = (savedNotes != null && !savedNotes.isBlank())
+                    ? savedNotes + " | " + vnpNoteSuffix
+                    : vnpNoteSuffix;
+
+            return buildInvoiceDetailDto(savedInvoice, folio, stay, payment, callerAccountId, combinedNotes);
+        } else {
+            attempt.setStatus("FAILED");
+            attempt.setGatewayTransactionId(request.getVnpTransactionNo());
+            attempt.setBankCode(request.getBankCode());
+            attempt.setCompletedAt(now);
+            paymentAttemptRepository.save(attempt);
+
+            payment.setStatus(PaymentStatus.FAILED.name());
+            paymentRepository.save(payment);
+
+            throw new BusinessException("VNPAY_PAYMENT_FAILED",
+                    "Giao dịch thanh toán VNPay không thành công hoặc đã bị hủy (Mã phản hồi: " + request.getVnpResponseCode() + "). Hóa đơn phòng vẫn đang mở để thanh toán lại.");
+        }
+    }
+
+    private String buildSignedFolioVnPayUrl(String txnRef, BigDecimal amount, String orderInfo) {
+        long vnpAmount = amount.setScale(0, RoundingMode.HALF_UP).longValue() * 100L;
+
+        String effectiveTmn = (vnpTmnCode == null || vnpTmnCode.isBlank() || "DEMO_TMN".equalsIgnoreCase(vnpTmnCode.trim()))
+                ? "GCS1874X" : vnpTmnCode.trim();
+        String effectiveSecret = (vnpHashSecret == null || vnpHashSecret.isBlank() || "DEMO_SECRET".equalsIgnoreCase(vnpHashSecret.trim()))
+                ? "CAJSNWRIUUYNJWPIPCRAHLAJXNRZASAB" : vnpHashSecret.trim();
+
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+        ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Ho_Chi_Minh"));
+
+        Map<String, String> vnpParams = new TreeMap<>();
+        vnpParams.put("vnp_Version", "2.1.0");
+        vnpParams.put("vnp_Command", "pay");
+        vnpParams.put("vnp_TmnCode", effectiveTmn);
+        vnpParams.put("vnp_Amount", String.valueOf(vnpAmount));
+        vnpParams.put("vnp_CurrCode", "VND");
+        vnpParams.put("vnp_TxnRef", txnRef);
+        vnpParams.put("vnp_OrderInfo", orderInfo);
+        vnpParams.put("vnp_OrderType", "other");
+        vnpParams.put("vnp_Locale", "vn");
+        vnpParams.put("vnp_ReturnUrl", vnpBillingReturnUrl);
+        vnpParams.put("vnp_IpAddr", "127.0.0.1");
+        vnpParams.put("vnp_CreateDate", now.format(fmt));
+        vnpParams.put("vnp_ExpireDate", now.plusMinutes(15).format(fmt));
+
+        StringBuilder hashData = new StringBuilder();
+        StringBuilder query = new StringBuilder();
+        for (Map.Entry<String, String> entry : vnpParams.entrySet()) {
+            if (!hashData.isEmpty()) {
+                hashData.append('&');
+                query.append('&');
+            }
+            String encodedKey = URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8);
+            String encodedVal = URLEncoder.encode(entry.getValue() != null ? entry.getValue() : "", StandardCharsets.UTF_8);
+            hashData.append(entry.getKey()).append('=').append(encodedVal);
+            query.append(encodedKey).append('=').append(encodedVal);
+        }
+
+        String secureHash = hmacSha512Hex(effectiveSecret, hashData.toString());
+        return vnpPayUrl + "?" + query + "&vnp_SecureHash=" + secureHash;
+    }
+
+    private String hmacSha512Hex(String key, String data) {
+        try {
+            Mac hmac512 = Mac.getInstance("HmacSHA512");
+            SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA512");
+            hmac512.init(secretKey);
+            byte[] bytes = hmac512.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes) {
+                sb.append(String.format("%02x", b & 0xff));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    @Override
+    @Transactional
     public InvoiceDetailDto getInvoiceDetail(Integer invoiceId, Integer callerAccountId, String callerRole) {
         Invoice invoice = invoiceRepository.findById(invoiceId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn có ID: " + invoiceId));
@@ -960,7 +1452,7 @@ public class BillingServiceImpl implements BillingService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public InvoiceDetailDto getInvoiceDetailByStay(Integer stayId, Integer callerAccountId, String callerRole) {
         GuestStay stay = guestStayRepository.findById(stayId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông tin lưu trú cho stayId: " + stayId));
@@ -975,8 +1467,12 @@ public class BillingServiceImpl implements BillingService {
             }
         }
 
+        // Đồng bộ trạng thái Folio nếu có phát sinh gia hạn mới
+        buildFolioDetailDto(folio, stay);
+
         Invoice invoice = invoiceRepository.findByFolio_FolioId(folio.getFolioId()).orElse(null);
-        if (invoice == null) {
+        if (invoice == null || !FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())
+                || !InvoiceStatus.PAID.name().equalsIgnoreCase(invoice.getStatus())) {
             return buildProformaInvoiceDetailDto(folio, stay, callerAccountId);
         }
 
@@ -1072,30 +1568,6 @@ public class BillingServiceImpl implements BillingService {
             }
         }
 
-        // 1. Room Nights
-        List<RoomNightItemDto> roomNights = new ArrayList<>();
-        BigDecimal roomSubtotal = BigDecimal.ZERO;
-        if (res != null && res.getDetails() != null) {
-            for (ReservationDetail detail : res.getDetails()) {
-                String typeName = detail.getRoomType() != null ? detail.getRoomType().getTypeName() : roomTypeName;
-                int qty = detail.getQuantity() != null ? detail.getQuantity() : 1;
-                if (detail.getNightlyRates() != null) {
-                    for (ReservationNightlyRate rate : detail.getNightlyRates()) {
-                        BigDecimal lineTotal = rate.getUnitPrice().multiply(BigDecimal.valueOf(qty));
-                        roomSubtotal = roomSubtotal.add(lineTotal);
-                        roomNights.add(RoomNightItemDto.builder()
-                                .nightlyRateId(rate.getNightlyRateId())
-                                .stayDate(rate.getStayDate())
-                                .roomTypeName(typeName)
-                                .quantity(qty)
-                                .unitPrice(rate.getUnitPrice())
-                                .lineTotal(lineTotal)
-                                .build());
-                    }
-                }
-            }
-        }
-
         LocalDate checkInDate = res != null ? res.getCheckInDate() : null;
         LocalDate checkOutDate = res != null ? res.getCheckOutDate() : null;
         if (checkInDate == null && stay.getActualCheckIn() != null) {
@@ -1107,38 +1579,11 @@ public class BillingServiceImpl implements BillingService {
             checkOutDate = checkInDate.plusDays(1);
         }
 
-        // Fallback: Tự động tính tiền phòng nếu chưa có chi tiết nightly rates
-        if (roomNights.isEmpty()) {
-            BigDecimal basePrice = BigDecimal.valueOf(500000);
-            if (res != null && res.getDetails() != null && !res.getDetails().isEmpty() && res.getDetails().get(0).getRoomType() != null
-                    && res.getDetails().get(0).getRoomType().getBasePrice() != null) {
-                basePrice = res.getDetails().get(0).getRoomType().getBasePrice();
-            } else if (stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty()) {
-                Room r = stay.getRoomAssignments().get(stay.getRoomAssignments().size() - 1).getRoom();
-                if (r != null && r.getRoomType() != null && r.getRoomType().getBasePrice() != null) {
-                    basePrice = r.getRoomType().getBasePrice();
-                    roomTypeName = r.getRoomType().getTypeName();
-                }
-            }
-            LocalDate cur = checkInDate != null ? checkInDate : LocalDate.now();
-            LocalDate end = checkOutDate != null ? checkOutDate : cur.plusDays(1);
-            if (!end.isAfter(cur)) {
-                end = cur.plusDays(1);
-            }
-            int fakeId = 1;
-            while (cur.isBefore(end)) {
-                roomSubtotal = roomSubtotal.add(basePrice);
-                roomNights.add(RoomNightItemDto.builder()
-                        .nightlyRateId(fakeId++)
-                        .stayDate(cur)
-                        .roomTypeName(roomTypeName)
-                        .quantity(1)
-                        .unitPrice(basePrice)
-                        .lineTotal(basePrice)
-                        .build());
-                cur = cur.plusDays(1);
-            }
-        }
+        // 1. Room Nights (Đồng bộ 100% số ngày lưu trú từ checkInDate -> checkOutDate mới nhất khi Thành viên 4 gia hạn / đổi phòng)
+        List<RoomNightItemDto> roomNights = buildSynchronizedRoomNights(stay, res, checkInDate, checkOutDate, roomTypeName);
+        BigDecimal roomSubtotal = roomNights.stream()
+                .map(RoomNightItemDto::getLineTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // 2. Service Orders (Only COMPLETED)
         List<ServiceOrder> orders = serviceOrderRepository.findByGuestStay_StayIdOrderByOrderTimeDesc(stay.getStayId());
@@ -1150,7 +1595,8 @@ public class BillingServiceImpl implements BillingService {
                 .map(ServiceOrderDto::getTotalAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // 3. Additional Charges
+        // 3. Additional Charges (Đồng bộ tự động phụ thu đổi/nâng hạng phòng từ Stay_Room_Assignment của Thành viên 4)
+        syncRoomTransferCharges(stay, folio);
         List<AdditionalCharge> charges = additionalChargeRepository.findByFolio_FolioId(folio.getFolioId());
         List<AdditionalChargeDto> additionalCharges = charges.stream()
                 .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()) && !"VOID".equalsIgnoreCase(c.getStatus()))
@@ -1160,12 +1606,30 @@ public class BillingServiceImpl implements BillingService {
                 .map(AdditionalChargeDto::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // 4. Deposit Payments (PAID)
+        BigDecimal subtotal = roomSubtotal.add(serviceSubtotal).add(additionalSubtotal);
+        Invoice inv = invoiceRepository.findByFolio_FolioId(folio.getFolioId()).orElse(null);
+
+        // Nếu Folio đã CLOSED nhưng sau đó Thành viên 4 lại gia hạn thêm ngày (subtotal mới > inv.totalAmount đã thu) -> Mở lại Folio
+        if (FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus()) && inv != null && inv.getTotalAmount() != null) {
+            if (subtotal.compareTo(inv.getTotalAmount()) > 0) {
+                folio.setStatus("OPEN");
+                folioRepository.save(folio);
+            } else if (folio.getTotalAmount() != null && folio.getTotalAmount().compareTo(BigDecimal.ZERO) > 0) {
+                folio.setTotalAmount(BigDecimal.ZERO);
+                folioRepository.save(folio);
+            }
+        }
+
+        // 4. Deposit Payments (PAID) + Các khoản đã thanh toán trước đó nếu mở lại Folio sau khi gia hạn
         List<Payment> allPayments = res != null
                 ? paymentRepository.findByReservation_ReservationId(res.getReservationId())
                 : List.of();
+        boolean isReopenedFolio = !FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus());
         List<DepositPaymentDto> depositPayments = allPayments.stream()
-                .filter(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType()) && PaymentStatus.PAID.name().equalsIgnoreCase(p.getStatus()))
+                .filter(p -> PaymentStatus.PAID.name().equalsIgnoreCase(p.getStatus())
+                        && ("DEPOSIT".equalsIgnoreCase(p.getPaymentType())
+                        || (isReopenedFolio && "SETTLEMENT".equalsIgnoreCase(p.getPaymentType())
+                                && p.getInvoice() != null && inv != null && inv.getInvoiceId().equals(p.getInvoice().getInvoiceId()))))
                 .map(p -> DepositPaymentDto.builder()
                         .paymentId(p.getPaymentId())
                         .amount(p.getAmount())
@@ -1177,15 +1641,23 @@ public class BillingServiceImpl implements BillingService {
                 .toList();
         BigDecimal depositPaid = depositPayments.stream()
                 .map(DepositPaymentDto::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .max(BigDecimal.ZERO)
+                .setScale(0, RoundingMode.HALF_UP);
 
-        BigDecimal subtotal = roomSubtotal.add(serviceSubtotal).add(additionalSubtotal);
         BigDecimal taxRate = new BigDecimal("8");
-        BigDecimal estimatedTax = subtotal.multiply(new BigDecimal("0.08")).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal estimatedTotal = subtotal.add(estimatedTax);
-        BigDecimal estimatedBalance = estimatedTotal.subtract(depositPaid).max(BigDecimal.ZERO);
+        BigDecimal estimatedTax = subtotal.multiply(new BigDecimal("0.08")).setScale(0, RoundingMode.HALF_UP);
+        BigDecimal estimatedTotal = subtotal.add(estimatedTax).setScale(0, RoundingMode.HALF_UP);
+        BigDecimal estimatedBalance = estimatedTotal.subtract(depositPaid).max(BigDecimal.ZERO).setScale(0, RoundingMode.HALF_UP);
 
-        Invoice inv = invoiceRepository.findByFolio_FolioId(folio.getFolioId()).orElse(null);
+        if (!FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
+            if (folio.getTotalAmount() == null || folio.getTotalAmount().compareTo(estimatedBalance) != 0) {
+                folio.setTotalAmount(estimatedBalance);
+                folioRepository.save(folio);
+            }
+        }
+
         Integer invId = null;
         String invCode = null;
         String invStatus = null;
@@ -1195,7 +1667,7 @@ public class BillingServiceImpl implements BillingService {
         String paymentMethod = null;
         Instant settledAt = null;
 
-        if (inv != null) {
+        if (inv != null && FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
             invId = inv.getInvoiceId();
             invCode = inv.getInvoiceCode();
             invStatus = inv.getStatus();
@@ -1204,10 +1676,14 @@ public class BillingServiceImpl implements BillingService {
             if (inv.getVoucher() != null) {
                 voucherCode = inv.getVoucher().getCode();
             }
-            Payment settlePayment = paymentRepository.findByInvoice_InvoiceId(inv.getInvoiceId()).stream()
-                    .filter(p -> "SETTLEMENT".equalsIgnoreCase(p.getPaymentType()))
-                    .findFirst()
-                    .orElse(null);
+            List<Payment> invPayments = paymentRepository.findByInvoice_InvoiceId(inv.getInvoiceId());
+            Payment settlePayment = invPayments.stream()
+                    .filter(p -> "SETTLEMENT".equalsIgnoreCase(p.getPaymentType()) && PaymentStatus.PAID.name().equalsIgnoreCase(p.getStatus()))
+                    .reduce((first, second) -> second)
+                    .orElseGet(() -> invPayments.stream()
+                            .filter(p -> "SETTLEMENT".equalsIgnoreCase(p.getPaymentType()))
+                            .reduce((first, second) -> second)
+                            .orElse(null));
             if (settlePayment != null) {
                 paymentMethod = settlePayment.getMethod();
                 settledAt = settlePayment.getPaidAt();
@@ -1273,23 +1749,32 @@ public class BillingServiceImpl implements BillingService {
             }
         }
 
+        List<Payment> invPayments = paymentRepository.findByInvoice_InvoiceId(invoice.getInvoiceId());
+        List<Payment> paidSettlements = invPayments.stream()
+                .filter(p -> "SETTLEMENT".equalsIgnoreCase(p.getPaymentType()) && PaymentStatus.PAID.name().equalsIgnoreCase(p.getStatus()))
+                .toList();
+
         if (payment == null) {
-            payment = paymentRepository.findByInvoice_InvoiceId(invoice.getInvoiceId()).stream()
-                    .filter(p -> "SETTLEMENT".equalsIgnoreCase(p.getPaymentType()))
-                    .findFirst()
-                    .orElse(null);
+            payment = !paidSettlements.isEmpty()
+                    ? paidSettlements.get(paidSettlements.size() - 1)
+                    : invPayments.stream()
+                            .filter(p -> "SETTLEMENT".equalsIgnoreCase(p.getPaymentType()))
+                            .reduce((first, second) -> second)
+                            .orElse(null);
         }
 
         String paymentMethod = payment != null ? payment.getMethod() : "CASH";
-        BigDecimal paidAmount = payment != null ? payment.getAmount() : invoice.getFinalAmount();
+        BigDecimal paidAmount = !paidSettlements.isEmpty()
+                ? paidSettlements.stream().map(Payment::getAmount).filter(java.util.Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add)
+                : (payment != null ? payment.getAmount() : invoice.getFinalAmount());
         Instant paidTime = payment != null ? payment.getPaidAt() : invoice.getIssueDate();
 
         BigDecimal subtotal = invoice.getTotalAmount() != null ? invoice.getTotalAmount() : folioDetail.getSubtotal();
         BigDecimal discount = invoice.getDiscountAmount() != null ? invoice.getDiscountAmount() : BigDecimal.ZERO;
         BigDecimal taxable = subtotal.subtract(discount).max(BigDecimal.ZERO);
-        BigDecimal tax = invoice.getTaxAmount() != null ? invoice.getTaxAmount() : taxable.multiply(new BigDecimal("0.08")).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal tax = invoice.getTaxAmount() != null ? invoice.getTaxAmount().setScale(0, RoundingMode.HALF_UP) : taxable.multiply(new BigDecimal("0.08")).setScale(0, RoundingMode.HALF_UP);
         BigDecimal deposit = folioDetail.getDepositPaid();
-        BigDecimal finalAmt = invoice.getFinalAmount() != null ? invoice.getFinalAmount() : taxable.add(tax);
+        BigDecimal finalAmt = invoice.getFinalAmount() != null ? invoice.getFinalAmount().setScale(0, RoundingMode.HALF_UP) : taxable.add(tax).setScale(0, RoundingMode.HALF_UP);
 
         return InvoiceDetailDto.builder()
                 .invoiceId(invoice.getInvoiceId())

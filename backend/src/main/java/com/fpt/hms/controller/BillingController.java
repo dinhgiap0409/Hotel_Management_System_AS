@@ -283,6 +283,30 @@ public class BillingController {
         ));
     }
 
+    @PostMapping("/stays/{stayId}/vnpay-url")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN')")
+    @Operation(summary = "UC-39: Tạo URL thanh toán quyết toán Folio qua cổng VNPay Sandbox (FRONT_DESK, ACCOUNTANT, ADMIN)")
+    public ResponseEntity<FolioVnPayInitResponse> createFolioVnPayUrl(@PathVariable Integer stayId,
+                                                                      @RequestBody(required = false) FolioSettlementRequest request,
+                                                                      @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.createFolioVnPayUrl(
+                stayId,
+                request,
+                principal != null ? principal.getAccountId() : null
+        ));
+    }
+
+    @PostMapping("/vnpay-callback")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'ACCOUNTANT', 'GENERAL_MANAGER', 'ADMIN', 'CUSTOMER')")
+    @Operation(summary = "UC-39: Xác thực kết quả trả về từ cổng VNPay, chốt Invoice PAID và đóng Folio")
+    public ResponseEntity<InvoiceDetailDto> processFolioVnPayCallback(@Valid @RequestBody FolioVnPayCallbackRequest request,
+                                                                      @AuthenticationPrincipal UserPrincipal principal) {
+        return ResponseEntity.ok(billingService.processFolioVnPayCallback(
+                request,
+                principal != null ? principal.getAccountId() : null
+        ));
+    }
+
     // ---------------------------------------------------------------- UC-40: Printable VAT Invoice Details
 
     @GetMapping("/invoices/{invoiceId}")

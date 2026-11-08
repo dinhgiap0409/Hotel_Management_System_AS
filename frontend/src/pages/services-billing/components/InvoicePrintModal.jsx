@@ -2,6 +2,7 @@ import { formatVND } from '../../../lib/money';
 import { formatDate, formatDateTime } from '../../../lib/datetime';
 
 const CHARGE_TYPE_LABELS = {
+  ROOM_UPGRADE: 'Phụ thu đổi / nâng hạng phòng',
   MINIBAR: 'Minibar / Đồ uống tại phòng',
   DAMAGE: 'Đền bù hư hại / Làm vỡ trang thiết bị',
   LATE_CHECKOUT: 'Phụ thu trả phòng muộn (Late check-out)',
@@ -295,8 +296,19 @@ export const InvoicePrintModal = ({ printInvoiceData, onClose }) => {
               </div>
 
               <div style={{ fontSize: 12, color: '#64748b', textAlign: 'right', marginTop: 2 }}>
-                Hình thức: <strong>{printInvoiceData.paymentMethod}</strong> (ĐÃ THANH TOÁN)
+                Hình thức:{' '}
+                <strong>
+                  {printInvoiceData.paymentMethod === 'VNPAY'
+                    ? 'CỔNG THANH TOÁN VNPAY'
+                    : printInvoiceData.paymentMethod}
+                </strong>{' '}
+                (ĐÃ THANH TOÁN)
               </div>
+              {printInvoiceData.notes && (
+                <div style={{ fontSize: 11.5, color: '#475569', textAlign: 'right', marginTop: 2 }}>
+                  Ghi chú: <em>{printInvoiceData.notes}</em>
+                </div>
+              )}
             </div>
           </div>
 
