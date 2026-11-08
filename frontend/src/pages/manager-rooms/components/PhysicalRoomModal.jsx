@@ -95,7 +95,7 @@ export const PhysicalRoomModal = ({ show, onHide, room, roomTypes, onSuccess }) 
     <Modal show={show} onHide={onHide} centered backdrop="static">
       <Modal.Header closeButton style={{ background: '#0f172a', color: '#fff' }}>
         <Modal.Title style={{ fontSize: 18, fontWeight: 600 }}>
-          {isEdit ? `Cập Nhật Phòng Vật Lý #${room?.roomNumber}` : 'Thêm Mới Phòng Vật Lý (UC-15)'}
+          {isEdit ? `Cập Nhật Phòng Vật Lý #${room?.roomNumber}` : 'Thêm Mới Phòng Vật Lý'}
         </Modal.Title>
       </Modal.Header>
       <Form onSubmit={handleSubmit}>

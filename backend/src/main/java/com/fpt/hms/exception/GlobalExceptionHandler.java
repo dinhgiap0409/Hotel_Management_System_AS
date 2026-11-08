@@ -21,6 +21,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -107,11 +109,31 @@ public class GlobalExceptionHandler {
                 messageResolver.resolve("AUTH_FORBIDDEN"), request);
     }
 
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleMaxUploadSize(MaxUploadSizeExceededException ex,
+                                                                HttpServletRequest request) {
+        log.warn("Upload rejected: file exceeds the configured size limit");
+        return buildResponse(HttpStatus.PAYLOAD_TOO_LARGE, "MSG_IMAGE_TOO_LARGE",
+                "Dung lượng ảnh vượt quá giới hạn cho phép (tối đa 10 MB mỗi file, 25 MB mỗi lần tải lên).",
+                request);
+    }
+
     @ExceptionHandler(OptimisticLockingFailureException.class)
     public ResponseEntity<ApiErrorResponse> handleOptimisticLock(OptimisticLockingFailureException ex,
                                                                  HttpServletRequest request) {
         return buildResponse(HttpStatus.CONFLICT, "CONCURRENT_UPDATE",
                 "The record was modified by another user. Please refresh and try again.", request);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNoResource(NoResourceFoundException ex,
+                                                             HttpServletRequest request) {
+        // A missing static resource (e.g. a deleted uploaded photo) is a 404,
+        // not a 500: without this handler it falls into handleGenericException
+        // and surfaces as INTERNAL_ERROR.
+        log.warn("Static resource not found: {}", request.getRequestURI());
+        return buildResponse(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND",
+                "Không tìm thấy tài nguyên yêu cầu.", request);
     }
 
     @ExceptionHandler(Exception.class)

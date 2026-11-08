@@ -9,6 +9,11 @@ import { SetMaintenanceModal } from './components/SetMaintenanceModal';
 import { EndMaintenanceModal } from './components/EndMaintenanceModal';
 import { AssignTaskModal } from './components/AssignTaskModal';
 
+// UC-51 (V4): task priority badge colours. A missing value means NORMAL
+// (tasks created before the priority column existed).
+const PRIORITY_BADGE_BG = { URGENT: 'danger', HIGH: 'warning', NORMAL: 'secondary', LOW: 'success' };
+const priorityBadgeBg = (priority) => PRIORITY_BADGE_BG[(priority || 'NORMAL').toUpperCase()] || 'secondary';
+
 export const HousekeepingBoardPage = () => {
   const { user } = useAuth();
   const isManager = user?.role === 'HOUSEKEEPING_MANAGER' || user?.role === 'ADMIN';
@@ -188,7 +193,7 @@ export const HousekeepingBoardPage = () => {
             Bảng Điều Phối Buồng Phòng & Bảo Trì
           </h2>
           <p className="text-muted mb-0" style={{ fontSize: '0.9rem' }}>
-            Quản lý vòng đời vệ sinh (DIRTY &rarr; CLEAN &rarr; INSPECTED), khóa bảo trì (UC-20) và phân bổ công việc (UC-51).
+            Quản lý vòng đời vệ sinh phòng (Cần dọn &rarr; Đã dọn &rarr; Đã kiểm duyệt), quản lý bảo trì và điều phối nhiệm vụ buồng phòng.
           </p>
         </div>
         <div className="d-flex gap-2">
@@ -257,7 +262,7 @@ export const HousekeepingBoardPage = () => {
       <Card className="border-0 shadow-sm mb-4">
         <Card.Header className="bg-white border-bottom py-3">
           <div className="d-flex flex-wrap justify-content-between align-items-center gap-2">
-            <h5 className="mb-0 fw-bold">1. Danh Sách Phòng & Trạng Thái Vệ Sinh (UC-19, UC-20)</h5>
+            <h5 className="mb-0 fw-bold">1. Danh Sách Phòng & Trạng Thái Vệ Sinh</h5>
             <span className="text-muted small">
               Hiển thị: <strong>{filteredRooms.length}</strong> / {rooms.length} phòng
             </span>
@@ -333,8 +338,8 @@ export const HousekeepingBoardPage = () => {
                     <th>Tầng</th>
                     <th>Hạng phòng</th>
                     <th>Lưu trú</th>
-                    <th>Vệ sinh (UC-19)</th>
-                    <th>Vận hành (UC-20)</th>
+                    <th>Vệ sinh</th>
+                    <th>Vận hành</th>
                     <th>Ghi chú / Bảo trì</th>
                     <th className="text-end">Hành động</th>
                   </tr>
@@ -482,7 +487,7 @@ export const HousekeepingBoardPage = () => {
         <Card.Header className="bg-white border-bottom py-3">
           <div className="d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div>
-              <h5 className="mb-0 fw-bold">2. Danh Sách Nhiệm Vụ Buồng Phòng (UC-51)</h5>
+              <h5 className="mb-0 fw-bold">2. Danh Sách Nhiệm Vụ Buồng Phòng</h5>
               <div className="text-muted small">
                 Nhân viên buồng nhận việc, bắt đầu làm (IN_PROGRESS) và hoàn tất (COMPLETED).
               </div>
@@ -531,6 +536,7 @@ export const HousekeepingBoardPage = () => {
                     <th>Mã</th>
                     <th>Phòng</th>
                     <th>Loại công việc</th>
+                    <th>Ưu tiên</th>
                     <th>Nhân viên phụ trách</th>
                     <th>Người giao việc</th>
                     <th>Hạn hoàn tất</th>
@@ -557,6 +563,14 @@ export const HousekeepingBoardPage = () => {
                         <td>
                           <Badge bg={t.taskType === 'CLEANING' ? 'info' : 'warning'} className="text-dark">
                             {t.taskType}
+                          </Badge>
+                        </td>
+                        <td>
+                          <Badge
+                            bg={priorityBadgeBg(t.priority)}
+                            className={(t.priority || 'NORMAL').toUpperCase() === 'HIGH' ? 'text-dark' : ''}
+                          >
+                            {t.priority || 'NORMAL'}
                           </Badge>
                         </td>
                         <td>

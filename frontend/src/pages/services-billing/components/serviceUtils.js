@@ -181,38 +181,46 @@ export const triggerUrgentCheckoutAlert = ({ stayId, roomNumber, reservationCode
   }
 };
 
-export const clearUrgentAlert = (stayId, orderId = null, preOrderName = null) => {
+export const clearUrgentAlert = (stayId, orderId = null, preOrderName = null, roomNumber = null) => {
   try {
     const current = getUrgentAlerts();
-    let updated;
-    if (orderId || preOrderName) {
-      updated = current
-        .map((a) => {
-          if (String(a.stayId) === String(stayId)) {
-            const nextOrderIds = orderId
-              ? (a.orderIds || []).filter((id) => String(id) !== String(orderId))
-              : (a.orderIds || []);
-            const nextPreOrders = preOrderName
-              ? (a.preOrderNames || []).filter(
-                  (name) => name.trim().toLowerCase() !== preOrderName.trim().toLowerCase()
-                )
-              : (a.preOrderNames || []);
-            return {
-              ...a,
-              orderIds: nextOrderIds,
-              preOrderNames: nextPreOrders,
-            };
-          }
-          return a;
-        })
-        .filter((a) => (a.orderIds && a.orderIds.length > 0) || (a.preOrderNames && a.preOrderNames.length > 0));
-    } else {
-      updated = current.filter((a) => String(a.stayId) !== String(stayId));
-    }
+    const updated = current
+      .map((a) => {
+        const isMatch =
+          (stayId && String(a.stayId) === String(stayId)) ||
+          (roomNumber && a.roomNumber && String(a.roomNumber).trim().toLowerCase() === String(roomNumber).trim().toLowerCase());
+        if (!isMatch) return a;
+
+        // Nếu gọi không kèm orderId hoặc preOrderName cụ thể -> Xóa hoàn toàn alert của phòng
+        if (!orderId && !preOrderName) {
+          return null;
+        }
+
+        const nextOrderIds = orderId
+          ? (a.orderIds || []).filter((id) => String(id) !== String(orderId))
+          : (a.orderIds || []);
+        const nextPreOrders = preOrderName
+          ? (a.preOrderNames || []).filter(
+              (name) => name.trim().toLowerCase() !== preOrderName.trim().toLowerCase()
+            )
+          : (a.preOrderNames || []);
+
+        if (nextOrderIds.length === 0 && nextPreOrders.length === 0) {
+          return null;
+        }
+
+        return {
+          ...a,
+          orderIds: nextOrderIds,
+          preOrderNames: nextPreOrders,
+        };
+      })
+      .filter(Boolean);
+
     localStorage.setItem(HMS_URGENT_ALERT_KEY, JSON.stringify(updated));
     window.dispatchEvent(
       new CustomEvent(HMS_URGENT_ALERT_EVENT, {
-        detail: { cleared: true, stayId, orderId, preOrderName },
+        detail: { cleared: true, stayId, orderId, preOrderName, count: updated.length },
       })
     );
     return updated;
@@ -227,37 +235,82 @@ export const syncUrgentAlertsWithRealData = (activeStays = [], orders = [], upco
     const current = getUrgentAlerts();
     if (!current || current.length === 0) return [];
 
-    const updated = current.filter((alert) => {
-      const stayIdStr = String(alert.stayId);
-      const matchedStay = activeStays.find(
-        (s) => String(s.stayId) === stayIdStr || (alert.roomNumber && String(s.roomNumber) === String(alert.roomNumber))
-      );
+    const updated = current
+      .map((alert) => {
+        const stayIdStr = String(alert.stayId);
+        const matchedStay = activeStays.find(
+          (s) =>
+            String(s.stayId) === stayIdStr ||
+            (alert.roomNumber && String(s.roomNumber).trim().toLowerCase() === String(alert.roomNumber).trim().toLowerCase())
+        );
 
-      // Nếu không tìm thấy stay trong activeStays (khách đã checkout và đóng folio), xóa alert
-      if (!matchedStay) return false;
+        // Nếu không tìm thấy stay trong activeStays (khách đã checkout và đóng folio), xóa alert
+        if (!matchedStay) return null;
 
-      // Kiểm tra xem phòng này còn đơn dịch vụ nào đang dở dang (ORDERED) không
-      const pendingRoomOrders = orders.filter(
-        (o) => String(o.stayId) === String(matchedStay.stayId) && o.status === 'ORDERED'
-      );
+        // Kiểm tra xem phòng này còn đơn dịch vụ nào đang dở dang (ORDERED) không
+        const pendingRoomOrders = orders.filter(
+          (o) =>
+            (String(o.stayId) === String(matchedStay.stayId) ||
+              (alert.roomNumber && o.roomNumber && String(o.roomNumber).trim().toLowerCase() === String(alert.roomNumber).trim().toLowerCase())) &&
+            o.status === 'ORDERED'
+        );
 
-      // Kiểm tra xem phòng này còn dịch vụ đặt trước nào chưa nạp/hoàn thành không
-      const reservation = upcomingPreOrders.find(
-        (r) => r.reservationCode === matchedStay.reservationCode || (alert.reservationCode && r.reservationCode === alert.reservationCode)
-      );
-      let unchargedPreOrders = [];
-      if (reservation) {
-        const rawItems = parseAndGroupPreOrders(reservation.specialNotes);
-        const stayOrders = orders.filter((o) => String(o.stayId) === String(matchedStay.stayId));
-        const matchedItems = matchPreOrderItemsToStayOrders(rawItems, stayOrders);
-        unchargedPreOrders = matchedItems.filter((it) => !it.matchedOrder || it.matchedOrder.status !== 'COMPLETED');
-      }
+        // Kiểm tra xem phòng này còn dịch vụ đặt trước nào chưa nạp/hoàn thành không
+        const reservation = upcomingPreOrders.find(
+          (r) =>
+            r.reservationCode === matchedStay.reservationCode ||
+            (alert.reservationCode && r.reservationCode === alert.reservationCode)
+        );
+        let unchargedPreOrders = [];
+        if (reservation) {
+          const rawItems = parseAndGroupPreOrders(reservation.specialNotes);
+          const stayOrders = orders.filter(
+            (o) =>
+              String(o.stayId) === String(matchedStay.stayId) ||
+              (alert.roomNumber && o.roomNumber && String(o.roomNumber).trim().toLowerCase() === String(alert.roomNumber).trim().toLowerCase())
+          );
+          const matchedItems = matchPreOrderItemsToStayOrders(rawItems, stayOrders);
+          unchargedPreOrders = matchedItems.filter(
+            (it) => !it.matchedOrder || (it.matchedOrder.status !== 'COMPLETED' && it.matchedOrder.status !== 'VOIDED')
+          );
+        }
 
-      // Còn đơn phòng dở dang HOẶC còn dịch vụ đặt trước chưa nạp thì mới giữ cảnh báo
-      return pendingRoomOrders.length > 0 || unchargedPreOrders.length > 0;
-    });
+        // Lọc lại alert.orderIds chỉ giữ lại những ID còn đang ORDERED
+        const remainingOrderIds = (alert.orderIds || []).filter((id) =>
+          pendingRoomOrders.some((o) => String(o.serviceOrderId) === String(id))
+        );
 
-    if (updated.length !== current.length) {
+        // Lọc lại alert.preOrderNames chỉ giữ lại những tên còn trong unchargedPreOrders
+        const remainingPreOrderNames = (alert.preOrderNames || []).filter((name) =>
+          unchargedPreOrders.some(
+            (it) => it.serviceName && it.serviceName.trim().toLowerCase() === name.trim().toLowerCase()
+          )
+        );
+
+        // Nếu alert ban đầu có chỉ định orderIds hoặc preOrderNames, kiểm tra xem còn lại gì không
+        const hasOrderRestrictions = alert.orderIds && alert.orderIds.length > 0;
+        const hasPreOrderRestrictions = alert.preOrderNames && alert.preOrderNames.length > 0;
+
+        if (hasOrderRestrictions || hasPreOrderRestrictions) {
+          if (remainingOrderIds.length === 0 && remainingPreOrderNames.length === 0) {
+            return null; // Đã giải quyết hết các món bị gọi khẩn cấp
+          }
+        } else {
+          // Alert tổng quát cho phòng: chỉ giữ nếu phòng còn đơn ORDERED hoặc còn pre-order chưa nạp
+          if (pendingRoomOrders.length === 0 && unchargedPreOrders.length === 0) {
+            return null;
+          }
+        }
+
+        return {
+          ...alert,
+          orderIds: remainingOrderIds,
+          preOrderNames: remainingPreOrderNames,
+        };
+      })
+      .filter(Boolean);
+
+    if (updated.length !== current.length || JSON.stringify(updated) !== JSON.stringify(current)) {
       localStorage.setItem(HMS_URGENT_ALERT_KEY, JSON.stringify(updated));
       window.dispatchEvent(
         new CustomEvent(HMS_URGENT_ALERT_EVENT, {
@@ -378,6 +431,70 @@ export const sortPreOrdersByCheckoutPriority = (list = [], activeStays = [], ord
     }
 
     return (b.reservationId || 0) - (a.reservationId || 0);
+  });
+};
+
+export const isOrderUrgent = (o, urgentAlerts = [], activeStays = []) => {
+  if (!o) return false;
+  if (o.status !== 'ORDERED') return false;
+  if (!urgentAlerts || urgentAlerts.length === 0) return false;
+
+  return urgentAlerts.some((a) => {
+    if (a.stayId && o.stayId && String(a.stayId) === String(o.stayId)) {
+      if (!a.orderIds || a.orderIds.length === 0) return true;
+      return a.orderIds.some((id) => String(id) === String(o.serviceOrderId));
+    }
+    if (a.roomNumber && o.roomNumber && String(a.roomNumber).trim().toLowerCase() === String(o.roomNumber).trim().toLowerCase()) {
+      if (!a.orderIds || a.orderIds.length === 0) return true;
+      return a.orderIds.some((id) => String(id) === String(o.serviceOrderId));
+    }
+    return false;
+  });
+};
+
+export const getOrderPriorityTier = (o, urgentAlerts = [], activeStays = []) => {
+  if (!o) return 99;
+  const isPending = o.status === 'ORDERED';
+
+  // Đơn đã hoàn tất (COMPLETED) hoặc đã hủy (VOIDED) xếp phía sau (Tier 4)
+  if (!isPending) return 4;
+
+  // Tier 1 (Khẩn cấp nhất): Thuộc phòng bị nhân viên quyết toán gọi check-out gấp tại quầy
+  if (isOrderUrgent(o, urgentAlerts, activeStays)) {
+    // 1.1: Đơn chưa xác nhận (cần xác nhận hoặc hủy gấp)
+    // 1.2: Đơn đã xác nhận chờ phục vụ (cần hoàn tất hoặc hủy gấp)
+    return o.staffConfirmed ? 1.2 : 1.1;
+  }
+
+  // Tier 2: Thuộc phòng đang lưu trú có lịch check-out là hôm nay hoặc đã quá hạn
+  const todayStr = toDateStr(new Date());
+  const matchedStay = (activeStays || []).find(
+    (s) => String(s.stayId) === String(o.stayId) || (o.roomNumber && String(s.roomNumber).trim() === String(o.roomNumber).trim())
+  );
+  if (matchedStay && matchedStay.checkOutDate) {
+    const coStr = toDateStr(matchedStay.checkOutDate);
+    if (coStr && coStr <= todayStr) {
+      return o.staffConfirmed ? 2.2 : 2.1;
+    }
+  }
+
+  // Tier 3: Đơn đang dở dang thông thường của phòng chưa check-out
+  return o.staffConfirmed ? 3.2 : 3.1;
+};
+
+export const sortOrdersByCheckoutPriority = (orders = [], urgentAlerts = [], activeStays = []) => {
+  if (!orders || orders.length === 0) return [];
+
+  return [...orders].sort((a, b) => {
+    const tierA = getOrderPriorityTier(a, urgentAlerts, activeStays);
+    const tierB = getOrderPriorityTier(b, urgentAlerts, activeStays);
+
+    if (tierA !== tierB) {
+      return tierA - tierB;
+    }
+
+    // Cùng tier: ưu tiên ID đơn mới hơn lên trước
+    return (b.serviceOrderId || 0) - (a.serviceOrderId || 0);
   });
 };
 

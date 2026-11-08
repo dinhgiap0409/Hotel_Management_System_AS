@@ -48,6 +48,8 @@ public interface BillingService {
     // UC-39: Settlement & Payment Recording (FRONT_DESK / ACCOUNTANT)
     InvoiceDto compileAndSettleInvoice(Integer stayId, String voucherCode, String paymentMethod);
     InvoiceDetailDto settleFolio(Integer stayId, FolioSettlementRequest request, Integer callerAccountId);
+    FolioVnPayInitResponse createFolioVnPayUrl(Integer stayId, FolioSettlementRequest request, Integer callerAccountId);
+    InvoiceDetailDto processFolioVnPayCallback(FolioVnPayCallbackRequest request, Integer callerAccountId);
 
     // UC-40: Printable VAT Invoice Details (FRONT_DESK, ACCOUNTANT, CUSTOMER, GENERAL_MANAGER)
     InvoiceDetailDto getInvoiceDetail(Integer invoiceId, Integer callerAccountId, String callerRole);

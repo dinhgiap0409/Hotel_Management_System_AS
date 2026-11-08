@@ -31,15 +31,11 @@ public class HousekeepingTaskDto {
     private Instant scheduledAt;
     private LocalDate estimatedCompletionDate;
     private String status; // ASSIGNED, IN_PROGRESS, COMPLETED, CANCELLED
+    private String priority; // LOW, NORMAL, HIGH, URGENT (UC-51, V4)
     private Instant startedAt;
     private Instant completedAt;
     private String note;
     private Instant createdAt;
-
-    @JsonProperty("priority")
-    public String getPriority() {
-        return "NORMAL";
-    }
 
     @JsonProperty("room")
     public Map<String, Object> getRoom() {

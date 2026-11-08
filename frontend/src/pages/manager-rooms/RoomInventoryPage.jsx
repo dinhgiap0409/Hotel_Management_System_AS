@@ -3,6 +3,7 @@ import { Tabs, Tab, Button, Form, Badge, Table, Spinner, Pagination } from 'reac
 import { roomApi } from '../../services/roomApi';
 import { useAuth } from '../../context/AuthContext';
 import { formatVND } from '../../lib/money';
+import { resolveImageUrl } from '../../lib/imageUrl';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { RoomTypeModal } from './components/RoomTypeModal';
 import { RoomTypePriceModal } from './components/RoomTypePriceModal';
@@ -163,7 +164,7 @@ export const RoomInventoryPage = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <div>
                 <h4 style={{ fontSize: 17, fontWeight: 700, color: '#1e293b', marginBottom: 2 }}>
-                  Danh Mục Hạng Phòng Lưu Trú (UC-11..14)
+                  Danh Mục Hạng Phòng Lưu Trú
                 </h4>
                 <span style={{ fontSize: 13, color: '#64748b' }}>
                   Cấu hình các loại phòng, sức chứa, giá niêm yết cơ sở và biểu giá phụ trội theo các ngày trong tuần.
@@ -211,7 +212,7 @@ export const RoomInventoryPage = () => {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                           {rt.imageUrl ? (
                             <img
-                              src={rt.imageUrl}
+                              src={resolveImageUrl(rt.imageUrl)}
                               alt={rt.typeName}
                               style={{ width: 44, height: 44, borderRadius: 6, objectFit: 'cover' }}
                             />
@@ -247,7 +248,7 @@ export const RoomInventoryPage = () => {
                                 setSelectedRoomType(rt);
                                 setShowRoomTypeModal(true);
                               }}
-                              title="Chỉnh sửa thông tin hạng phòng (UC-12)"
+                              title="Chỉnh sửa thông tin hạng phòng"
                             >
                               Sửa
                             </Button>
@@ -266,7 +267,7 @@ export const RoomInventoryPage = () => {
                               variant={rt.isActive ? 'outline-warning' : 'outline-success'}
                               size="sm"
                               onClick={() => handleToggleRoomTypeStatus(rt.roomTypeId)}
-                              title="Bật / Tắt kích hoạt hạng phòng (UC-13)"
+                              title="Bật / Tắt kích hoạt hạng phòng"
                             >
                               {rt.isActive ? 'Khóa' : 'Kích hoạt'}
                             </Button>
@@ -286,7 +287,7 @@ export const RoomInventoryPage = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <div>
                 <h4 style={{ fontSize: 17, fontWeight: 700, color: '#1e293b', marginBottom: 2 }}>
-                  Danh Sách Phòng Vật Lý Trong Khách Sạn (UC-15..18)
+                  Danh Sách Phòng Vật Lý Trong Khách Sạn
                 </h4>
                 <span style={{ fontSize: 13, color: '#64748b' }}>
                   Quản lý số phòng theo từng tầng lầu, kiểm tra trạng thái lưu trú và theo dõi độ sạch buồng phòng.
@@ -435,7 +436,7 @@ export const RoomInventoryPage = () => {
                                   setSelectedRoom(r);
                                   setShowRoomModal(true);
                                 }}
-                                title="Chỉnh sửa thông tin phòng (UC-16)"
+                                title="Chỉnh sửa thông tin phòng"
                               >
                                 Sửa
                               </Button>
@@ -446,7 +447,7 @@ export const RoomInventoryPage = () => {
                                   setSelectedRoom(r);
                                   setShowArchiveModal(true);
                                 }}
-                                title="Lưu trữ phòng (UC-17)"
+                                title="Lưu trữ phòng"
                               >
                                 Lưu Trữ
                               </Button>

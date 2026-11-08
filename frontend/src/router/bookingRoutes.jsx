@@ -7,35 +7,13 @@ import { RoomDetailPage } from '../pages/booking/RoomDetailPage';
 import { VnPayCallbackPage } from '../pages/booking/VnPayCallbackPage';
 import { MyBookingsPage } from '../pages/booking/MyBookingsPage';
 import { RoleGuard } from '../components/common/RoleGuard';
-import { PublicBookingGuard } from '../components/common/PublicBookingGuard';
 import { ROLES } from '../config/constants';
 
 export const bookingPublicRoutes = (
   <>
-    <Route
-      path="/"
-      element={
-        <PublicBookingGuard>
-          <HomePage />
-        </PublicBookingGuard>
-      }
-    />
-    <Route
-      path="/rooms"
-      element={
-        <PublicBookingGuard>
-          <LandingSearchPage />
-        </PublicBookingGuard>
-      }
-    />
-    <Route
-      path="/rooms/:roomTypeId"
-      element={
-        <PublicBookingGuard>
-          <RoomDetailPage />
-        </PublicBookingGuard>
-      }
-    />
+    <Route path="/" element={<HomePage />} />
+    <Route path="/rooms" element={<LandingSearchPage />} />
+    <Route path="/rooms/:roomTypeId" element={<RoomDetailPage />} />
     <Route path="/booking/payment-callback" element={<VnPayCallbackPage />} />
     <Route
       path="/my-bookings"

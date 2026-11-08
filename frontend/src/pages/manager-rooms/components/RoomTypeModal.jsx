@@ -1,7 +1,23 @@
 import { useState, useEffect } from 'react';
 import { Modal, Button, Form, Alert } from 'react-bootstrap';
 import { roomApi } from '../../../services/roomApi';
+import { resolveImageUrl } from '../../../lib/imageUrl';
 import { notifyToast } from '../../../lib/http';
+
+// Chỉ 1 ảnh đại diện cho mỗi hạng phòng, tối đa 10 MB/file
+// (khớp backend app.upload.max-file-size).
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
+const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+const validateImageFile = (file) => {
+  if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    return `File "${file.name}" không phải ảnh JPG, PNG, WebP hoặc GIF.`;
+  }
+  if (file.size > MAX_IMAGE_SIZE) {
+    return `File "${file.name}" vượt quá 10 MB.`;
+  }
+  return null;
+};
 
 export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
   const isEdit = Boolean(roomType && roomType.roomTypeId);
@@ -16,7 +32,12 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
     isActive: true,
   });
 
+  // File ảnh đại diện chọn từ máy (chưa upload).
+  const [mainImageFile, setMainImageFile] = useState(null);
+  const [mainPreview, setMainPreview] = useState(null);
+
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
   useEffect(() => {
@@ -41,8 +62,16 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
         isActive: true,
       });
     }
+    setMainImageFile(null);
     setErrorMsg(null);
   }, [roomType, show]);
+
+  // Thu hồi object URL của ảnh xem trước khi đổi file / đóng modal.
+  useEffect(() => {
+    return () => {
+      if (mainPreview) URL.revokeObjectURL(mainPreview);
+    };
+  }, [mainPreview]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -50,6 +79,27 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
       ...prev,
       [name]: type === 'checkbox' ? checked : value,
     }));
+  };
+
+  const handleMainFileChange = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const validationError = validateImageFile(file);
+    if (validationError) {
+      setErrorMsg(validationError);
+      return;
+    }
+    setErrorMsg(null);
+    if (mainPreview) URL.revokeObjectURL(mainPreview);
+    setMainImageFile(file);
+    setMainPreview(URL.createObjectURL(file));
+  };
+
+  const clearMainFile = () => {
+    if (mainPreview) URL.revokeObjectURL(mainPreview);
+    setMainImageFile(null);
+    setMainPreview(null);
   };
 
   const handleSubmit = async (e) => {
@@ -71,13 +121,31 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
 
     setLoading(true);
     try {
+      // Upload ảnh đại diện trước, lấy đường dẫn rồi mới lưu form —
+      // đường dẫn trả về được lưu vào imageUrl y như khi dán link ngoài.
+      let imageUrl = formData.imageUrl.trim();
+
+      if (mainImageFile) {
+        setUploading(true);
+        try {
+          const { data } = await roomApi.uploadRoomTypeImages([mainImageFile]);
+          const urls = data?.imageUrls || [];
+          if (urls[0]) imageUrl = urls[0];
+        } finally {
+          setUploading(false);
+        }
+      }
+
       const payload = {
         typeName: formData.typeName.trim(),
         capacity: Number(formData.capacity),
         basePrice: Number(formData.basePrice),
         amenities: formData.amenities.trim(),
         description: formData.description.trim(),
-        imageUrl: formData.imageUrl.trim(),
+        imageUrl,
+        // Không sửa gallery ở đây nữa: giữ nguyên gallery cũ (nếu có) khi
+        // chỉnh sửa, hạng phòng mới không có gallery.
+        galleryImages: isEdit ? roomType.galleryImages || '' : '',
         ...(isEdit && { isActive: formData.isActive }),
       };
 
@@ -98,11 +166,13 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
     }
   };
 
+  const mainPreviewSrc = mainPreview || resolveImageUrl(formData.imageUrl);
+
   return (
     <Modal show={show} onHide={onHide} centered backdrop="static" size="lg">
       <Modal.Header closeButton style={{ background: '#0f172a', color: '#fff' }}>
         <Modal.Title style={{ fontSize: 18, fontWeight: 600 }}>
-          {isEdit ? `Chỉnh Sửa Hạng Phòng #${roomType?.roomTypeId}` : 'Thêm Mới Hạng Phòng (UC-11)'}
+          {isEdit ? `Chỉnh Sửa Hạng Phòng #${roomType?.roomTypeId}` : 'Thêm Mới Hạng Phòng'}
         </Modal.Title>
       </Modal.Header>
       <Form onSubmit={handleSubmit}>
@@ -174,15 +244,40 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
           </Form.Group>
 
           <Form.Group className="mb-3">
-            <Form.Label style={{ fontWeight: 600 }}>Đường dẫn hình ảnh (URL)</Form.Label>
+            <Form.Label style={{ fontWeight: 600 }}>Ảnh đại diện</Form.Label>
             <Form.Control
               type="url"
               name="imageUrl"
-              placeholder="https://images.unsplash.com/..."
+              placeholder="Dán link ảnh ngoài, ví dụ: https://images.unsplash.com/..."
               value={formData.imageUrl}
               onChange={handleChange}
               maxLength={500}
             />
+            <Form.Text className="text-muted">
+              Hoặc tải ảnh từ máy (JPG, PNG, WebP, GIF — tối đa 10 MB). File tải lên sẽ thay thế link ở trên khi lưu.
+            </Form.Text>
+            <Form.Control
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={handleMainFileChange}
+              className="mt-2"
+            />
+            {mainImageFile && (
+              <div className="text-muted small mt-1">
+                File đã chọn: {mainImageFile.name}{' '}
+                <Button variant="link" size="sm" className="p-0" onClick={clearMainFile}>
+                  Hủy file đã chọn
+                </Button>
+              </div>
+            )}
+            {mainPreviewSrc && (
+              <img
+                src={mainPreviewSrc}
+                alt="Xem trước ảnh đại diện"
+                className="mt-2 rounded"
+                style={{ maxWidth: '100%', maxHeight: 180, objectFit: 'cover' }}
+              />
+            )}
           </Form.Group>
 
           <Form.Group className="mb-3">
@@ -215,11 +310,10 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
             Hủy bỏ
           </Button>
           <Button variant="primary" type="submit" disabled={loading} style={{ background: '#0284c7', borderColor: '#0284c7' }}>
-            {loading ? 'Đang lưu...' : isEdit ? 'Cập nhật Hạng Phòng' : 'Tạo Hạng Phòng'}
+            {loading ? (uploading ? 'Đang tải ảnh lên...' : 'Đang lưu...') : isEdit ? 'Cập nhật Hạng Phòng' : 'Tạo Hạng Phòng'}
           </Button>
         </Modal.Footer>
       </Form>
     </Modal>
   );
 };
-

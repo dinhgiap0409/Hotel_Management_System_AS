@@ -14,7 +14,7 @@ public class FolioSettlementRequest {
 
     private String voucherCode;
 
-    @NotBlank(message = "Phương thức thanh toán không được để trống (CASH, CREDIT_CARD, BANK_TRANSFER)")
+    @NotBlank(message = "Phương thức thanh toán không được để trống (CASH, CREDIT_CARD, BANK_TRANSFER, VNPAY)")
     private String paymentMethod;
 
     private String notes;

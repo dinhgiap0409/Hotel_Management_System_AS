@@ -13,6 +13,7 @@ import {
 } from 'react-bootstrap';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { resolveImageUrl } from '../../lib/imageUrl';
 import { bookingApi } from '../../services/bookingApi';
 import { authApi } from '../../services/authApi';
 import { formatVND } from '../../lib/money';
@@ -257,7 +258,7 @@ export const RoomCategoryModal = ({
       {/* Modal Banner Photo */}
       <div className="position-relative" style={{ height: 250, backgroundColor: '#141413' }}>
         <img
-          src={room.imageUrl || '/images/hotel-bg.jpg'}
+          src={resolveImageUrl(room.imageUrl) || '/images/hotel-bg.jpg'}
           alt={room.typeName}
           className="w-100 h-100 object-fit-cover"
           onError={(e) => {

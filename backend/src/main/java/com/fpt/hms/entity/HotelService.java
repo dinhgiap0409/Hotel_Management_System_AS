@@ -34,6 +34,9 @@ public class HotelService {
     @Column(name = "description", length = 500)
     private String description;
 
+    @Column(name = "image_url", length = 500)
+    private String imageUrl;
+
     @Column(name = "status", nullable = false, length = 30)
     private String status;
 }

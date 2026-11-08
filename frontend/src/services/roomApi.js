@@ -12,6 +12,27 @@ export const roomApi = {
   getRoomTypeById: (id) => http.get(`/room-types/${id}`),
   createRoomType: (data) => http.post('/room-types', data),
   updateRoomType: (id, data) => http.put(`/room-types/${id}`, data),
+  /**
+   * Uploads a room-type photo (avatar). `files` is a FileList or an array
+   * of File. Returns { imageUrls: [...] } — relative public paths
+   * (/uploads/room-types/xxx.jpg) to store in imageUrl exactly like a
+   * pasted image URL.
+   *
+   * The per-request 'Content-Type: multipart/form-data' header is REQUIRED,
+   * not cosmetic: the shared `http` instance defaults to
+   * 'application/json', and axios turns a FormData body into a JSON string
+   * ({"files":{}} — the file bytes are lost) whenever the request carries a
+   * JSON content type. That made every upload fail with 415 on the backend
+   * and surface as a generic 500 "Hệ thống gặp sự cố..." in the modal.
+   * With this header axios lets the browser set the multipart boundary.
+   */
+  uploadRoomTypeImages: (files) => {
+    const formData = new FormData();
+    [...files].forEach((file) => formData.append('files', file));
+    return http.post('/room-types/images', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   toggleRoomTypeStatus: (id) => http.patch(`/room-types/${id}/status`),
   getRoomTypePrices: (id) => http.get(`/room-types/${id}/prices`),
   updateRoomTypePrices: (id, data) => http.put(`/room-types/${id}/prices`, data),

@@ -19,6 +19,7 @@ import com.fpt.hms.integration.VnPayGatewayService;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.FrontDeskService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +34,7 @@ import java.util.*;
 /**
  * Module 3B (Owner: TungPV) - Front-Desk Operations & In-House Stay Service (UC-26 to UC-30).
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FrontDeskServiceImpl implements FrontDeskService {

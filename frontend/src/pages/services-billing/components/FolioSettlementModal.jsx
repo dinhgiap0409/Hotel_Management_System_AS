@@ -926,7 +926,7 @@ export const FolioSettlementModal = ({
                     )}
                   </div>
 
-                  {folioDetail.folioStatus === 'CLOSED' ? (
+                  {folioDetail.folioStatus === 'CLOSED' || !canSettle ? (
                     <div style={{ fontSize: 12.5, color: '#475569' }}>
                       Mã áp dụng:{' '}
                       <strong style={{ color: (folioDetail.voucherCode || folioDetail.discountAmount > 0) ? '#059669' : '#0f172a' }}>
@@ -1284,30 +1284,38 @@ export const FolioSettlementModal = ({
                     </div>
                   </div>
 
-                  {/* Phương thức thanh toán (Segmented Control) */}
-                  {folioDetail.folioStatus !== 'CLOSED' && (
+                  {/* Phương thức thanh toán (Chỉ Tiền mặt & Cổng VNPay, chỉ hiển thị cho Lễ tân/Quản lý có quyền thu tiền) */}
+                  {folioDetail.folioStatus !== 'CLOSED' && canSettle && (
                     <div style={{ marginBottom: 16 }}>
                       <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 6 }}>
                         Hình Thức Thu Tiền:
                       </label>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 10 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
                         {[
-                          { id: 'CASH', icon: '💵', label: 'Tiền mặt' },
-                          { id: 'CREDIT_CARD', icon: '💳', label: 'Thẻ POS' },
-                          { id: 'BANK_TRANSFER', icon: '📱', label: 'Chuyển khoản' },
+                          { id: 'CASH', icon: '💵', label: 'Tiền mặt tại quầy' },
+                          { id: 'VNPAY', icon: '🌐', label: 'Cổng VNPay' },
                         ].map((method) => {
                           const isActive = paymentMethod === method.id;
+                          const isVnPay = method.id === 'VNPAY';
                           return (
                             <button
                               key={method.id}
                               type="button"
                               onClick={() => setPaymentMethod(method.id)}
                               style={{
-                                padding: '8px 4px',
+                                padding: '8px 6px',
                                 borderRadius: 6,
-                                border: isActive ? '2px solid #0284c7' : '1px solid #cbd5e1',
-                                background: isActive ? '#e0f2fe' : '#ffffff',
-                                color: isActive ? '#0369a1' : '#475569',
+                                border: isActive
+                                  ? isVnPay
+                                    ? '2px solid #005baa'
+                                    : '2px solid #0284c7'
+                                  : '1px solid #cbd5e1',
+                                background: isActive
+                                  ? isVnPay
+                                    ? 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)'
+                                    : '#e0f2fe'
+                                  : '#ffffff',
+                                color: isActive ? (isVnPay ? '#1e40af' : '#0369a1') : '#475569',
                                 fontWeight: isActive ? 700 : 500,
                                 fontSize: 12,
                                 cursor: 'pointer',
@@ -1316,14 +1324,48 @@ export const FolioSettlementModal = ({
                                 alignItems: 'center',
                                 gap: 2,
                                 transition: 'all 0.15s ease',
+                                position: 'relative',
                               }}
                             >
                               <span style={{ fontSize: 16 }}>{method.icon}</span>
                               <span>{method.label}</span>
+                              {isVnPay && (
+                                <span
+                                  style={{
+                                    fontSize: 9.5,
+                                    color: isActive ? '#dc2626' : '#64748b',
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  QR / ATM / Quốc tế
+                                </span>
+                              )}
                             </button>
                           );
                         })}
                       </div>
+
+                      {paymentMethod === 'VNPAY' && (
+                        <div
+                          style={{
+                            background: '#eff6ff',
+                            border: '1px solid #bfdbfe',
+                            borderRadius: 6,
+                            padding: '8px 10px',
+                            marginBottom: 10,
+                            fontSize: 11.5,
+                            color: '#1e3a8a',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          <div style={{ fontWeight: 700, marginBottom: 2 }}>
+                            🔒 Thanh toán trực tuyến qua Cổng VNPay (Bên thứ 3)
+                          </div>
+                          <div>
+                            Hệ thống sẽ chuyển hướng sang cổng <strong>VNPay Sandbox</strong> để quét mã QR / nhập thẻ ATM nội địa hoặc thẻ Quốc tế. Sau khi thanh toán thành công, hệ thống tự động đóng Folio và xuất hóa đơn VAT.
+                          </div>
+                        </div>
+                      )}
 
                       <input
                         type="text"
@@ -1370,34 +1412,77 @@ export const FolioSettlementModal = ({
                       <span>🖨️</span>
                       <span>In Hóa Đơn Thanh Toán (A4 Print Bill)</span>
                     </button>
+                  ) : canSettle ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmSettleModal(true)}
+                      disabled={busy}
+                      style={{
+                        width: '100%',
+                        background: paymentMethod === 'VNPAY' ? '#005baa' : '#0284c7',
+                        color: '#fff',
+                        border: 'none',
+                        padding: '12px 18px',
+                        borderRadius: 8,
+                        fontWeight: 700,
+                        fontSize: 14,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        boxShadow:
+                          paymentMethod === 'VNPAY'
+                            ? '0 2px 6px rgba(0, 91, 170, 0.35)'
+                            : '0 2px 6px rgba(2, 132, 199, 0.35)',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <span>{paymentMethod === 'VNPAY' ? '🌐' : '💳'}</span>
+                      <span>
+                        {paymentMethod === 'VNPAY'
+                          ? `Thanh Toán Qua Cổng VNPay (${formatVND(calculatedFinances.balancePayable)})`
+                          : `Xác Nhận Quyết Toán (${formatVND(calculatedFinances.balancePayable)})`}
+                      </span>
+                    </button>
                   ) : (
-                    canSettle && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div
+                        style={{
+                          background: '#eff6ff',
+                          border: '1px solid #bfdbfe',
+                          borderRadius: 8,
+                          padding: '10px 12px',
+                          fontSize: 12,
+                          color: '#1e3a8a',
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        <strong>🔍 Chế độ Kế toán Đối soát (Read-only):</strong> Thao tác thu tiền quyết toán, áp mã giảm giá và thêm/xóa phụ thu do <strong>Lễ tân tại quầy (Front-Desk)</strong> trực tiếp thực hiện.
+                      </div>
                       <button
                         type="button"
-                        onClick={() => setConfirmSettleModal(true)}
-                        disabled={busy}
+                        onClick={() => handleOpenPrintInvoice(folioDetail.stayId, folioDetail.invoiceId)}
                         style={{
                           width: '100%',
                           background: '#0284c7',
                           color: '#fff',
                           border: 'none',
-                          padding: '12px 18px',
+                          padding: '11px 16px',
                           borderRadius: 8,
                           fontWeight: 700,
-                          fontSize: 14,
+                          fontSize: 13.5,
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                           gap: 8,
-                          boxShadow: '0 2px 6px rgba(2, 132, 199, 0.35)',
-                          transition: 'all 0.15s ease',
                         }}
                       >
-                        <span>💳</span>
-                        <span>Xác Nhận Quyết Toán ({formatVND(calculatedFinances.balancePayable)})</span>
+                        <span>🖨️</span>
+                        <span>Xem / In Bản Tạm Tính Folio (Proforma)</span>
                       </button>
-                    )
+                    </div>
                   )}
                 </div>
               </div>

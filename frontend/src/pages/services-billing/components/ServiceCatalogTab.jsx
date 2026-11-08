@@ -4,6 +4,52 @@ import { formatVND } from '../../../lib/money';
 import { inputStyle } from './serviceUtils';
 import { PaginationControl } from './PaginationControl';
 
+const CATEGORY_FALLBACK_ICONS = {
+  'F&B': '🍽️',
+  SPA: '💆',
+  LAUNDRY: '🧺',
+  TRANSPORT: '🚗',
+  MINIBAR: '🍷',
+  OTHER: '🛎️',
+};
+
+const renderServiceThumbnail = (s) => {
+  const icon = CATEGORY_FALLBACK_ICONS[s.category] || '🛎️';
+  return (
+    <div style={{ width: 44, height: 44, position: 'relative', flexShrink: 0 }}>
+      {s.imageUrl ? (
+        <img
+          src={s.imageUrl}
+          alt={s.serviceName}
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+            const fb = e.currentTarget.parentElement?.querySelector('.svc-fallback');
+            if (fb) fb.style.display = 'flex';
+          }}
+          style={{ width: 44, height: 44, borderRadius: 6, objectFit: 'cover', border: '1px solid #e2e8f0', display: 'block' }}
+        />
+      ) : null}
+      <div
+        className="svc-fallback"
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 6,
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          display: s.imageUrl ? 'none' : 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 19,
+        }}
+        title={s.category}
+      >
+        {icon}
+      </div>
+    </div>
+  );
+};
+
 export const ServiceCatalogTab = ({
   serviceCategoryFilter,
   setServiceCategoryFilter,
@@ -78,20 +124,23 @@ export const ServiceCatalogTab = ({
         columns={[
           {
             header: 'Mã DV',
-            width: 90,
-            minWidth: 80,
+            width: 80,
+            minWidth: 70,
             nowrap: true,
             render: (s) => <code style={{ color: '#0284c7', fontWeight: 600 }}>#{s.serviceId}</code>,
           },
           {
-            header: 'Tên Dịch Vụ',
-            minWidth: 200,
+            header: 'Dịch Vụ',
+            minWidth: 260,
             render: (s) => (
-              <div>
-                <strong style={{ color: '#0f172a' }}>{s.serviceName}</strong>
-                {s.description && (
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{s.description}</div>
-                )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {renderServiceThumbnail(s)}
+                <div>
+                  <strong style={{ color: '#0f172a' }}>{s.serviceName}</strong>
+                  {s.description && (
+                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, maxWidth: 360 }}>{s.description}</div>
+                  )}
+                </div>
               </div>
             ),
           },
