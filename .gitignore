@@ -18,6 +18,8 @@ hs_err_pid*
 replay_pid*
 logs/
 **/logs/
+# Uploaded room-type photos (app.upload.dir) — user content, never committed.
+uploads/
 backend/src/main/resources/application-local.yml
 backend/src/main/resources/application-prod.yml
 

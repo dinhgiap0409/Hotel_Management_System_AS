@@ -21,6 +21,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -105,6 +106,15 @@ public class GlobalExceptionHandler {
                                                                HttpServletRequest request) {
         return buildResponse(HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN",
                 messageResolver.resolve("AUTH_FORBIDDEN"), request);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiErrorResponse> handleMaxUploadSize(MaxUploadSizeExceededException ex,
+                                                                HttpServletRequest request) {
+        log.warn("Upload rejected: file exceeds the configured size limit");
+        return buildResponse(HttpStatus.PAYLOAD_TOO_LARGE, "MSG_IMAGE_TOO_LARGE",
+                "Dung lượng ảnh vượt quá giới hạn cho phép (tối đa 5 MB mỗi file, 25 MB mỗi lần tải lên).",
+                request);
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)

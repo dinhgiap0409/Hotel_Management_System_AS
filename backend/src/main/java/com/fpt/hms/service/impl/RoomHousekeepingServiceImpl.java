@@ -107,6 +107,7 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
                 .amenities(request.getAmenities())
                 .description(request.getDescription())
                 .imageUrl(request.getImageUrl())
+                .galleryImages(normalizeGalleryImages(request.getGalleryImages()))
                 .isActive(true)
                 .build();
 
@@ -129,6 +130,7 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
         roomType.setAmenities(request.getAmenities());
         roomType.setDescription(request.getDescription());
         roomType.setImageUrl(request.getImageUrl());
+        roomType.setGalleryImages(normalizeGalleryImages(request.getGalleryImages()));
         if (request.getIsActive() != null) {
             // BR-11: deactivating through the update endpoint is the same
             // rule as the toggle endpoint — check before flipping the flag.
@@ -732,8 +734,26 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
                 .amenities(rt.getAmenities())
                 .description(rt.getDescription())
                 .imageUrl(rt.getImageUrl())
+                .galleryImages(rt.getGalleryImages())
                 .isActive(rt.getIsActive())
                 .build();
+    }
+
+    /**
+     * Gallery URLs arrive as one comma-separated string (imageUrl-style links
+     * and /uploads/... paths alike). Normalise it before persisting: trim
+     * each entry, drop blanks and stray commas, keep the original order.
+     * Null/blank in, null out.
+     */
+    private String normalizeGalleryImages(String galleryImages) {
+        if (galleryImages == null || galleryImages.isBlank()) {
+            return null;
+        }
+        String normalized = java.util.Arrays.stream(galleryImages.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(java.util.stream.Collectors.joining(","));
+        return normalized.isEmpty() ? null : normalized;
     }
 
     private RoomTypePriceDto toRoomTypePriceDto(RoomTypePrice rtp) {
