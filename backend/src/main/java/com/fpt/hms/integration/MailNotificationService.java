@@ -2,6 +2,7 @@ package com.fpt.hms.integration;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,10 @@ import java.time.format.DateTimeFormatter;
 public class MailNotificationService {
 
     private final JavaMailSender mailSender;
+
+    @Value("${spring.mail.username:dangkhang16125@gmail.com}")
+    private String fromEmail;
+
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     public void sendBookingConfirmation(String toEmail, String reservationCode, String guestName) {
@@ -27,7 +32,8 @@ public class MailNotificationService {
         }
         try {
             SimpleMailMessage msg = new SimpleMailMessage();
-            msg.setTo(toEmail);
+            msg.setFrom("HMS Luxury Hotel <" + fromEmail + ">");
+            msg.setTo(toEmail.trim());
             msg.setSubject("[HMS Luxury Hotel] Xác nhận đặt phòng thành công - Mã #" + reservationCode);
             msg.setText("Xin chào " + guestName + ",\n\n"
                     + "Cảm ơn quý khách đã lựa chọn HMS Luxury Hotel.\n"
@@ -57,7 +63,8 @@ public class MailNotificationService {
             String depositStr = depositAmount != null ? String.format("%,d", depositAmount.longValue()) : "0";
 
             SimpleMailMessage msg = new SimpleMailMessage();
-            msg.setTo(toEmail);
+            msg.setFrom("HMS Luxury Hotel <" + fromEmail + ">");
+            msg.setTo(toEmail.trim());
             msg.setSubject("[HMS Luxury Hotel] Xác nhận đặt phòng tại Quầy Lễ Tân - Mã #" + reservationCode);
             msg.setText("Kính gửi Quý khách " + guestName + ",\n\n"
                     + "HMS Luxury Hotel xin trân trọng thông báo đơn đặt phòng trực tiếp tại Quầy Lễ Tân của Quý khách đã được xác nhận thành công:\n"
