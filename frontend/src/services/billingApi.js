@@ -16,13 +16,14 @@ export const billingApi = {
   getMyConfirmedReservations: () => http.get('/billing/my-confirmed-reservations'),
   getAllUpcomingPreOrders: () => http.get('/billing/pre-orders'),
   createPreOrder: (data) => http.post('/billing/pre-orders', data),
-  cancelPreOrder: (reservationId, serviceId, itemIndex = null, cancelQuantity = null) =>
+  cancelPreOrder: (reservationId, serviceId, itemIndex = null, cancelQuantity = null, cancelReason = '') =>
     http.delete('/billing/pre-orders', {
       params: {
         reservationId,
         serviceId,
         ...(itemIndex !== null && itemIndex !== undefined ? { itemIndex } : {}),
         ...(cancelQuantity !== null && cancelQuantity !== undefined ? { cancelQuantity } : {}),
+        ...(cancelReason ? { cancelReason } : {}),
       },
     }),
   getAllServices: () => http.get('/billing/services/all'),

@@ -29,6 +29,7 @@ public interface BillingService {
     String savePreOrderToNotes(PreOrderRequest request, Integer callerAccountId, String callerRole);
     String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer callerAccountId, String callerRole);
     String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer itemIndex, Integer cancelQuantity, Integer callerAccountId, String callerRole);
+    String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer itemIndex, Integer cancelQuantity, String cancelReason, Integer callerAccountId, String callerRole);
     List<ReservationDto> getMyConfirmedReservations(Integer callerAccountId);
     List<ReservationDto> getAllUpcomingPreOrders();
 

@@ -113,8 +113,8 @@ public class BillingController {
     }
 
     @PatchMapping("/service-orders/{orderId}/void")
-    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'FRONT_DESK', 'ADMIN', 'GENERAL_MANAGER', 'CUSTOMER')")
-    @Operation(summary = "UC-36: Void a service order that has not been provided yet")
+    @PreAuthorize("hasAnyRole('SERVICE_STAFF', 'SERVICE_MANAGER', 'FRONT_DESK', 'ACCOUNTANT', 'ADMIN', 'GENERAL_MANAGER', 'CUSTOMER')")
+    @Operation(summary = "UC-36: Void a service order (Staff can void pending or completed orders before folio closure; Customer can void unconfirmed pending orders)")
     public ResponseEntity<ServiceOrderDto> voidServiceOrder(@PathVariable Integer orderId,
                                                             @RequestParam String cancelReason,
                                                             @AuthenticationPrincipal UserPrincipal principal) {
@@ -149,12 +149,14 @@ public class BillingController {
             @RequestParam Integer serviceId,
             @RequestParam(required = false) Integer itemIndex,
             @RequestParam(required = false) Integer cancelQuantity,
+            @RequestParam(required = false) String cancelReason,
             @AuthenticationPrincipal UserPrincipal principal) {
         return ResponseEntity.ok(billingService.cancelPreOrderFromNotes(
                 reservationId,
                 serviceId,
                 itemIndex,
                 cancelQuantity,
+                cancelReason,
                 principal != null ? principal.getAccountId() : null,
                 principal != null ? principal.getRoleName() : null
         ));
