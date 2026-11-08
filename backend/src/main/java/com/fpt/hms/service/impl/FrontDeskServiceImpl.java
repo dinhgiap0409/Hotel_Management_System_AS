@@ -20,6 +20,7 @@ import com.fpt.hms.integration.VnPayGatewayService;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.FrontDeskService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +35,7 @@ import java.util.*;
 /**
  * Module 3B (Owner: TungPV) - Front-Desk Operations & In-House Stay Service (UC-26 to UC-30).
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FrontDeskServiceImpl implements FrontDeskService {
@@ -1129,6 +1131,8 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         // Gửi email xác nhận đặt phòng và đã thu tiền cọc tại sảnh (nếu khách cung cấp email hợp lệ)
         if (reservation.getContactEmail() != null && !reservation.getContactEmail().isBlank()
                 && !reservation.getContactEmail().endsWith("@walkin.hotel.local")) {
+            log.info("Direct booking deposit confirmed with CASH for #{}. Sending confirmation email to: {}",
+                    reservation.getReservationCode(), reservation.getContactEmail().trim());
             mailNotificationService.sendBookingConfirmation(
                     reservation.getContactEmail().trim(),
                     reservation.getReservationCode(),

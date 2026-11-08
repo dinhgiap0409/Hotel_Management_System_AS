@@ -619,9 +619,10 @@ public class ReservationServiceImpl implements ReservationService {
                 paymentAttemptRepository.save(attempt);
             }
 
-            if (depositJustPaid) {
+            if (depositJustPaid && reservation.getContactEmail() != null && !reservation.getContactEmail().isBlank()
+                    && !reservation.getContactEmail().endsWith("@walkin.hotel.local")) {
                 mailNotificationService.sendBookingConfirmation(
-                        reservation.getContactEmail(),
+                        reservation.getContactEmail().trim(),
                         reservation.getReservationCode(),
                         reservation.getContactName()
                 );
