@@ -136,14 +136,25 @@ export const SmartServiceOrderModal = ({
 
               {/* Thông tin dịch vụ */}
               <div style={{ background: '#FFFFFF', border: '1px solid #E8E6DC', borderRadius: 8, padding: '12px 14px' }}>
-                <div className="d-flex justify-content-between align-items-center mb-1">
-                  <span className="badge bg-light text-dark border">{selectedService.category}</span>
-                  <span className="fw-bold" style={{ color: '#C96442' }}>
-                    {formatVND(selectedService.unitPrice)} / {selectedService.unit || selectedService.billingUnit || 'Lượt'}
-                  </span>
+                <div className="d-flex gap-3 align-items-center">
+                  {selectedService.imageUrl ? (
+                    <img
+                      src={selectedService.imageUrl}
+                      alt={selectedService.serviceName}
+                      style={{ width: 68, height: 68, borderRadius: 8, objectFit: 'cover', flexShrink: 0, border: '1px solid #E8E6DC' }}
+                    />
+                  ) : null}
+                  <div style={{ flex: 1 }}>
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <span className="badge bg-light text-dark border">{selectedService.category}</span>
+                      <span className="fw-bold" style={{ color: '#C96442' }}>
+                        {formatVND(selectedService.unitPrice)} / {selectedService.unit || selectedService.billingUnit || 'Lượt'}
+                      </span>
+                    </div>
+                    <h6 className="fw-bold text-dark mb-1">{selectedService.serviceName}</h6>
+                    <p className="text-secondary small mb-0">{selectedService.description}</p>
+                  </div>
                 </div>
-                <h6 className="fw-bold text-dark mb-1">{selectedService.serviceName}</h6>
-                <p className="text-secondary small mb-0">{selectedService.description}</p>
               </div>
 
               {/* Số lượng */}

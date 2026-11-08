@@ -48,6 +48,26 @@ export const billingApi = {
   validateVoucher: (data) => http.post('/billing/vouchers/validate', data),
 
   settleFolio: (stayId, data) => http.post(`/billing/stays/${stayId}/settle-folio`, data),
+  createFolioVnPayUrl: (stayId, data) => http.post(`/billing/stays/${stayId}/vnpay-url`, data),
+  processFolioVnPayCallback: (data) => http.post('/billing/vnpay-callback', data),
   getInvoiceDetail: (invoiceId) => http.get(`/billing/invoices/${invoiceId}`),
   getInvoiceByStay: (stayId) => http.get(`/billing/invoices/by-stay/${stayId}`),
+
+  // --- Feature 3: Module 5 (UC-41..UC-47 & UC-50: Hotel & Room Reviews + Management Analytics) ---
+  getPublishedReviews: (params = {}) => http.get('/reviews/published', { params }),
+  getAllReviewsForModeration: () => http.get('/reviews'),
+  getMyStaysForReview: () => http.get('/reviews/my-stays'),
+  submitReview: (data) => http.post('/reviews', data),
+  replyToReview: (reviewId, managementReply) =>
+    http.patch(`/reviews/${reviewId}/reply`, { managementReply }),
+  moderateReviewVisibility: (reviewId, isHidden, hiddenReason = '') =>
+    http.patch(`/reviews/${reviewId}/visibility`, { isHidden, hiddenReason }),
+  getManagementAnalytics: (fromDate, toDate) =>
+    http.get('/reports/analytics', {
+      params: {
+        ...(fromDate ? { fromDate } : {}),
+        ...(toDate ? { toDate } : {}),
+      },
+    }),
+  getReportsSummary: () => http.get('/reports/summary'),
 };

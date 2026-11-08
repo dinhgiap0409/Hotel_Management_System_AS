@@ -20,7 +20,7 @@ const EMPTY_VOUCHER_FORM = {
 };
 
 export const VoucherManagementTab = ({ role, vouchers, onRefresh, busy, setBusy }) => {
-  const canManage = [ROLES.SALES_MANAGER, ROLES.ADMIN].includes(role);
+  const canManage = [ROLES.SALES_MANAGER, ROLES.GENERAL_MANAGER, ROLES.ADMIN].includes(role);
 
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');

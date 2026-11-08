@@ -109,6 +109,17 @@ export const CustomerLayout = () => {
               </Link>
             </>
           )}
+          <Link
+            to="/reviews"
+            style={{
+              color: location.pathname.startsWith('/reviews') || location.pathname.startsWith('/customer/reviews') ? '#FAF9F5' : '#E8E6DC',
+              fontWeight: location.pathname.startsWith('/reviews') || location.pathname.startsWith('/customer/reviews') ? 600 : 400,
+              textDecoration: 'none',
+              fontSize: 13.5,
+            }}
+          >
+            Đánh Giá Khách Sạn
+          </Link>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           {isAuthenticated && user ? (

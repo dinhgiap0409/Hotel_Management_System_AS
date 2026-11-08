@@ -2,7 +2,7 @@ import { DataTable } from '../../../components/common/DataTable';
 import { StatusBadge } from '../../../components/common/StatusBadge';
 import { formatVND } from '../../../lib/money';
 import { formatDateTime } from '../../../lib/datetime';
-import { formatOrderNotes, inputStyle } from './serviceUtils';
+import { formatOrderNotes, inputStyle, isOrderUrgent as checkIsOrderUrgent } from './serviceUtils';
 import { PaginationControl } from './PaginationControl';
 
 export const ServiceOrdersTab = ({
@@ -31,21 +31,8 @@ export const ServiceOrdersTab = ({
   setOrderPageSize,
   urgentAlerts = [],
 }) => {
-  const isOrderUrgent = (o) => {
-    if (!urgentAlerts || urgentAlerts.length === 0 || !o) return false;
-    if (o.status !== 'ORDERED') return false;
-    return urgentAlerts.some(
-      (a) =>
-        String(a.stayId) === String(o.stayId) &&
-        (a.orderIds.length === 0 || a.orderIds.includes(String(o.serviceOrderId)))
-    );
-  };
-
-  const displayOrders = [...paginatedOrders].sort((a, b) => {
-    const urgentA = isOrderUrgent(a) ? 1 : 0;
-    const urgentB = isOrderUrgent(b) ? 1 : 0;
-    return urgentB - urgentA;
-  });
+  const checkUrgent = (o) => checkIsOrderUrgent(o, urgentAlerts, activeStays);
+  const displayOrders = paginatedOrders;
 
   return (
     <div>
@@ -131,6 +118,15 @@ export const ServiceOrdersTab = ({
         keyField="serviceOrderId"
         data={displayOrders}
         emptyMessage="Chưa có đơn gọi dịch vụ nào."
+        getRowStyle={(o) => {
+          if (checkUrgent(o)) {
+            return {
+              backgroundColor: '#fff1f2',
+              boxShadow: 'inset 4px 0 0 #dc2626',
+            };
+          }
+          return null;
+        }}
         columns={[
           {
             header: 'Mã Đơn',
@@ -142,29 +138,52 @@ export const ServiceOrdersTab = ({
           {
             header: 'Phòng & Khách Lưu Trú',
             minWidth: 200,
-            render: (o) => (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                  <span
-                    style={{
-                      fontWeight: 700,
-                      background: '#e0e7ff',
-                      color: '#3730a3',
-                      fontSize: 12,
-                      padding: '2px 8px',
-                      borderRadius: 6,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {o.roomNumber ? `P.${o.roomNumber}` : '—'}
-                  </span>
-                  <strong style={{ color: '#0f172a' }}>{o.guestName || 'Khách vãng lai'}</strong>
+            render: (o) => {
+              const isUrgent = checkUrgent(o);
+              return (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2, flexWrap: 'wrap' }}>
+                    <span
+                      style={{
+                        fontWeight: 700,
+                        background: isUrgent ? '#fee2e2' : '#e0e7ff',
+                        color: isUrgent ? '#b91c1c' : '#3730a3',
+                        fontSize: 12,
+                        padding: '2px 8px',
+                        borderRadius: 6,
+                        whiteSpace: 'nowrap',
+                        border: isUrgent ? '1px solid #fca5a5' : 'none',
+                      }}
+                    >
+                      {o.roomNumber ? `P.${o.roomNumber}` : '—'}
+                    </span>
+                    <strong style={{ color: '#0f172a' }}>{o.guestName || 'Khách vãng lai'}</strong>
+                    {isUrgent && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: '#dc2626',
+                          background: '#fff',
+                          border: '1px solid #f87171',
+                          padding: '1px 6px',
+                          borderRadius: 4,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 3,
+                          boxShadow: '0 1px 2px rgba(220, 38, 38, 0.1)',
+                        }}
+                      >
+                        🚨 CHECK-OUT GẤP
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: '#64748b', whiteSpace: 'nowrap' }}>
+                    Stay #{o.stayId} {o.reservationCode ? `• ${o.reservationCode}` : ''}
+                  </div>
                 </div>
-                <div style={{ fontSize: 11.5, color: '#64748b', whiteSpace: 'nowrap' }}>
-                  Stay #{o.stayId} {o.reservationCode ? `• ${o.reservationCode}` : ''}
-                </div>
-              </div>
-            ),
+              );
+            },
           },
           {
             header: 'Dịch Vụ Sử Dụng',
@@ -231,176 +250,183 @@ export const ServiceOrdersTab = ({
           },
           {
             header: 'Trạng Thái',
-            minWidth: 130,
+            minWidth: 150,
             nowrap: true,
-            render: (o) => (
-              <div>
-                {isOrderUrgent(o) && (
-                  <div style={{ marginBottom: 4 }}>
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        padding: '3px 8px',
-                        borderRadius: 12,
-                        fontSize: 10.5,
-                        fontWeight: 700,
-                        backgroundColor: '#dc2626',
-                        color: '#fff',
-                        boxShadow: '0 0 0 2px rgba(220, 38, 38, 0.25)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      🔥 GẤP: CHECK-OUT
-                    </span>
-                  </div>
-                )}
-                {o.status === 'ORDERED' ? (
-                  o.staffConfirmed ? (
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        padding: '4px 10px',
-                        borderRadius: 14,
-                        fontSize: 12,
-                        fontWeight: 600,
-                        backgroundColor: '#dbeafe',
-                        color: '#1e40af',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      Chờ phục vụ
-                    </span>
+            render: (o) => {
+              const isUrgent = checkUrgent(o);
+              return (
+                <div>
+                  {isUrgent && (
+                    <div style={{ marginBottom: 4 }}>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '3px 8px',
+                          borderRadius: 12,
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          backgroundColor: '#dc2626',
+                          color: '#fff',
+                          boxShadow: '0 0 0 2px rgba(220, 38, 38, 0.25)',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        🔥 GẤP: CHỜ QUYẾT TOÁN
+                      </span>
+                    </div>
+                  )}
+                  {o.status === 'ORDERED' ? (
+                    o.staffConfirmed ? (
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '4px 10px',
+                          borderRadius: 14,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          backgroundColor: '#dbeafe',
+                          color: '#1e40af',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Chờ phục vụ
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '4px 10px',
+                          borderRadius: 14,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          backgroundColor: '#fef9c3',
+                          color: '#854d0e',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Chờ xác nhận
+                      </span>
+                    )
                   ) : (
-                    <span
+                    <StatusBadge status={o.status} />
+                  )}
+                  {o.status === 'VOIDED' && o.cancelReason && (
+                    <div
                       style={{
-                        display: 'inline-block',
-                        padding: '4px 10px',
-                        borderRadius: 14,
-                        fontSize: 12,
-                        fontWeight: 600,
-                        backgroundColor: '#fef9c3',
-                        color: '#854d0e',
-                        whiteSpace: 'nowrap',
+                        marginTop: 4,
+                        fontSize: 11.5,
+                        color: '#991b1b',
+                        background: '#fef2f2',
+                        padding: '3px 6px',
+                        borderRadius: 4,
+                        maxWidth: 220,
+                        lineHeight: 1.3,
+                        border: '1px solid #fee2e2',
                       }}
                     >
-                      Chờ xác nhận
-                    </span>
-                  )
-                ) : (
-                  <StatusBadge status={o.status} />
-                )}
-                {o.status === 'VOIDED' && o.cancelReason && (
-                  <div
-                    style={{
-                      marginTop: 4,
-                      fontSize: 11.5,
-                      color: '#991b1b',
-                      background: '#fef2f2',
-                      padding: '3px 6px',
-                      borderRadius: 4,
-                      maxWidth: 220,
-                      lineHeight: 1.3,
-                      border: '1px solid #fee2e2',
-                    }}
-                  >
-                    <strong>Lý do:</strong> {o.cancelReason}
-                  </div>
-                )}
-              </div>
-            ),
+                      <strong>Lý do:</strong> {o.cancelReason}
+                    </div>
+                  )}
+                </div>
+              );
+            },
           },
           {
             header: 'Thao Tác',
-            minWidth: 130,
+            minWidth: 140,
             nowrap: true,
-            render: (o) => (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', alignItems: 'center', whiteSpace: 'nowrap' }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const matchedStay = activeStays.find((s) => s.stayId === o.stayId);
-                    setDetailModalData({ type: 'ROOM_ORDER', order: o, matchedStay });
-                  }}
-                  style={{
-                    background: '#f8fafc',
-                    color: '#0f172a',
-                    border: '1px solid #cbd5e1',
-                    borderRadius: 6,
-                    padding: '5px 10px',
-                    cursor: 'pointer',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    whiteSpace: 'nowrap',
-                  }}
-                  title="Xem chi tiết lịch hẹn & ghi chú yêu cầu của đơn dịch vụ này"
-                >
-                  Chi tiết
-                </button>
-                {o.status === 'ORDERED' && !o.staffConfirmed && canConfirm && (
+            render: (o) => {
+              const isUrgent = checkUrgent(o);
+              return (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', alignItems: 'center', whiteSpace: 'nowrap' }}>
                   <button
                     type="button"
-                    disabled={busy}
-                    onClick={() => handleOpenConfirmOrderModal(o)}
+                    onClick={() => {
+                      const matchedStay = activeStays.find((s) => s.stayId === o.stayId);
+                      setDetailModalData({ type: 'ROOM_ORDER', order: o, matchedStay });
+                    }}
                     style={{
-                      background: '#0284c7',
-                      color: '#fff',
-                      border: 'none',
+                      background: '#f8fafc',
+                      color: '#0f172a',
+                      border: '1px solid #cbd5e1',
                       borderRadius: 6,
                       padding: '5px 10px',
                       cursor: 'pointer',
-                      fontSize: 12.5,
+                      fontSize: 12,
                       fontWeight: 600,
                       whiteSpace: 'nowrap',
                     }}
-                    title="Xác nhận tiếp nhận đơn để chuyển sang Chờ phục vụ"
+                    title="Xem chi tiết lịch hẹn & ghi chú yêu cầu của đơn dịch vụ này"
                   >
-                    Xác nhận
+                    Chi tiết
                   </button>
-                )}
-                {o.status === 'ORDERED' && o.staffConfirmed && canComplete && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => handleOpenCompleteOrderConfirm(o)}
-                    style={{
-                      background: '#16a34a',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      padding: '5px 10px',
-                      cursor: 'pointer',
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      whiteSpace: 'nowrap',
-                    }}
-                    title="Xác nhận đã cung cấp dịch vụ cho khách và cộng tiền vào hóa đơn phòng"
-                  >
-                    Hoàn thành
-                  </button>
-                )}
-                {o.status === 'ORDERED' && !o.staffConfirmed && canVoid && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => handleOpenVoidModal(o)}
-                    style={{
-                      background: '#fee2e2',
-                      color: '#dc2626',
-                      border: '1px solid #fecaca',
-                      borderRadius: 6,
-                      padding: '5px 10px',
-                      cursor: 'pointer',
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      whiteSpace: 'nowrap',
-                    }}
-                    title="Hủy đơn dịch vụ này (chỉ hủy được khi chưa xác nhận)"
-                  >
-                    Hủy đơn
-                  </button>
-                )}
-              </div>
-            ),
+                  {o.status === 'ORDERED' && !o.staffConfirmed && canConfirm && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => handleOpenConfirmOrderModal(o)}
+                      style={{
+                        background: '#0284c7',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '5px 10px',
+                        cursor: 'pointer',
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                      }}
+                      title="Xác nhận tiếp nhận đơn để chuyển sang Chờ phục vụ"
+                    >
+                      Xác nhận
+                    </button>
+                  )}
+                  {o.status === 'ORDERED' && o.staffConfirmed && canComplete && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => handleOpenCompleteOrderConfirm(o)}
+                      style={{
+                        background: isUrgent ? '#15803d' : '#16a34a',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '5px 10px',
+                        cursor: 'pointer',
+                        fontSize: 12.5,
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap',
+                        boxShadow: isUrgent ? '0 1px 3px rgba(21, 128, 61, 0.4)' : 'none',
+                      }}
+                      title="Xác nhận đã cung cấp dịch vụ cho khách và cộng tiền vào hóa đơn phòng"
+                    >
+                      Hoàn thành
+                    </button>
+                  )}
+                  {o.status === 'ORDERED' && !o.staffConfirmed && canVoid && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => handleOpenVoidModal(o)}
+                      style={{
+                        background: '#fee2e2',
+                        color: '#dc2626',
+                        border: '1px solid #fecaca',
+                        borderRadius: 6,
+                        padding: '5px 10px',
+                        cursor: 'pointer',
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                      }}
+                      title="Hủy đơn dịch vụ này (chỉ áp dụng cho đơn đang chờ xác nhận)"
+                    >
+                      Hủy đơn
+                    </button>
+                  )}
+                </div>
+              );
+            },
           },
         ]}
       />

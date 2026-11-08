@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { billingApi } from '../../services/billingApi';
 import { notifyToast } from '../../lib/http';
 import { ModuleToastAutoDismiss } from './components/ModuleToastAutoDismiss';
@@ -28,6 +29,7 @@ import {
   clearUrgentAlert,
   syncUrgentAlertsWithRealData,
   sortPreOrdersByCheckoutPriority,
+  sortOrdersByCheckoutPriority,
   HMS_URGENT_ALERT_KEY,
   HMS_URGENT_ALERT_EVENT,
 } from './components/serviceUtils';
@@ -40,6 +42,7 @@ const CATALOG_TAB_VIEWERS = [
   ROLES.SERVICE_MANAGER,
   ROLES.FRONT_DESK,
   ROLES.SALES_MANAGER,
+  ROLES.ACCOUNTANT,
   ROLES.GENERAL_MANAGER,
   ROLES.ADMIN,
 ];
@@ -47,6 +50,7 @@ const ORDER_VIEWERS = [
   ROLES.SERVICE_STAFF,
   ROLES.SERVICE_MANAGER,
   ROLES.FRONT_DESK,
+  ROLES.ACCOUNTANT,
   ROLES.GENERAL_MANAGER,
   ROLES.ADMIN,
 ];
@@ -57,13 +61,12 @@ const ORDER_VOIDERS = [
   ROLES.SERVICE_STAFF,
   ROLES.SERVICE_MANAGER,
   ROLES.FRONT_DESK,
-  ROLES.ACCOUNTANT,
   ROLES.ADMIN,
   ROLES.GENERAL_MANAGER,
 ];
 const FOLIO_VIEWERS = [ROLES.FRONT_DESK, ROLES.ACCOUNTANT, ROLES.GENERAL_MANAGER, ROLES.ADMIN];
-// Tab 5 Quản lý Khuyến Mãi (Voucher) CHỈ hiển thị cho SALES_MANAGER, ADMIN, GENERAL_MANAGER (ẨN hoàn toàn với FRONT_DESK)
-const VOUCHER_VIEWERS = [ROLES.SALES_MANAGER, ROLES.ADMIN, ROLES.GENERAL_MANAGER];
+// Tab 5 Quản lý Khuyến Mãi (Voucher): SALES_MANAGER, ADMIN, GENERAL_MANAGER (Toàn quyền) & ACCOUNTANT (Chỉ xem đối soát)
+const VOUCHER_VIEWERS = [ROLES.SALES_MANAGER, ROLES.ACCOUNTANT, ROLES.ADMIN, ROLES.GENERAL_MANAGER];
 
 const EMPTY_SERVICE_FORM = {
   serviceName: '',
@@ -71,6 +74,7 @@ const EMPTY_SERVICE_FORM = {
   billingUnit: 'Lượt',
   unitPrice: '',
   description: '',
+  imageUrl: '',
 };
 
 const EMPTY_ORDER_FORM = {
@@ -85,12 +89,27 @@ const EMPTY_ORDER_FORM = {
 
 export const ServicesAndBillingPage = () => {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
   const role = user?.role;
-  const isServiceRole = [ROLES.SERVICE_STAFF, ROLES.SERVICE_MANAGER].includes(role);
+  const isServiceRole = [
+    ROLES.SERVICE_STAFF,
+    ROLES.SERVICE_MANAGER,
+    ROLES.FRONT_DESK,
+    ROLES.GENERAL_MANAGER,
+    ROLES.ADMIN,
+  ].includes(role);
 
   const canViewCatalog = CATALOG_TAB_VIEWERS.includes(role);
   const canManageCatalog = CATALOG_MANAGERS.includes(role);
   const canViewOrders = ORDER_VIEWERS.includes(role);
+  const canViewPreOrders = [
+    ROLES.SERVICE_STAFF,
+    ROLES.SERVICE_MANAGER,
+    ROLES.FRONT_DESK,
+    ROLES.GENERAL_MANAGER,
+    ROLES.ADMIN,
+  ].includes(role);
   const canCreateOrder = ORDER_CREATORS.includes(role);
   const canConfirm = ORDER_CONFIRMERS.includes(role);
   const canComplete = ORDER_COMPLETERS.includes(role);
@@ -99,18 +118,23 @@ export const ServicesAndBillingPage = () => {
   const canViewVouchers = VOUCHER_VIEWERS.includes(role);
 
   const [activeTab, setActiveTab] = useState(() => {
+    if (tabParam === 'folios' && FOLIO_VIEWERS.includes(role)) return 'folios';
     if (role === ROLES.SALES_MANAGER) return 'vouchers';
     if ([ROLES.FRONT_DESK, ROLES.ACCOUNTANT].includes(role)) return 'folios';
     return 'services';
   });
 
   useEffect(() => {
+    if (tabParam === 'folios' && FOLIO_VIEWERS.includes(role)) {
+      setActiveTab('folios');
+      return;
+    }
     if (role === ROLES.SALES_MANAGER) {
       setActiveTab('vouchers');
     } else if ([ROLES.FRONT_DESK, ROLES.ACCOUNTANT].includes(role)) {
       setActiveTab('folios');
     }
-  }, [role]);
+  }, [role, tabParam]);
   const [services, setServices] = useState([]);
   const [orders, setOrders] = useState([]);
   const [vouchers, setVouchers] = useState([]);
@@ -270,6 +294,7 @@ export const ServicesAndBillingPage = () => {
       billingUnit: s.billingUnit,
       unitPrice: s.unitPrice,
       description: s.description || '',
+      imageUrl: s.imageUrl || '',
     });
     setShowServiceModal(true);
   };
@@ -380,7 +405,8 @@ export const ServicesAndBillingPage = () => {
       `Đã hoàn thành dịch vụ đặt trước "${item.serviceName}" (SL: ${item.quantity || 1}) cho Phòng ${matchedStay.roomNumber} và tính vào hóa đơn phòng!`,
       async () => {
         setShowOrderModal(false);
-        clearUrgentAlert(matchedStay.stayId, null, item.serviceName);
+        const nextAlerts = clearUrgentAlert(matchedStay.stayId, null, item.serviceName, matchedStay.roomNumber);
+        setUrgentAlerts(nextAlerts);
         await Promise.all([loadOrders(), loadUpcomingPreOrders(), loadActiveStays()]);
       }
     );
@@ -417,7 +443,8 @@ export const ServicesAndBillingPage = () => {
         type: 'SUCCESS',
         message: `Đã hoàn thành ${unchargedItems.length} lượt dịch vụ đặt trước của Phòng ${matchedStay.roomNumber} và tính vào hóa đơn phòng!`,
       });
-      clearUrgentAlert(matchedStay.stayId);
+      const nextAlerts = clearUrgentAlert(matchedStay.stayId, null, null, matchedStay.roomNumber);
+      setUrgentAlerts(nextAlerts);
       await Promise.all([loadOrders(), loadUpcomingPreOrders(), loadActiveStays()]);
     } catch (err) {
       notifyToast({
@@ -464,7 +491,8 @@ export const ServicesAndBillingPage = () => {
         setCancelPreOrderModal(null);
         const stay = activeStays.find((s) => s.reservationCode === reservation.reservationCode);
         if (stay) {
-          clearUrgentAlert(stay.stayId, null, item.serviceName);
+          const nextAlerts = clearUrgentAlert(stay.stayId, null, item.serviceName, stay.roomNumber);
+          setUrgentAlerts(nextAlerts);
         }
         await Promise.all([loadOrders(), loadUpcomingPreOrders(), loadActiveStays()]);
       }
@@ -522,7 +550,15 @@ export const ServicesAndBillingPage = () => {
       () => billingApi.completeServiceOrder(o.serviceOrderId),
       `Đã hoàn thành đơn #${o.serviceOrderId} và ghi nhận vào tiền phòng lưu trú.`,
       async () => {
-        clearUrgentAlert(o.stayId, o.serviceOrderId, o.serviceName);
+        setOrders((prev) =>
+          prev.map((ord) =>
+            ord.serviceOrderId === o.serviceOrderId
+              ? { ...ord, status: 'COMPLETED', completedAt: new Date().toISOString() }
+              : ord
+          )
+        );
+        const nextAlerts = clearUrgentAlert(o.stayId, o.serviceOrderId, o.serviceName, o.roomNumber);
+        setUrgentAlerts(nextAlerts);
         await Promise.all([loadOrders(), loadUpcomingPreOrders(), loadActiveStays()]);
       }
     );
@@ -610,7 +646,15 @@ export const ServicesAndBillingPage = () => {
       () => billingApi.voidServiceOrder(order.serviceOrderId, reason.trim()),
       `Đã hủy đơn dịch vụ #${order.serviceOrderId}.`,
       async () => {
-        clearUrgentAlert(order.stayId, order.serviceOrderId, order.serviceName);
+        setOrders((prev) =>
+          prev.map((ord) =>
+            ord.serviceOrderId === order.serviceOrderId
+              ? { ...ord, status: 'VOIDED', cancelReason: reason.trim(), cancelledAt: new Date().toISOString() }
+              : ord
+          )
+        );
+        const nextAlerts = clearUrgentAlert(order.stayId, order.serviceOrderId, order.serviceName, order.roomNumber);
+        setUrgentAlerts(nextAlerts);
         setVoidModalData(null);
         await Promise.all([loadOrders(), loadUpcomingPreOrders(), loadActiveStays()]);
       }
@@ -654,6 +698,78 @@ export const ServicesAndBillingPage = () => {
     );
   });
 
+  const activeUrgentRooms = useMemo(() => {
+    if (!isServiceRole || !urgentAlerts || urgentAlerts.length === 0) return [];
+
+    return urgentAlerts
+      .map((a) => {
+        const stayIdStr = String(a.stayId);
+        const matchedStay = activeStays.find(
+          (s) =>
+            String(s.stayId) === stayIdStr ||
+            (a.roomNumber && String(s.roomNumber).trim().toLowerCase() === String(a.roomNumber).trim().toLowerCase())
+        );
+
+        // Các đơn phòng của phòng này đang ở trạng thái ORDERED
+        const roomOrders = orders.filter(
+          (o) =>
+            (String(o.stayId) === stayIdStr ||
+              (a.roomNumber && o.roomNumber && String(o.roomNumber).trim().toLowerCase() === String(a.roomNumber).trim().toLowerCase())) &&
+            o.status === 'ORDERED'
+        );
+
+        // Nếu alert chỉ định orderIds cụ thể, chỉ giữ các đơn còn dở dang
+        const pendingOrders =
+          a.orderIds && a.orderIds.length > 0
+            ? roomOrders.filter((o) => a.orderIds.includes(String(o.serviceOrderId)))
+            : roomOrders;
+
+        // Dịch vụ đặt trước chưa nạp
+        let unchargedPreOrders = [];
+        if (matchedStay) {
+          const reservation = upcomingPreOrders.find(
+            (r) =>
+              r.reservationCode === matchedStay.reservationCode ||
+              (a.reservationCode && r.reservationCode === a.reservationCode)
+          );
+          if (reservation) {
+            const rawItems = parseAndGroupPreOrders(reservation.specialNotes);
+            const stayOrders = orders.filter(
+              (o) =>
+                String(o.stayId) === String(matchedStay.stayId) ||
+                (a.roomNumber && o.roomNumber && String(o.roomNumber).trim().toLowerCase() === String(a.roomNumber).trim().toLowerCase())
+            );
+            const matchedItems = matchPreOrderItemsToStayOrders(rawItems, stayOrders);
+            const rawUncharged = matchedItems.filter(
+              (it) => !it.matchedOrder || (it.matchedOrder.status !== 'COMPLETED' && it.matchedOrder.status !== 'VOIDED')
+            );
+            if (a.preOrderNames && a.preOrderNames.length > 0) {
+              unchargedPreOrders = rawUncharged.filter((it) =>
+                a.preOrderNames.some((name) => name.trim().toLowerCase() === it.serviceName.trim().toLowerCase())
+              );
+            } else {
+              unchargedPreOrders = rawUncharged;
+            }
+          }
+        }
+
+        const totalRemaining = pendingOrders.length + unchargedPreOrders.length;
+        if (totalRemaining === 0) {
+          return null; // Đã xong hết các đơn khẩn cấp của phòng này!
+        }
+
+        return {
+          alert: a,
+          roomNumber: a.roomNumber || matchedStay?.roomNumber || '—',
+          stayId: a.stayId,
+          pendingOrders,
+          unchargedPreOrders,
+          totalRemaining,
+        };
+      })
+      .filter(Boolean);
+  }, [isServiceRole, urgentAlerts, orders, upcomingPreOrders, activeStays]);
+
   // Dữ liệu hiển thị & Lọc
   const filteredServices = services.filter(
     (s) => !serviceCategoryFilter || s.category.toLowerCase() === serviceCategoryFilter.toLowerCase()
@@ -683,8 +799,9 @@ export const ServicesAndBillingPage = () => {
     }
     return true;
   });
-  const totalOrderPages = Math.max(1, Math.ceil(filteredOrders.length / orderPageSize));
-  const paginatedOrders = filteredOrders.slice(
+  const sortedOrders = sortOrdersByCheckoutPriority(filteredOrders, urgentAlerts, activeStays);
+  const totalOrderPages = Math.max(1, Math.ceil(sortedOrders.length / orderPageSize));
+  const paginatedOrders = sortedOrders.slice(
     (orderPage - 1) * orderPageSize,
     orderPage * orderPageSize
   );
@@ -776,6 +893,11 @@ export const ServicesAndBillingPage = () => {
       })
       .reduce((sum, s) => sum + (Number(s.totalAmount) || 0), 0);
   }, [activeStays, currentMonthStr]);
+  const openFoliosTotalBalance = useMemo(() => {
+    return (activeStays || [])
+      .filter((s) => s?.folioStatus !== 'CLOSED')
+      .reduce((sum, s) => sum + (Number(s?.totalAmount) || 0), 0);
+  }, [activeStays]);
   const totalVouchersCount = (vouchers || []).length;
   const activeVouchersCount = (vouchers || []).filter((v) => v?.status === 'ACTIVE').length;
   const usedVouchersCount = (vouchers || []).reduce((acc, v) => acc + (v?.usedCount || 0), 0);
@@ -784,31 +906,38 @@ export const ServicesAndBillingPage = () => {
   ).length;
 
   const pageHeaderInfo = useMemo(() => {
+    if (role === ROLES.GENERAL_MANAGER || role === ROLES.ADMIN) {
+      return {
+        title: 'Quản Lý Dịch Vụ, Hóa Đơn Phòng & Khuyến Mãi',
+        subtitle:
+          'Điều hành toàn diện danh mục dịch vụ phụ trợ, vận hành đơn phục vụ tại phòng, đối soát hóa đơn lưu trú (Folio) và chương trình khuyến mãi.',
+      };
+    }
     if (role === ROLES.FRONT_DESK) {
       return {
-        title: 'Quầy Thu Ngân, Quyết Toán & Dịch Vụ Khách Sạn',
+        title: 'Quầy Thu Ngân, Quyết Toán Hóa Đơn & Dịch Vụ Phòng',
         subtitle:
-          'Kiểm tra Folio phòng lưu trú, khấu trừ tiền cọc, áp mã giảm giá khi khách thanh toán, đóng Folio và hỗ trợ đặt dịch vụ phòng.',
+          'Kiểm tra bảng kê chi phí lưu trú (Folio), khấu trừ tiền đặt cọc, áp dụng mã giảm giá, thu tiền quyết toán và hỗ trợ đặt dịch vụ phòng.',
       };
     }
     if (role === ROLES.SALES_MANAGER) {
       return {
-        title: 'Chương Trình Khuyến Mãi & Mã Giảm Giá (Vouchers)',
+        title: 'Quản Lý Chương Trình Khuyến Mãi & Danh Mục Dịch Vụ',
         subtitle:
-          'Cấu hình và phát hành mã voucher ưu đãi, tỷ lệ chiết khấu, hạn mức ngân sách và thời hạn sử dụng.',
+          'Cấu hình và phát hành mã khuyến mãi ưu đãi, kiểm soát hạn mức ngân sách chiết khấu và tra cứu danh mục dịch vụ đang kinh doanh.',
       };
     }
     if (role === ROLES.ACCOUNTANT) {
       return {
-        title: 'Quản Lý Hóa Đơn & Quyết Toán Tiền Phòng',
+        title: 'Đối Soát Hóa Đơn Lưu Trú, Dịch Vụ & Khuyến Mãi',
         subtitle:
-          'Đối soát bảng kê chi phí phòng lưu trú, dịch vụ phát sinh, phụ thu, trừ tiền cọc và kiểm tra xuất hóa đơn VAT.',
+          'Hậu kiểm bảng kê chi phí phòng lưu trú (Folio), đơn dịch vụ phát sinh, phụ thu, khấu trừ tiền đặt cọc và xuất hóa đơn GTGT (VAT).',
       };
     }
     return {
-      title: 'Dịch Vụ Khách Sạn & Đơn Nội Khu',
+      title: 'Quản Lý Dịch Vụ Khách Sạn & Phục Vụ Tại Phòng',
       subtitle:
-        'Quản lý danh mục dịch vụ tiện ích, đặt dịch vụ cho phòng lưu trú và quyết toán hóa đơn.',
+        'Quản lý danh mục dịch vụ phụ trợ, tiếp nhận và điều phối đơn gọi dịch vụ tại phòng cùng lịch dịch vụ khách đặt trước.',
     };
   }, [role]);
 
@@ -953,7 +1082,72 @@ export const ServicesAndBillingPage = () => {
       </div>
 
       {/* 2. Thẻ KPI Thống Kê Tổng Quan Phân Quyền Theo Role */}
-      {role === ROLES.FRONT_DESK ? (
+      {role === ROLES.GENERAL_MANAGER || role === ROLES.ADMIN ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, marginBottom: 24 }}>
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Hóa Đơn Phòng Chờ Thu</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {openFoliosCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>phòng mở</span>
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: overdueFoliosCount > 0 ? '#dc2626' : '#16a34a',
+                marginTop: 4,
+                fontWeight: overdueFoliosCount > 0 ? 600 : 500,
+              }}
+            >
+              {overdueFoliosCount > 0
+                ? `⚠️ ${overdueFoliosCount} phòng quá hạn trả • ${closedFoliosCount} đã đóng`
+                : `✓ ${closedFoliosCount} phòng đã quyết toán`}
+            </div>
+          </div>
+
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Tổng Dư Nợ Phòng Đang Mở</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: '#0284c7', marginTop: 6 }}>
+              {formatVND(openFoliosTotalBalance)}
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+              Đã trừ cọc &amp; cộng 8% thuế GTGT
+            </div>
+          </div>
+
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Danh Mục Dịch Vụ Mở Bán</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {activeServicesCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>/ {(services || []).length} dịch vụ</span>
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+              Đang kinh doanh phục vụ lưu trú
+            </div>
+          </div>
+
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Vận Hành Đơn Dịch Vụ</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {pendingOrdersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>chờ phục vụ</span>
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+              {completedOrdersCount} đơn hoàn tất • {(upcomingPreOrders || []).length} lịch đặt trước
+            </div>
+          </div>
+
+          <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>Chương Trình Khuyến Mãi</div>
+            <div style={{ fontSize: 26, fontWeight: 700, color: '#0f172a', marginTop: 4 }}>
+              {activeVouchersCount}{' '}
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 400 }}>/ {totalVouchersCount} mã mở</span>
+            </div>
+            <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+              Đã áp dụng {usedVouchersCount} lượt giảm giá
+            </div>
+          </div>
+        </div>
+      ) : role === ROLES.FRONT_DESK ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 24 }}>
           <div style={{ background: '#fff', padding: '16px 18px', borderRadius: 8, border: '1px solid #e2e8f0' }}>
             <div style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>Phòng Đang Ở</div>
@@ -1157,11 +1351,11 @@ export const ServicesAndBillingPage = () => {
               marginBottom: -2,
             }}
           >
-            Đơn Dịch Vụ Phòng ({orders.length})
+            Đơn Phục Vụ Tại Phòng ({orders.length})
           </button>
         )}
 
-        {canViewOrders && (
+        {canViewPreOrders && (
           <button
             type="button"
             onClick={() => setActiveTab('pre-orders')}
@@ -1177,7 +1371,7 @@ export const ServicesAndBillingPage = () => {
               marginBottom: -2,
             }}
           >
-            Lịch Khách Đặt Trước ({upcomingPreOrders.length})
+            Lịch Dịch Vụ Đặt Trước ({upcomingPreOrders.length})
           </button>
         )}
 
@@ -1197,7 +1391,7 @@ export const ServicesAndBillingPage = () => {
               marginBottom: -2,
             }}
           >
-            Hóa Đơn &amp; Quyết Toán Tiền Phòng ({activeStays.length})
+            Hóa Đơn &amp; Quyết Toán Phòng ({activeStays.length})
           </button>
         )}
 
@@ -1222,37 +1416,84 @@ export const ServicesAndBillingPage = () => {
         )}
       </div>
 
-      {/* THÔNG BÁO KHẨN CẤP TRÊN DASHBOARD / TRANG QUẢN LÝ DỊCH VỤ - CHỈ HIỂN THỊ CHO BỘ PHẬN DỊCH VỤ */}
-      {isServiceRole && urgentAlerts && urgentAlerts.length > 0 && (
+      {/* THÔNG BÁO KHẨN CẤP TRÊN DASHBOARD / TRANG QUẢN LÝ DỊCH VỤ - CHỈ HIỂN THỊ KHI CÒN ĐƠN CẦN GIẢI TỎA */}
+      {isServiceRole && activeUrgentRooms && activeUrgentRooms.length > 0 && (
         <div
           style={{
             background: '#fef2f2',
             border: '1.5px solid #ef4444',
             borderRadius: 8,
-            padding: '12px 18px',
+            padding: '14px 18px',
             marginBottom: 16,
             boxShadow: '0 2px 6px rgba(239, 68, 68, 0.15)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: 12,
+            gap: 14,
             flexWrap: 'wrap',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 24 }}>🔥</span>
-            <div>
-              <div style={{ fontWeight: 700, color: '#991b1b', fontSize: 13.5 }}>
-                CẢNH BÁO CHECK-OUT TẠI QUẦY: CÓ {urgentAlerts.length} PHÒNG CẦN XỬ LÝ DỊCH VỤ GẤP!
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 280 }}>
+            <span style={{ fontSize: 26, lineHeight: 1 }}>🔥</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, color: '#991b1b', fontSize: 14 }}>
+                CẢNH BÁO CHECK-OUT TẠI QUẦY: CÓ {activeUrgentRooms.length} PHÒNG CẦN XỬ LÝ DỊCH VỤ GẤP!
               </div>
-              <div style={{ fontSize: 12, color: '#b91c1c', marginTop: 2, lineHeight: 1.4 }}>
-                {urgentAlerts.map((a) => (
-                  <div key={a.stayId}>
-                    • <strong>Phòng P.{a.roomNumber}</strong>: {a.summaryText || 'Có dịch vụ cần xử lý trước khi khách rời quầy'}
+              <div style={{ fontSize: 12.5, color: '#b91c1c', marginTop: 4, lineHeight: 1.5 }}>
+                {activeUrgentRooms.map(({ alert: a, roomNumber, stayId, pendingOrders, unchargedPreOrders, totalRemaining }) => (
+                  <div
+                    key={stayId}
+                    style={{
+                      background: '#fff',
+                      border: '1px solid #fecaca',
+                      borderRadius: 6,
+                      padding: '6px 10px',
+                      marginTop: 6,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+                      <div>
+                        <strong>• Phòng P.{roomNumber}</strong>{' '}
+                        <span style={{ color: '#dc2626', fontWeight: 600 }}>
+                          (Còn <strong>{totalRemaining}</strong> mục chưa xử lý)
+                        </span>
+                        :
+                      </div>
+                      <span
+                        style={{
+                          background: '#fee2e2',
+                          color: '#991b1b',
+                          border: '1px solid #fca5a5',
+                          borderRadius: 4,
+                          padding: '2px 8px',
+                          fontSize: 11,
+                          fontWeight: 700,
+                        }}
+                      >
+                        ⚡ Đang chờ bộ phận Dịch vụ giải tỏa
+                      </span>
+                    </div>
+                    <div style={{ marginTop: 3, fontSize: 12, color: '#475569' }}>
+                      {pendingOrders.length > 0 && (
+                        <span>
+                          <strong style={{ color: '#0f172a' }}>Đơn dịch vụ phòng:</strong>{' '}
+                          {pendingOrders
+                            .map((o) => `${o.serviceName} (#${o.serviceOrderId})`)
+                            .join(', ')}
+                        </span>
+                      )}
+                      {pendingOrders.length > 0 && unchargedPreOrders.length > 0 && <span> • </span>}
+                      {unchargedPreOrders.length > 0 && (
+                        <span>
+                          <strong style={{ color: '#0f172a' }}>Dịch vụ đặt trước chưa nạp:</strong>{' '}
+                          {unchargedPreOrders.map((it) => it.serviceName).join(', ')}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
-                <div style={{ marginTop: 4, color: '#7f1d1d', fontStyle: 'italic', fontSize: 11.5 }}>
-                  👉 Vui lòng kiểm tra và xử lý gấp (Bấm <strong>[Hoàn thành]</strong> nếu khách đã dùng, hoặc <strong>[Hủy]</strong> nếu không dùng) để quầy hoàn tất hóa đơn.
+                <div style={{ marginTop: 6, color: '#7f1d1d', fontStyle: 'italic', fontSize: 11.5 }}>
+                  🔒 Thông báo này được ghim cố định và chỉ tự động tắt khi bạn đã xử lý xong toàn bộ các đơn dịch vụ trên (Bấm <strong>[Hoàn thành]</strong> nếu khách đã dùng, hoặc <strong>[Hủy]</strong> nếu chưa xác nhận) để quầy Lễ tân chốt hóa đơn check-out.
                 </div>
               </div>
             </div>
@@ -1266,9 +1507,9 @@ export const ServicesAndBillingPage = () => {
                   background: '#dc2626',
                   color: '#fff',
                   border: 'none',
-                  padding: '6px 12px',
+                  padding: '7px 14px',
                   borderRadius: 6,
-                  fontSize: 12,
+                  fontSize: 12.5,
                   fontWeight: 700,
                   cursor: 'pointer',
                   display: 'inline-flex',
@@ -1277,27 +1518,6 @@ export const ServicesAndBillingPage = () => {
                 }}
               >
                 👉 Sang Tab Đơn Dịch Vụ
-              </button>
-            )}
-            {activeTab !== 'pre-orders' && canViewOrders && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('pre-orders')}
-                style={{
-                  background: '#991b1b',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '6px 12px',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                }}
-              >
-                👉 Sang Tab Lịch Đặt Trước
               </button>
             )}
           </div>
@@ -1332,7 +1552,7 @@ export const ServicesAndBillingPage = () => {
           setOrderPage={setOrderPage}
           orderStatusFilter={orderStatusFilter}
           setOrderStatusFilter={setOrderStatusFilter}
-          filteredOrders={filteredOrders}
+          filteredOrders={sortedOrders}
           orders={orders}
           canCreateOrder={canCreateOrder}
           handleOpenCreateOrder={handleOpenCreateOrder}

@@ -102,7 +102,7 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
     <Modal show={show} onHide={onHide} centered backdrop="static" size="lg">
       <Modal.Header closeButton style={{ background: '#0f172a', color: '#fff' }}>
         <Modal.Title style={{ fontSize: 18, fontWeight: 600 }}>
-          {isEdit ? `Chỉnh Sửa Hạng Phòng #${roomType?.roomTypeId}` : 'Thêm Mới Hạng Phòng (UC-11)'}
+          {isEdit ? `Chỉnh Sửa Hạng Phòng #${roomType?.roomTypeId}` : 'Thêm Mới Hạng Phòng'}
         </Modal.Title>
       </Modal.Header>
       <Form onSubmit={handleSubmit}>

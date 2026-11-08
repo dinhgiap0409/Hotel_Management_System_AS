@@ -38,7 +38,7 @@ export const ConfirmArchiveModal = ({ show, onHide, room, onSuccess }) => {
     <Modal show={show} onHide={onHide} centered backdrop="static">
       <Modal.Header closeButton style={{ background: '#dc2626', color: '#fff' }}>
         <Modal.Title style={{ fontSize: 18, fontWeight: 600 }}>
-          Xác Nhận Lưu Trữ Phòng #{room?.roomNumber} (UC-17)
+          Xác Nhận Lưu Trữ Phòng #{room?.roomNumber}
         </Modal.Title>
       </Modal.Header>
       <Modal.Body style={{ padding: 24 }}>
