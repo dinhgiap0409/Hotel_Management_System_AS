@@ -1,6 +1,6 @@
 # HMS - Hotel Management System (SBA301 Group Project)
 
-Hệ thống Quản lý Khách sạn (Hotel Management System - HMS) được xây dựng theo kiến trúc **Client-Server 3-Layer** dựa trên tài liệu đặc tả yêu cầu **HMS-SRS v1.3** và tài liệu thiết kế **HMS-SDD v1.1** (với hệ thống phân quyền **10 Roles chuyên biệt**).
+Hệ thống Quản lý Khách sạn (Hotel Management System - HMS) được xây dựng theo kiến trúc **Client-Server 3-Layer** dựa trên tài liệu đặc tả yêu cầu **HMS-SRS v1.2** và tài liệu thiết kế **HMS-SDD v1.0** (với hệ thống phân quyền **10 Roles chuyên biệt**).
 
 ## 1. Công Nghệ Sử Dụng (Tech Stack)
 - **Database**: Microsoft SQL Server 2019/2022 (24 bảng nghiệp vụ + 2 bảng hệ thống `Refresh_Token`, `System_Error_Log`)
