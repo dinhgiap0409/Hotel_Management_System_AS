@@ -15,11 +15,18 @@ export function AuthProvider({ children }) {
   });
 
   const setSession = (loginRes) => {
-    setAccessToken(loginRes.accessToken);
-    setUser(loginRes.user);
+    if (loginRes.accessToken) {
+      setAccessToken(loginRes.accessToken);
+    }
     if (loginRes.user) {
+      setUser(loginRes.user);
       localStorage.setItem('hms_user', JSON.stringify(loginRes.user));
     }
+  };
+
+  const updateSavedUser = (updatedUser) => {
+    setUser(updatedUser);
+    localStorage.setItem('hms_user', JSON.stringify(updatedUser));
   };
 
   const clearSession = () => {
@@ -30,13 +37,19 @@ export function AuthProvider({ children }) {
 
   const login = async ({ email, password }) => {
     const res = await authApi.login(email, password);
-    const payload = res.data || res;
+    const payload = res.data?.data || res.data || res;
     setSession(payload);
     return payload;
   };
 
-  const logout = () => {
-    clearSession();
+  const logout = async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      // Ignore error if token already expired
+    } finally {
+      clearSession();
+    }
   };
 
   const hasRole = (...roles) => {
@@ -50,6 +63,7 @@ export function AuthProvider({ children }) {
         user,
         isAuthenticated: !!user,
         setSession,
+        updateSavedUser,
         clearSession,
         login,
         logout,

@@ -44,10 +44,19 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint((request, response, authException) -> {
+                    response.setStatus(401);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write("{\"status\":401,\"errorCode\":\"AUTH_UNAUTHORIZED\","
+                            + "\"message\":\"Phiên đăng nhập đã hết hạn hoặc chưa đăng nhập. Vui lòng đăng nhập lại.\"}");
+                }))
                 .authorizeHttpRequests(auth -> auth
-                        // Public endpoints (Customer Landing, Room Search, Reviews, Auth, Swagger)
                         .requestMatchers(
-                                "/api/v1/auth/**",
+                                "/api/v1/auth/login",
+                                "/api/v1/auth/register",
+                                "/api/v1/auth/register/**",
+                                "/api/v1/auth/forgot-password",
+                                "/api/v1/auth/reset-password",
                                 "/api/v1/public/**",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
@@ -63,7 +72,6 @@ public class SecurityConfig {
 
     @Bean
     public PasswordEncoder passwordEncoder() {
-        // SDD Section 4.1.5.1: BCrypt password hashing
         return new BCryptPasswordEncoder(10);
     }
 

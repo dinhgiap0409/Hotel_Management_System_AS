@@ -1,13 +1,15 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config/constants';
 
-/**
- * In-memory token store (SDD Section 4.1.5.2: Access token is kept in memory only, not localStorage).
- */
-let inMemoryAccessToken = null;
+let inMemoryAccessToken = sessionStorage.getItem('hms_access_token') || null;
 
 export function setAccessToken(token) {
   inMemoryAccessToken = token;
+  if (token) {
+    sessionStorage.setItem('hms_access_token', token);
+  } else {
+    sessionStorage.removeItem('hms_access_token');
+  }
 }
 
 export function getAccessToken() {
@@ -25,9 +27,6 @@ export function notifyToast(toast) {
   toastListeners.forEach((fn) => fn(toast));
 }
 
-/**
- * Single configured Axios instance with centralized error interceptor (SDD Section 4.1.2.2).
- */
 export const http = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -50,7 +49,32 @@ http.interceptors.response.use(
     const status = error.response?.status;
     const data = error.response?.data;
     const traceId = data?.traceId || error.response?.headers?.['x-trace-id'];
+
+    // Extract detailed field validation messages when validationErrors is returned
+    if (data && Array.isArray(data.validationErrors) && data.validationErrors.length > 0) {
+      const detailedMsg = data.validationErrors
+        .map((item) => item.message)
+        .filter(Boolean)
+        .join('; ');
+      if (detailedMsg) {
+        data.message = detailedMsg;
+      }
+    }
+
     const message = data?.message || error.message || 'Đã xảy ra lỗi kết nối máy chủ.';
+
+    // Expired / invalid access token (15 min lifetime): clear session and ask the user to log in again
+    const requestUrl = error.config?.url || '';
+    const isAuthEndpoint = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/register');
+    if (status === 401 && !isAuthEndpoint && inMemoryAccessToken) {
+      setAccessToken(null);
+      localStorage.removeItem('hms_user');
+      notifyToast({ type: 'WARNING', message: 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.' });
+      if (window.location.pathname !== '/login') {
+        setTimeout(() => window.location.assign('/login'), 800);
+      }
+      return Promise.reject(error);
+    }
 
     if (!status || status >= 500) {
       notifyToast({ type: 'SYSTEM_ERROR', message, traceId });

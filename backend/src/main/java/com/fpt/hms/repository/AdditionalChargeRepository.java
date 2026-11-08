@@ -10,4 +10,5 @@ import java.util.Optional;
 @Repository
 public interface AdditionalChargeRepository extends JpaRepository<AdditionalCharge, Integer> {
     List<AdditionalCharge> findByFolio_FolioId(Integer folioId);
+    List<AdditionalCharge> findByFolio_GuestStay_StayId(Integer stayId);
 }

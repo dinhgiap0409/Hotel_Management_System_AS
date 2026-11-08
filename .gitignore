@@ -44,6 +44,7 @@ lerna-debug.log*
 # IDEs & Editors (IntelliJ, VSCode, Eclipse)
 # ==========================================
 .idea/
+.PVS-Studio/
 *.iws
 *.iml
 *.ipr
@@ -54,7 +55,7 @@ lerna-debug.log*
 .project
 
 # ==========================================
-# OS Generated Files
+# OS Files
 # ==========================================
 .DS_Store
 Thumbs.db

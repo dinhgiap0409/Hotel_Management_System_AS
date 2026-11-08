@@ -7,7 +7,7 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:sqlserver://localhost:1433;databaseName=HMS_DB;encrypt=true;trustServerCertificate=true}
     username: ${DB_USERNAME:sa}
-    password: ${DB_PASSWORD:123456}
+    password: ${DB_PASSWORD:123}
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
   jpa:
     hibernate:
@@ -31,8 +31,8 @@ spring:
   mail:
     host: ${MAIL_HOST:smtp.gmail.com}
     port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:your-email@gmail.com}
-    password: ${MAIL_PASSWORD:your-app-password}
+    username: ${MAIL_USERNAME:dangkhang16125@gmail.com}
+    password: ${MAIL_PASSWORD:wnix siim nywx iuyt}
     properties:
       mail:
         smtp:
@@ -45,6 +45,12 @@ app:
     timezone: Asia/Ho_Chi_Minh
     standard-check-in: "14:00"
     standard-check-out: "12:00"
+  # Module 3A (GiapND, BR-19): how long a PENDING online reservation holds its
+  # room quota before the scheduler auto-cancels it. Default 24h (SRS BR-19).
+  # Override with env BOOKING_HOLD_HOURS (e.g. 1 for a demo) — never hardcode
+  # a test value in the service code.
+  booking:
+    hold-hours: ${BOOKING_HOLD_HOURS:24}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
   jwt:
