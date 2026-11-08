@@ -15,6 +15,7 @@ import com.fpt.hms.entity.*;
 import com.fpt.hms.enums.*;
 import com.fpt.hms.exception.BusinessException;
 import com.fpt.hms.exception.ResourceNotFoundException;
+import com.fpt.hms.integration.MailNotificationService;
 import com.fpt.hms.integration.VnPayGatewayService;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.FrontDeskService;
@@ -50,6 +51,7 @@ public class FrontDeskServiceImpl implements FrontDeskService {
     private final PaymentRepository paymentRepository;
     private final PaymentAttemptRepository paymentAttemptRepository;
     private final VnPayGatewayService vnPayGatewayService;
+    private final MailNotificationService mailNotificationService;
     private final MessageResolver messageResolver;
     private final Clock hotelClock;
 
@@ -220,6 +222,16 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .createdAt(now)
                 .expiredAt(now.plus(1, ChronoUnit.DAYS))
                 .build());
+
+        // Gửi email thông báo đơn đặt phòng tại sảnh cho khách (nếu có email hợp lệ)
+        if (savedReservation.getContactEmail() != null && !savedReservation.getContactEmail().isBlank()
+                && !savedReservation.getContactEmail().endsWith("@walkin.hotel.local")) {
+            mailNotificationService.sendBookingConfirmation(
+                    savedReservation.getContactEmail().trim(),
+                    savedReservation.getReservationCode(),
+                    savedReservation.getContactName()
+            );
+        }
 
         return toReservationDto(savedReservation);
     }
@@ -1122,6 +1134,35 @@ public class FrontDeskServiceImpl implements FrontDeskService {
             attempt.setBankCode("CASH");
             attempt.setCompletedAt(now);
             paymentAttemptRepository.save(attempt);
+        }
+
+        // Gửi email xác nhận đặt phòng và đã thu tiền cọc tại sảnh (nếu khách cung cấp email hợp lệ)
+        if (reservation.getContactEmail() != null && !reservation.getContactEmail().isBlank()
+                && !reservation.getContactEmail().endsWith("@walkin.hotel.local")) {
+            String roomTypeName = reservation.getDetails() != null && !reservation.getDetails().isEmpty()
+                    && reservation.getDetails().get(0).getRoomType() != null
+                    ? reservation.getDetails().get(0).getRoomType().getTypeName()
+                    : "Phòng khách sạn";
+            int totalRooms = reservation.getDetails() != null
+                    ? reservation.getDetails().stream().mapToInt(d -> d.getQuantity() != null ? d.getQuantity() : 1).sum()
+                    : 1;
+            BigDecimal depositAmount = payments.stream()
+                    .filter(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType()))
+                    .map(Payment::getAmount)
+                    .findFirst()
+                    .orElse(BigDecimal.ZERO);
+
+            mailNotificationService.sendDirectBookingConfirmation(
+                    reservation.getContactEmail().trim(),
+                    reservation.getReservationCode(),
+                    reservation.getContactName(),
+                    roomTypeName,
+                    totalRooms,
+                    reservation.getCheckInDate(),
+                    reservation.getCheckOutDate(),
+                    depositAmount,
+                    "Tiền mặt (CASH) tại Quầy Lễ Tân"
+            );
         }
 
         return toReservationDto(reservation);
