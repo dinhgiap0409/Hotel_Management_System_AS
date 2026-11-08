@@ -4,8 +4,13 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { billingApi } from '../../services/billingApi';
 import { formatVND } from '../../lib/money';
+import { SmartServiceOrderModal } from './components/SmartServiceOrderModal';
+import { CustomerCancelPreOrderModal } from './components/CustomerCancelPreOrderModal';
+import { CustomerVoidRoomOrderModal } from './components/CustomerVoidRoomOrderModal';
+import { CustomerOrderDetailModal } from './components/CustomerOrderDetailModal';
 import { formatDateTime, formatDate } from '../../lib/datetime';
 import { notifyToast } from '../../lib/http';
+import { ModuleToastAutoDismiss } from './components/ModuleToastAutoDismiss';
 
 // Helper trích xuất từng lượt dịch vụ đặt trước độc lập từ specialNotes của Reservation (KHÔNG gộp cứng)
 const parsePreOrders = (notes) => {
@@ -123,10 +128,15 @@ const renderOrderNotesContent = (notes) => {
   );
 };
 
-// Đối chiếu 1-1 các lượt đặt trước của khách với các đơn dịch vụ đã tạo tại phòng
+// Đối chiếu 1-1 các lượt đặt trước của khách với các đơn dịch vụ đã tạo tại phòng (chỉ khớp đơn có thẻ [Đặt trước])
 const matchCustomerPreOrdersToOrders = (items, stayOrders) => {
   if (!items || items.length === 0) return [];
   const activeOrders = (stayOrders || []).filter((o) => o.status !== 'VOIDED');
+  const preOrderMatchedOrders = activeOrders.filter((o) => {
+    if (!o.notes) return false;
+    const lower = o.notes.toLowerCase();
+    return lower.includes('[đặt trước') || lower.includes('[dat truoc');
+  });
   const usedOrderIds = new Set();
 
   const result = items.map((it) => ({ ...it, matchedOrder: null }));
@@ -136,20 +146,17 @@ const matchCustomerPreOrdersToOrders = (items, stayOrders) => {
     const timeTag = it.scheduledTime && it.scheduledTime !== 'Không' ? `Giờ hẹn: ${it.scheduledTime}` : null;
     const detailTag = it.details && it.details !== 'Không' ? `Yêu cầu: ${it.details}` : null;
 
-    const exactMatch = activeOrders.find((o) => {
+    const exactMatch = preOrderMatchedOrders.find((o) => {
       if (usedOrderIds.has(o.serviceOrderId)) return false;
       const isSameService =
         (it.serviceId && String(o.serviceId) === String(it.serviceId)) ||
         (o.serviceName && it.serviceName && o.serviceName.trim().toLowerCase() === it.serviceName.trim().toLowerCase());
-      if (!isSameService || !o.notes) return false;
+      if (!isSameService) return false;
 
       if (o.notes.includes(legacyTag)) return true;
-      if (o.notes.includes('[Đặt trước]')) {
-        const matchTime = !timeTag || o.notes.includes(timeTag);
-        const matchDetail = !detailTag || o.notes.includes(detailTag);
-        return matchTime && matchDetail;
-      }
-      return false;
+      const matchTime = !timeTag || o.notes.includes(timeTag);
+      const matchDetail = !detailTag || o.notes.includes(detailTag);
+      return matchTime && matchDetail;
     });
     if (exactMatch) {
       usedOrderIds.add(exactMatch.serviceOrderId);
@@ -157,7 +164,7 @@ const matchCustomerPreOrdersToOrders = (items, stayOrders) => {
     }
   });
 
-  const chronologicalOrders = [...activeOrders].sort(
+  const chronologicalOrders = [...preOrderMatchedOrders].sort(
     (a, b) => (a.serviceOrderId || 0) - (b.serviceOrderId || 0)
   );
   result.forEach((it) => {
@@ -392,8 +399,8 @@ export const CustomerServiceOrderPage = () => {
       const matchRes = filterReservationId === 'ALL' || String(po.reservationId) === String(filterReservationId);
       const matchStatus =
         preOrderStatusFilter === 'ALL' ||
-        (preOrderStatusFilter === 'CHARGED' && po.matchedOrder) ||
-        (preOrderStatusFilter === 'PENDING' && !po.matchedOrder);
+        (preOrderStatusFilter === 'CHARGED' && po.matchedOrder?.status === 'COMPLETED') ||
+        (preOrderStatusFilter === 'PENDING' && (!po.matchedOrder || po.matchedOrder.status !== 'COMPLETED'));
       const searchLower = preOrderSearch.trim().toLowerCase();
       const matchSearch =
         !searchLower ||
@@ -721,11 +728,16 @@ export const CustomerServiceOrderPage = () => {
     setCancelModalData({
       ...po,
       cancelQty: Number(po.quantity) || 1,
+      reason: '',
     });
   };
 
   const handleConfirmCancelCustomerPreOrder = async () => {
     if (!cancelModalData?.reservationId || !cancelModalData?.serviceId) return;
+    if (!cancelModalData.reason?.trim()) {
+      notifyToast({ type: 'WARNING', message: 'Vui lòng nhập lý do hủy dịch vụ đặt trước.' });
+      return;
+    }
     setCancellingPreOrder(cancelModalData.serviceId);
     const qtyToCancel = Number(cancelModalData.cancelQty) || Number(cancelModalData.quantity) || 1;
     const totalQty = Number(cancelModalData.quantity) || 1;
@@ -734,7 +746,8 @@ export const CustomerServiceOrderPage = () => {
         cancelModalData.reservationId,
         cancelModalData.serviceId,
         cancelModalData.itemIndex,
-        qtyToCancel
+        qtyToCancel,
+        cancelModalData.reason.trim()
       );
       notifyToast({
         type: 'SUCCESS',
@@ -744,7 +757,7 @@ export const CustomerServiceOrderPage = () => {
             : `Đã hủy thành công yêu cầu đặt trước dịch vụ "${cancelModalData.serviceName}".`,
       });
       setCancelModalData(null);
-      await loadConfirmedReservations();
+      await Promise.all([loadConfirmedReservations(), loadOrders()]);
     } catch (err) {
       notifyToast({
         type: 'DANGER',
@@ -788,6 +801,7 @@ export const CustomerServiceOrderPage = () => {
 
   return (
     <div className="container-fluid py-3 px-2 px-md-3" style={{ width: '100%' }}>
+      <ModuleToastAutoDismiss duration={3500} />
       {/* ========================================================================= */}
       {/* BỐ CỤC 2 CỘT: THANH CÔNG CỤ BÊN TRÁI (SIDEBAR) & NỘI DUNG CHÍNH BÊN PHẢI */}
       {/* ========================================================================= */}
@@ -1454,14 +1468,14 @@ export const CustomerServiceOrderPage = () => {
                                       >
                                         Chi tiết
                                       </Button>
-                                      {!po.matchedOrder && (
+                                      {(!po.matchedOrder || (po.matchedOrder.status === 'ORDERED' && !po.matchedOrder.staffConfirmed)) && (
                                         <Button
                                           size="sm"
                                           variant="outline-danger"
                                           onClick={() => handleOpenCancelModal(po)}
                                           disabled={cancellingPreOrder === po.serviceId}
                                           style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 4 }}
-                                          title="Hủy yêu cầu đặt trước dịch vụ này"
+                                          title="Hủy yêu cầu đặt trước dịch vụ này (chỉ hủy được khi chưa xác nhận)"
                                         >
                                           Hủy đặt
                                         </Button>
@@ -1811,587 +1825,70 @@ export const CustomerServiceOrderPage = () => {
       </div>
 
       {/* ========================================================================= */}
-      {/* MODAL ĐẶT DỊCH VỤ THÔNG MINH (DÙNG CHUNG CHO TOÀN BỘ DANH MỤC) */}
-      {/* ========================================================================= */}
-      <Modal
-        show={showOrderModal}
-        onHide={() => !submittingOrder && setShowOrderModal(false)}
-        centered
-        backdrop="static"
-      >
-        <Modal.Header closeButton={!submittingOrder} style={{ background: '#FAF9F5', borderBottom: '1px solid #E8E6DC' }}>
-          <Modal.Title style={{ fontFamily: 'var(--font-display, serif)', fontSize: 18, color: '#16233B' }}>
-            Xác Nhận Đặt Dịch Vụ Khách Sạn
-          </Modal.Title>
-        </Modal.Header>
+      {/* MODAL ĐẶT DỊCH VỤ THÔNG MINH */}
+      {showOrderModal && (
+        <SmartServiceOrderModal
+          show={showOrderModal}
+          onClose={() => setShowOrderModal(false)}
+          submittingOrder={submittingOrder}
+          handleSubmitOrder={handleSubmitOrder}
+          orderError={orderError}
+          orderSuccess={orderSuccess}
+          selectedService={selectedService}
+          hasActiveStay={hasActiveStay}
+          hasUpcomingBookingForPreOrder={hasUpcomingBookingForPreOrder}
+          orderTargetMode={orderTargetMode}
+          setOrderTargetMode={setOrderTargetMode}
+          friendlyRoomNumber={friendlyRoomNumber}
+          upcomingReservationsForPreOrder={upcomingReservationsForPreOrder}
+          selectedReservationId={selectedReservationId}
+          setSelectedReservationId={setSelectedReservationId}
+          currentUpcomingReservation={currentUpcomingReservation}
+          user={user}
+          currentStay={currentStay}
+          quantity={quantity}
+          setQuantity={setQuantity}
+          scheduledTime={scheduledTime}
+          setScheduledTime={setScheduledTime}
+          flightDetails={flightDetails}
+          setFlightDetails={setFlightDetails}
+          roomServiceNotes={roomServiceNotes}
+          setRoomServiceNotes={setRoomServiceNotes}
+          lineEstimatedTotal={lineEstimatedTotal}
+          selectedStayId={selectedStayId}
+        />
+      )}
 
-        <Form onSubmit={handleSubmitOrder}>
-          <Modal.Body style={{ background: '#FAF9F5', padding: 22 }}>
-            {orderError && <Alert variant="danger" className="py-2 px-3 small rounded-3 mb-3">{orderError}</Alert>}
-            {orderSuccess && <Alert variant="success" className="py-2 px-3 small rounded-3 mb-3">{orderSuccess}</Alert>}
+      {/* Modal Xác Nhận Hủy Đặt Trước */}
+      {cancelModalData && (
+        <CustomerCancelPreOrderModal
+          cancelModalData={cancelModalData}
+          onClose={() => setCancelModalData(null)}
+          cancellingPreOrder={cancellingPreOrder}
+          onConfirmCancel={handleConfirmCancelCustomerPreOrder}
+          setCancelModalData={setCancelModalData}
+        />
+      )}
 
-            {selectedService && (
-              <div className="d-flex flex-column gap-3">
-                {/* Nút chuyển chế độ nếu khách vừa có phòng đang ở, vừa có chuyến sắp tới CHƯA NHẬN PHÒNG */}
-                {hasActiveStay && hasUpcomingBookingForPreOrder && (
-                  <div style={{ background: '#F1F5F9', borderRadius: 8, padding: 5, display: 'flex', gap: 6 }}>
-                    <button
-                      type="button"
-                      onClick={() => setOrderTargetMode('ACTIVE_STAY')}
-                      className="btn btn-sm flex-fill"
-                      style={{
-                        background: orderTargetMode === 'ACTIVE_STAY' ? '#16233B' : 'transparent',
-                        color: orderTargetMode === 'ACTIVE_STAY' ? '#FAF9F5' : '#475569',
-                        fontWeight: 600,
-                        border: 'none',
-                        fontSize: 12.5,
-                      }}
-                    >
-                      Giao tới {friendlyRoomNumber}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOrderTargetMode('PRE_ORDER')}
-                      className="btn btn-sm flex-fill"
-                      style={{
-                        background: orderTargetMode === 'PRE_ORDER' ? '#0284C7' : 'transparent',
-                        color: orderTargetMode === 'PRE_ORDER' ? '#FAF9F5' : '#475569',
-                        fontWeight: 600,
-                        border: 'none',
-                        fontSize: 12.5,
-                      }}
-                    >
-                      Đặt trước cho chuyến sắp tới
-                    </button>
-                  </div>
-                )}
+      {/* Modal Hủy Đơn Dịch Vụ Gọi Tại Phòng */}
+      {voidRoomOrderModal && (
+        <CustomerVoidRoomOrderModal
+          voidRoomOrderModal={voidRoomOrderModal}
+          onClose={() => setVoidRoomOrderModal(null)}
+          voidingRoomOrder={voidingRoomOrder}
+          onConfirmVoid={handleConfirmVoidRoomOrder}
+          setVoidRoomOrderModal={setVoidRoomOrderModal}
+        />
+      )}
 
-                {/* Thông tin đối tượng phục vụ */}
-                {orderTargetMode === 'PRE_ORDER' ? (
-                  <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: 8, padding: '12px 14px' }}>
-                    <div className="small text-secondary" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>
-                      ĐẶT TRƯỚC CHO CHUYẾN ĐI SẮP TỚI
-                    </div>
-                    {upcomingReservationsForPreOrder.length > 1 ? (
-                      <div className="mt-1">
-                        <Form.Select
-                          size="sm"
-                          value={selectedReservationId}
-                          onChange={(e) => setSelectedReservationId(e.target.value)}
-                          style={{ fontSize: 12.5 }}
-                        >
-                          {upcomingReservationsForPreOrder.map((r) => (
-                            <option key={r.reservationId} value={r.reservationId}>
-                              #{r.reservationCode} — {r.roomTypeName} (Nhận phòng: {formatDate(r.checkInDate)})
-                            </option>
-                          ))}
-                        </Form.Select>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="fw-bold" style={{ color: '#0369A1', fontSize: 15 }}>
-                          Đơn #{currentUpcomingReservation?.reservationCode} — {currentUpcomingReservation?.roomTypeName}
-                        </div>
-                        <div className="text-secondary small">
-                          Ngày nhận phòng: {formatDate(currentUpcomingReservation?.checkInDate)} • Khách: {currentUpcomingReservation?.contactName || user?.fullName}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ background: '#FFFFFF', border: '1px solid #E8E6DC', borderRadius: 8, padding: '12px 14px' }}>
-                    <div className="small text-secondary" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>
-                      GIAO TỚI PHÒNG
-                    </div>
-                    <div className="fw-bold" style={{ color: '#16233B', fontSize: 16 }}>
-                      {friendlyRoomNumber}
-                    </div>
-                    <div className="text-secondary small">
-                      Khách: {currentStay?.guestName || user?.fullName} {currentStay?.reservationCode ? `• Mã booking: ${currentStay.reservationCode}` : ''}
-                    </div>
-                  </div>
-                )}
-
-                {/* Thông tin dịch vụ */}
-                <div style={{ background: '#FFFFFF', border: '1px solid #E8E6DC', borderRadius: 8, padding: '12px 14px' }}>
-                  <div className="d-flex justify-content-between align-items-center mb-1">
-                    <span className="badge bg-light text-dark border">{selectedService.category}</span>
-                    <span className="fw-bold" style={{ color: '#C96442' }}>
-                      {formatVND(selectedService.unitPrice)} / {selectedService.unit || selectedService.billingUnit || 'Lượt'}
-                    </span>
-                  </div>
-                  <h6 className="fw-bold text-dark mb-1">{selectedService.serviceName}</h6>
-                  <p className="text-secondary small mb-0">{selectedService.description}</p>
-                </div>
-
-                {/* Số lượng */}
-                <div className="d-flex justify-content-between align-items-center">
-                  <Form.Label className="small fw-semibold text-dark mb-0">Số lượng</Form.Label>
-                  <div className="d-flex align-items-center gap-2">
-                    <Button variant="outline-secondary" size="sm" style={{ width: 32, height: 32, padding: 0 }} onClick={() => setQuantity((q) => Math.max(1, q - 1))} disabled={quantity <= 1}>-</Button>
-                    <Form.Control type="number" min="1" max="99" value={quantity} onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))} style={{ width: 56, textAlign: 'center', height: 32 }} />
-                    <Button variant="outline-secondary" size="sm" style={{ width: 32, height: 32, padding: 0 }} onClick={() => setQuantity((q) => q + 1)}>+</Button>
-                  </div>
-                </div>
-
-                {/* Trường nhập riêng theo từng chế độ */}
-                {orderTargetMode === 'PRE_ORDER' ? (
-                  <>
-                    <div>
-                      <Form.Label className="small fw-semibold text-dark mb-1">
-                        Thời gian đón / phục vụ dự kiến <span className="text-danger">*</span>
-                      </Form.Label>
-                      <Form.Control
-                        type="text"
-                        placeholder="Ví dụ: 14:00 ngày 15/11/2026 hoặc Khi hạ cánh"
-                        value={scheduledTime}
-                        onChange={(e) => setScheduledTime(e.target.value)}
-                        required
-                        style={{ fontSize: 13 }}
-                      />
-                    </div>
-                    <div>
-                      <Form.Label className="small fw-semibold text-dark mb-1">
-                        Chi tiết hành trình / Yêu cầu riêng
-                      </Form.Label>
-                      <Form.Control
-                        as="textarea"
-                        rows={2}
-                        placeholder="Ví dụ: Chuyến bay VN214 hạ cánh 13:30 tại ga T2, 4 hành khách, 2 vali to..."
-                        value={flightDetails}
-                        onChange={(e) => setFlightDetails(e.target.value)}
-                        style={{ fontSize: 13 }}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <Form.Label className="small fw-semibold text-dark mb-1">
-                        Thời gian muốn nhận / phục vụ tại phòng <span className="text-danger">*</span>
-                      </Form.Label>
-                      <Form.Control
-                        type="text"
-                        placeholder="Ví dụ: Giao ngay, 19:30 tối nay, hoặc 07:00 sáng mai..."
-                        value={scheduledTime}
-                        onChange={(e) => setScheduledTime(e.target.value)}
-                        required
-                        style={{ fontSize: 13 }}
-                      />
-                    </div>
-                    <div>
-                      <Form.Label className="small fw-semibold text-dark mb-1">
-                        Yêu cầu / Ghi chú cho phục vụ <span className="text-secondary fw-normal">(tùy chọn)</span>
-                      </Form.Label>
-                      <Form.Control
-                        as="textarea"
-                        rows={2}
-                        placeholder="Ví dụ: Ít đá, không đường, mang thêm ly, gõ cửa nhẹ..."
-                        value={roomServiceNotes}
-                        onChange={(e) => setRoomServiceNotes(e.target.value)}
-                        style={{ fontSize: 13 }}
-                      />
-                    </div>
-                  </>
-                )}
-
-                {/* Tạm tính chi phí */}
-                <div style={{ background: '#F5F4ED', border: '1px dashed #D6D3C7', borderRadius: 8, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div className="small text-secondary">Tạm tính chi phí</div>
-                    <div className="text-secondary" style={{ fontSize: 11 }}>
-                      {orderTargetMode === 'PRE_ORDER'
-                        ? 'Chi phí sẽ được cộng vào hóa đơn phòng sau khi nhận phòng'
-                        : 'Được ghi nhận vào hóa đơn phòng khi hoàn tất phục vụ'}
-                    </div>
-                  </div>
-                  <strong style={{ color: '#C96442', fontSize: 18, fontFamily: 'var(--font-mono, monospace)' }}>
-                    {formatVND(lineEstimatedTotal)}
-                  </strong>
-                </div>
-              </div>
-            )}
-          </Modal.Body>
-
-          <Modal.Footer style={{ background: '#FAF9F5', borderTop: '1px solid #E8E6DC' }}>
-            <Button variant="outline-secondary" onClick={() => setShowOrderModal(false)} disabled={submittingOrder} style={{ fontSize: 13 }}>
-              Hủy
-            </Button>
-            <Button
-              type="submit"
-              disabled={
-                submittingOrder ||
-                !selectedService ||
-                (orderTargetMode === 'ACTIVE_STAY' && !selectedStayId) ||
-                (orderTargetMode === 'PRE_ORDER' && !selectedReservationId)
-              }
-              style={{
-                background: orderTargetMode === 'PRE_ORDER' ? '#0284C7' : '#16233B',
-                borderColor: orderTargetMode === 'PRE_ORDER' ? '#0284C7' : '#16233B',
-                color: '#FAF9F5',
-                fontWeight: 600,
-                padding: '8px 20px',
-                fontSize: 13,
-              }}
-            >
-              {submittingOrder ? (
-                <>
-                  <Spinner size="sm" animation="border" className="me-2" />
-                  Đang ghi nhận...
-                </>
-              ) : orderTargetMode === 'PRE_ORDER' ? (
-                'Xác Nhận Đặt Trước'
-              ) : (
-                'Gửi Yêu Cầu Phục Vụ'
-              )}
-            </Button>
-          </Modal.Footer>
-        </Form>
-      </Modal>
-      {/* Modal Xác Nhận Hủy Đặt Trước Cho Khách Hàng (Thay thế window.confirm/alert) */}
-      <Modal show={!!cancelModalData} onHide={() => !cancellingPreOrder && setCancelModalData(null)} centered>
-        <Modal.Header closeButton style={{ borderBottom: '1px solid #F1F5F9' }}>
-          <Modal.Title style={{ fontSize: 16, fontWeight: 700, color: '#16233B' }}>
-            Xác Nhận Hủy Dịch Vụ Đặt Trước
-          </Modal.Title>
-        </Modal.Header>
-        <Modal.Body className="p-3">
-          <p className="text-secondary mb-2" style={{ fontSize: 13.5 }}>
-            Quý khách có chắc chắn muốn hủy yêu cầu đặt trước dịch vụ này cho chuyến đi{' '}
-            <strong className="text-dark">#{cancelModalData?.reservationCode}</strong>?
-          </p>
-
-          <div
-            style={{
-              background: '#FFF1F2',
-              border: '1px solid #FFE4E6',
-              borderRadius: 8,
-              padding: '12px 14px',
-              fontSize: 13,
-              marginBottom: 12,
-            }}
-          >
-            <div className="fw-bold" style={{ color: '#BE123C', fontSize: 14 }}>
-              {cancelModalData?.serviceName} (SL: {cancelModalData?.quantity})
-            </div>
-            {cancelModalData?.scheduledTime && (
-              <div className="text-secondary small mt-1">
-                Thời gian hẹn: <strong className="text-dark">{cancelModalData.scheduledTime}</strong>
-              </div>
-            )}
-            {cancelModalData?.details && cancelModalData.details !== 'Không' && (
-              <div className="text-secondary small">
-                Chi tiết: {cancelModalData.details}
-              </div>
-            )}
-          </div>
-
-          {Number(cancelModalData?.quantity) > 1 && (
-            <div className="mb-3 p-2.5 rounded-2" style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', padding: '10px 12px' }}>
-              <Form.Label className="fw-semibold mb-1 text-dark" style={{ fontSize: 12.5 }}>
-                Số lượng muốn hủy (Đang đặt: {cancelModalData?.quantity} suất):
-              </Form.Label>
-              <div className="d-flex align-items-center gap-2">
-                <Form.Select
-                  size="sm"
-                  value={cancelModalData?.cancelQty || cancelModalData?.quantity}
-                  onChange={(e) =>
-                    setCancelModalData((prev) => ({
-                      ...prev,
-                      cancelQty: Number(e.target.value),
-                    }))
-                  }
-                  style={{ maxWidth: 210, fontSize: 13 }}
-                >
-                  {Array.from({ length: Number(cancelModalData?.quantity) || 1 }, (_, i) => i + 1).map((num) => (
-                    <option key={num} value={num}>
-                      {num === Number(cancelModalData?.quantity)
-                        ? `Hủy toàn bộ (${num} suất)`
-                        : `Hủy ${num} suất (Giữ lại ${Number(cancelModalData?.quantity) - num} suất)`}
-                    </option>
-                  ))}
-                </Form.Select>
-              </div>
-            </div>
-          )}
-
-          <div className="text-muted small" style={{ fontSize: 12 }}>
-            Sau khi hủy, yêu cầu sẽ được cập nhật khỏi lịch trình đón tiếp của khách sạn. Quý khách vẫn có thể đặt lại bất kỳ lúc nào trước khi nhận phòng.
-          </div>
-        </Modal.Body>
-        <Modal.Footer style={{ borderTop: '1px solid #F1F5F9', padding: '10px 16px' }}>
-          <Button
-            variant="outline-secondary"
-            size="sm"
-            onClick={() => setCancelModalData(null)}
-            disabled={!!cancellingPreOrder}
-            style={{ fontSize: 12.5, borderRadius: 6 }}
-          >
-            Giữ lại
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            onClick={handleConfirmCancelCustomerPreOrder}
-            disabled={!!cancellingPreOrder}
-            style={{ fontSize: 12.5, borderRadius: 6, fontWeight: 600 }}
-          >
-            {cancellingPreOrder ? (
-              <>
-                <Spinner size="sm" animation="border" className="me-1" />
-                Đang hủy...
-              </>
-            ) : (
-              'Xác nhận hủy'
-            )}
-          </Button>
-        </Modal.Footer>
-      </Modal>
-
-      {/* Modal Hủy Đơn Dịch Vụ Gọi Tại Phòng (Khi đơn còn ORDERED) */}
-      <Modal show={!!voidRoomOrderModal} onHide={() => !voidingRoomOrder && setVoidRoomOrderModal(null)} centered>
-        <Modal.Header closeButton style={{ borderBottom: '1px solid #F1F5F9' }}>
-          <Modal.Title style={{ fontSize: 16, fontWeight: 700, color: '#16233B' }}>
-            Hủy Đơn Gọi Dịch Vụ Phòng #{voidRoomOrderModal?.order?.serviceOrderId}
-          </Modal.Title>
-        </Modal.Header>
-        <Form onSubmit={handleConfirmVoidRoomOrder}>
-          <Modal.Body className="p-3">
-            <div
-              style={{
-                background: '#FFF1F2',
-                border: '1px solid #FFE4E6',
-                borderRadius: 8,
-                padding: '12px 14px',
-                fontSize: 13,
-                marginBottom: 12,
-              }}
-            >
-              <div className="fw-bold" style={{ color: '#BE123C', fontSize: 14 }}>
-                {voidRoomOrderModal?.order?.serviceName} (SL: {voidRoomOrderModal?.order?.quantity})
-              </div>
-              <div className="text-secondary small mt-1">
-                Thành tiền: <strong className="text-dark">{formatVND(voidRoomOrderModal?.order?.totalAmount)}</strong>
-              </div>
-              {voidRoomOrderModal?.order?.notes && (
-                <div className="text-secondary small mt-1">
-                  Ghi chú đã gửi: {formatOrderNotes(voidRoomOrderModal.order.notes)}
-                </div>
-              )}
-            </div>
-
-            <Form.Group className="mb-2">
-              <Form.Label className="fw-semibold" style={{ fontSize: 13 }}>
-                Lý do hủy đơn <span className="text-danger">*</span>
-              </Form.Label>
-              <Form.Control
-                as="textarea"
-                rows={2}
-                required
-                placeholder="VD: Đặt nhầm món, đổi sang món khác, không còn nhu cầu..."
-                value={voidRoomOrderModal?.reason || ''}
-                onChange={(e) =>
-                  setVoidRoomOrderModal((prev) => (prev ? { ...prev, reason: e.target.value } : null))
-                }
-                style={{ fontSize: 13 }}
-              />
-            </Form.Group>
-            <div className="text-muted small" style={{ fontSize: 12 }}>
-              Đơn đang ở trạng thái <strong>Chờ nhân viên xác nhận</strong>. Khi nhân viên đã xác nhận tiếp nhận chuẩn bị phục vụ, đơn sẽ được khóa hủy.
-            </div>
-          </Modal.Body>
-          <Modal.Footer style={{ borderTop: '1px solid #F1F5F9', padding: '10px 16px' }}>
-            <Button
-              variant="outline-secondary"
-              size="sm"
-              onClick={() => setVoidRoomOrderModal(null)}
-              disabled={voidingRoomOrder}
-              style={{ fontSize: 12.5, borderRadius: 6 }}
-            >
-              Đóng
-            </Button>
-            <Button
-              type="submit"
-              variant="danger"
-              size="sm"
-              disabled={voidingRoomOrder}
-              style={{ fontSize: 12.5, borderRadius: 6, fontWeight: 600 }}
-            >
-              {voidingRoomOrder ? (
-                <>
-                  <Spinner size="sm" animation="border" className="me-1" />
-                  Đang hủy...
-                </>
-              ) : (
-                'Xác nhận hủy đơn'
-              )}
-            </Button>
-          </Modal.Footer>
-        </Form>
-      </Modal>
-
-      {/* Modal Xem Chi Tiết Đơn Dịch Vụ / Lịch Đặt Trước Của Khách Hàng */}
-      <Modal show={!!customerDetailModal} onHide={() => setCustomerDetailModal(null)} centered>
-        <Modal.Header closeButton style={{ background: '#FAF9F5', borderBottom: '1px solid #E8E6DC' }}>
-          <Modal.Title style={{ fontSize: 16, fontWeight: 700, color: '#16233B' }}>
-            {customerDetailModal?.mode === 'PRE_ORDER'
-              ? 'Chi Tiết Lịch Đặt Trước Dịch Vụ'
-              : `Chi Tiết Đơn Phục Vụ Tại Phòng #${customerDetailModal?.data?.serviceOrderId || ''}`}
-          </Modal.Title>
-        </Modal.Header>
-        <Modal.Body className="p-3" style={{ fontSize: 13.5 }}>
-          {customerDetailModal?.mode === 'PRE_ORDER' && customerDetailModal.data && (
-            <div className="d-flex flex-column gap-2">
-              <div className="p-3 rounded-3" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
-                <div className="fw-bold" style={{ fontSize: 15, color: '#0369A1' }}>
-                  {customerDetailModal.data.serviceName}
-                </div>
-                <div className="small text-secondary mt-1">
-                  Mã đặt phòng: <strong className="text-dark">#{customerDetailModal.data.reservationCode}</strong> • Hạng phòng:{' '}
-                  <strong className="text-dark">{customerDetailModal.data.roomTypeName}</strong>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-3" style={{ background: '#FFFFFF', border: '1px solid #E2E8F0' }}>
-                <div className="row g-2">
-                  <div className="col-6">
-                    <div className="text-secondary small">Số lượng đặt:</div>
-                    <div className="fw-bold text-dark">{customerDetailModal.data.quantity} suất</div>
-                  </div>
-                  <div className="col-6">
-                    <div className="text-secondary small">Trạng thái:</div>
-                    {customerDetailModal.data.matchedOrder?.status === 'COMPLETED' ? (
-                      <Badge bg="success">Đã tính vào tiền phòng</Badge>
-                    ) : customerDetailModal.data.matchedOrder?.status === 'ORDERED' ? (
-                      <Badge bg="primary">Đang phục vụ</Badge>
-                    ) : customerDetailModal.data.isCheckedIn ? (
-                      <Badge bg="warning" text="dark">Chờ phục vụ &amp; tính tiền</Badge>
-                    ) : (
-                      <Badge bg="info" text="dark">Đã ghi nhận (Chờ check-in)</Badge>
-                    )}
-                  </div>
-                  <div className="col-12 mt-2">
-                    <div className="text-secondary small">Thời gian hẹn phục vụ / đón tiếp:</div>
-                    <div className="fw-semibold text-primary mt-0.5">
-                      {customerDetailModal.data.scheduledTime || 'Trước khi nhận phòng (Tiêu chuẩn)'}
-                    </div>
-                  </div>
-                  <div className="col-12 mt-2">
-                    <div className="text-secondary small">Chi tiết chuyến bay / Yêu cầu ghi chú:</div>
-                    <div
-                      className="p-2 rounded-2 mt-1 text-dark"
-                      style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}
-                    >
-                      {customerDetailModal.data.details || 'Không có ghi chú đặc biệt'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {customerDetailModal?.mode === 'ROOM_ORDER' && customerDetailModal.data && (
-            <div className="d-flex flex-column gap-2">
-              <div className="p-3 rounded-3" style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                <div className="d-flex justify-content-between align-items-start">
-                  <div>
-                    <div className="fw-bold" style={{ fontSize: 15, color: '#166534' }}>
-                      {customerDetailModal.data.serviceName}
-                    </div>
-                    <div className="small text-secondary mt-0.5">
-                      Danh mục: {customerDetailModal.data.category || 'Dịch vụ phòng'} • Phòng: <strong>{friendlyRoomNumber}</strong>
-                    </div>
-                  </div>
-                  <Badge
-                    bg={
-                      customerDetailModal.data.status === 'COMPLETED'
-                        ? 'success'
-                        : customerDetailModal.data.status === 'ORDERED' && customerDetailModal.data.staffConfirmed
-                        ? 'primary'
-                        : customerDetailModal.data.status === 'ORDERED'
-                        ? 'warning'
-                        : 'secondary'
-                    }
-                    text={
-                      customerDetailModal.data.status === 'ORDERED' && !customerDetailModal.data.staffConfirmed
-                        ? 'dark'
-                        : 'white'
-                    }
-                  >
-                    {customerDetailModal.data.status === 'COMPLETED'
-                      ? 'Đã phục vụ (COMPLETED)'
-                      : customerDetailModal.data.status === 'ORDERED' && customerDetailModal.data.staffConfirmed
-                      ? 'Đã xác nhận - Chờ phục vụ'
-                      : customerDetailModal.data.status === 'ORDERED'
-                      ? 'Chờ nhân viên xác nhận'
-                      : 'Đã hủy (VOIDED)'}
-                  </Badge>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-3" style={{ background: '#FFFFFF', border: '1px solid #E2E8F0' }}>
-                <div className="row g-2">
-                  <div className="col-6">
-                    <div className="text-secondary small">Mã đơn dịch vụ:</div>
-                    <div className="fw-bold text-dark">#{customerDetailModal.data.serviceOrderId}</div>
-                  </div>
-                  <div className="col-6">
-                    <div className="text-secondary small">Thời gian đặt:</div>
-                    <div className="fw-semibold text-dark">{formatDateTime(customerDetailModal.data.orderTime)}</div>
-                  </div>
-                  <div className="col-4 mt-2">
-                    <div className="text-secondary small">Số lượng:</div>
-                    <div className="fw-bold text-dark">{customerDetailModal.data.quantity}</div>
-                  </div>
-                  <div className="col-4 mt-2">
-                    <div className="text-secondary small">Đơn giá:</div>
-                    <div className="text-dark">{formatVND(customerDetailModal.data.unitPrice)}</div>
-                  </div>
-                  <div className="col-4 mt-2">
-                    <div className="text-secondary small">Thành tiền:</div>
-                    <div className="fw-bold" style={{ color: '#C96442' }}>
-                      {formatVND(
-                        customerDetailModal.data.totalAmount ||
-                          customerDetailModal.data.unitPrice * customerDetailModal.data.quantity
-                      )}
-                    </div>
-                  </div>
-                  <div className="col-12 mt-2">
-                    <div className="text-secondary small">Ghi chú / Thời gian muốn nhận tại phòng:</div>
-                    <div
-                      className="p-2 rounded-2 mt-1 text-dark"
-                      style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', whiteSpace: 'pre-wrap' }}
-                    >
-                      {formatOrderNotes(customerDetailModal.data.notes) || 'Giao ngay tiêu chuẩn (Không có ghi chú riêng)'}
-                    </div>
-                  </div>
-                  {customerDetailModal.data.status === 'VOIDED' && customerDetailModal.data.cancelReason && (
-                    <div className="col-12 mt-2">
-                      <div className="text-danger small fw-semibold">Lý do hủy đơn:</div>
-                      <div
-                        className="p-2 rounded-2 mt-1 text-danger"
-                        style={{ background: '#FFF1F2', border: '1px solid #FFE4E6' }}
-                      >
-                        {customerDetailModal.data.cancelReason}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </Modal.Body>
-        <Modal.Footer style={{ borderTop: '1px solid #F1F5F9', padding: '10px 16px' }}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setCustomerDetailModal(null)}
-            style={{ fontSize: 12.5, borderRadius: 6 }}
-          >
-            Đóng
-          </Button>
-        </Modal.Footer>
-      </Modal>
+      {/* Modal Xem Chi Tiết Đơn Dịch Vụ / Lịch Đặt Trước */}
+      {customerDetailModal && (
+        <CustomerOrderDetailModal
+          customerDetailModal={customerDetailModal}
+          onClose={() => setCustomerDetailModal(null)}
+          friendlyRoomNumber={friendlyRoomNumber}
+        />
+      )}
     </div>
   );
 };

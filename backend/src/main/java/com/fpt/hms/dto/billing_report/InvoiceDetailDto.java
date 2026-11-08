@@ -71,5 +71,6 @@ public class InvoiceDetailDto {
     private Instant paidAt;
     private String cashierName;
     private String notes;
+    private String specialNotes;
 }
 

@@ -101,7 +101,7 @@ public class BillingServiceImpl implements BillingService {
     public HotelService updateServiceStatus(Integer serviceId, String status) {
         String normalized = status == null ? "" : status.trim().toUpperCase();
         if (!SERVICE_ACTIVE.equals(normalized) && !SERVICE_INACTIVE.equals(normalized)) {
-            throw new BusinessException("INVALID_SERVICE_STATUS", "Tráº¡ng thÃ¡i dá»‹ch vá»¥ chá»‰ Ä‘Æ°á»£c lÃ  ACTIVE hoáº·c INACTIVE.");
+            throw new BusinessException("INVALID_SERVICE_STATUS", "Trạng thái dịch vụ chỉ được là ACTIVE hoặc INACTIVE.");
         }
         HotelService service = findService(serviceId);
         service.setStatus(normalized);
@@ -162,8 +162,14 @@ public class BillingServiceImpl implements BillingService {
 
                     Folio stayFolio = folioRepository.findByGuestStay_StayId(stay.getStayId()).orElse(null);
                     String folioStatus = stayFolio != null ? stayFolio.getStatus() : "OPEN";
-                    BigDecimal totalAmount = stayFolio != null && stayFolio.getTotalAmount() != null
-                            ? stayFolio.getTotalAmount() : BigDecimal.ZERO;
+                    BigDecimal totalAmount = BigDecimal.ZERO;
+                    if (stayFolio != null && "CLOSED".equalsIgnoreCase(stayFolio.getStatus()) && stayFolio.getTotalAmount() != null) {
+                        totalAmount = stayFolio.getTotalAmount();
+                    } else if (stayFolio != null && stayFolio.getTotalAmount() != null && stayFolio.getTotalAmount().compareTo(BigDecimal.ZERO) > 0) {
+                        totalAmount = stayFolio.getTotalAmount();
+                    } else {
+                        totalAmount = calculateEstimatedStayTotal(stay, stayFolio, checkInDate, checkOutDate);
+                    }
 
                     return com.fpt.hms.dto.billing_report.ActiveStaySelectDto.builder()
                             .stayId(stay.getStayId())
@@ -182,6 +188,65 @@ public class BillingServiceImpl implements BillingService {
                             .build();
                 })
                 .toList();
+    }
+
+    private BigDecimal calculateEstimatedStayTotal(GuestStay stay, Folio stayFolio, LocalDate checkInDate, LocalDate checkOutDate) {
+        BigDecimal roomSubtotal = BigDecimal.ZERO;
+        Reservation res = stay.getReservation();
+
+        if (res != null && res.getDetails() != null && !res.getDetails().isEmpty()) {
+            for (ReservationDetail detail : res.getDetails()) {
+                int qty = detail.getQuantity() != null ? detail.getQuantity() : 1;
+                if (detail.getNightlyRates() != null && !detail.getNightlyRates().isEmpty()) {
+                    for (ReservationNightlyRate rate : detail.getNightlyRates()) {
+                        roomSubtotal = roomSubtotal.add(rate.getUnitPrice().multiply(BigDecimal.valueOf(qty)));
+                    }
+                }
+            }
+        }
+
+        if (roomSubtotal.compareTo(BigDecimal.ZERO) == 0) {
+            BigDecimal basePrice = BigDecimal.valueOf(500000);
+            if (res != null && res.getDetails() != null && !res.getDetails().isEmpty()
+                    && res.getDetails().get(0).getRoomType() != null
+                    && res.getDetails().get(0).getRoomType().getBasePrice() != null) {
+                basePrice = res.getDetails().get(0).getRoomType().getBasePrice();
+            } else if (stay.getRoomAssignments() != null && !stay.getRoomAssignments().isEmpty()) {
+                Room r = stay.getRoomAssignments().get(stay.getRoomAssignments().size() - 1).getRoom();
+                if (r != null && r.getRoomType() != null && r.getRoomType().getBasePrice() != null) {
+                    basePrice = r.getRoomType().getBasePrice();
+                }
+            }
+            LocalDate cur = checkInDate != null ? checkInDate : LocalDate.now();
+            LocalDate end = checkOutDate != null ? checkOutDate : cur.plusDays(1);
+            if (!end.isAfter(cur)) {
+                end = cur.plusDays(1);
+            }
+            while (cur.isBefore(end)) {
+                roomSubtotal = roomSubtotal.add(basePrice);
+                cur = cur.plusDays(1);
+            }
+        }
+
+        // Add completed services
+        List<ServiceOrder> orders = serviceOrderRepository.findByGuestStay_StayIdOrderByOrderTimeDesc(stay.getStayId());
+        BigDecimal serviceSubtotal = orders.stream()
+                .filter(o -> ServiceOrderStatus.COMPLETED.name().equalsIgnoreCase(o.getStatus()))
+                .map(o -> o.getUnitPrice().multiply(BigDecimal.valueOf(o.getQuantity() != null ? o.getQuantity() : 1)))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        // Add additional charges
+        BigDecimal additionalSubtotal = BigDecimal.ZERO;
+        if (stayFolio != null) {
+            additionalSubtotal = additionalChargeRepository.findByFolio_FolioId(stayFolio.getFolioId()).stream()
+                    .filter(c -> !"CANCELLED".equalsIgnoreCase(c.getStatus()) && !"VOID".equalsIgnoreCase(c.getStatus()))
+                    .map(AdditionalCharge::getAmount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
+        BigDecimal subtotal = roomSubtotal.add(serviceSubtotal).add(additionalSubtotal);
+        BigDecimal tax = subtotal.multiply(new BigDecimal("0.08")).setScale(2, RoundingMode.HALF_UP);
+        return subtotal.add(tax);
     }
 
     @Override
@@ -209,6 +274,12 @@ public class BillingServiceImpl implements BillingService {
         }
         if (!GuestStayStatus.ACTIVE.name().equalsIgnoreCase(stay.getStatus())) {
             throw new BusinessException("MSG11", messageResolver.resolve("MSG11"));
+        }
+
+        Folio folio = folioRepository.findByGuestStay_StayId(stay.getStayId()).orElse(null);
+        if (folio != null && FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
+            folio.setStatus("OPEN");
+            folioRepository.save(folio);
         }
 
         HotelService service = findService(request.getServiceId());
@@ -268,15 +339,24 @@ public class BillingServiceImpl implements BillingService {
     public ServiceOrderDto completeServiceOrder(Integer orderId, Integer callerAccountId) {
         ServiceOrder order = findOrder(orderId);
         if (!isOrderConfirmedByStaff(order)) {
-            throw new BusinessException("ORDER_NOT_CONFIRMED", "Đơn dịch vụ của khách phải được nhân viên xác nhận chuyển sang chờ phục vụ trước khi hoàn thành.");
+            Staff staff = findStaff(callerAccountId);
+            if (staff != null) {
+                order.setRecordedByStaff(staff);
+            }
+            String currentRaw = order.getCancelReason();
+            if (currentRaw == null || currentRaw.isBlank()) {
+                order.setCancelReason("[ĐÃ XÁC NHẬN]");
+            } else if (!currentRaw.contains("[ĐÃ XÁC NHẬN]")) {
+                order.setCancelReason("[ĐÃ XÁC NHẬN] " + currentRaw.trim());
+            }
         }
         if (!ServiceOrderStatus.ORDERED.name().equals(order.getStatus())) {
             throw new BusinessException("SERVICE_ORDER_STATE", "Chá»‰ Ä‘Æ¡n dá»‹ch vá»¥ Ä‘ang chá» cung cáº¥p má»›i cÃ³ thá»ƒ hoÃ n thÃ nh.");
         }
         Folio folio = folioRepository.findByGuestStay_StayId(order.getGuestStay().getStayId())
-                .orElseThrow(() -> new ResourceNotFoundException("KhÃ´ng tÃ¬m tháº¥y Folio cá»§a lÆ°á»£t lÆ°u trÃº."));
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hóa đơn phòng (Folio) của lượt lưu trú."));
         if (FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
-            throw new BusinessException("FOLIO_CLOSED", "Folio Ä‘Ã£ Ä‘Ã³ng, khÃ´ng thá»ƒ ghi thÃªm phÃ­ dá»‹ch vá»¥.");
+            folio.setStatus("OPEN");
         }
 
         order.setStatus(ServiceOrderStatus.COMPLETED.name());
@@ -304,21 +384,40 @@ public class BillingServiceImpl implements BillingService {
     @Transactional
     public ServiceOrderDto voidServiceOrder(Integer orderId, String cancelReason, Integer callerAccountId, String callerRole) {
         if (cancelReason == null || cancelReason.isBlank()) {
-            throw new BusinessException("CANCEL_REASON_REQUIRED", "Vui lÃ²ng nháº­p lÃ½ do há»§y dá»‹ch vá»¥.");
+            throw new BusinessException("CANCEL_REASON_REQUIRED", "Vui lòng nhập lý do hủy dịch vụ.");
         }
         ServiceOrder order = findOrder(orderId);
-        if ("CUSTOMER".equalsIgnoreCase(callerRole) && !isStayOwner(order.getGuestStay(), callerAccountId)) {
-            throw new BusinessException("AUTH_FORBIDDEN", "Quý khách không có quyền hủy đơn dịch vụ của phòng này.",
-                    org.springframework.http.HttpStatus.FORBIDDEN);
+
+        if (ServiceOrderStatus.VOIDED.name().equalsIgnoreCase(order.getStatus())) {
+            throw new BusinessException("ORDER_ALREADY_VOIDED", "Đơn dịch vụ này đã bị hủy trước đó.");
         }
-        // UC-36: only services that have not been provided yet can be voided.
-        if (!ServiceOrderStatus.ORDERED.name().equals(order.getStatus())) {
-            throw new BusinessException("SERVICE_ORDER_STATE", "Chá»‰ Ä‘Æ°á»£c há»§y dá»‹ch vá»¥ chÆ°a cung cáº¥p.");
+
+        GuestStay stay = order.getGuestStay();
+        if (stay != null) {
+            Folio folio = folioRepository.findByGuestStay_StayId(stay.getStayId()).orElse(null);
+            if (folio != null && FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
+                throw new BusinessException("FOLIO_CLOSED", "Hóa đơn phòng đã được thanh toán và đóng, không thể hủy đơn dịch vụ.");
+            }
         }
+
+        if (ServiceOrderStatus.COMPLETED.name().equalsIgnoreCase(order.getStatus())) {
+            throw new BusinessException("SERVICE_ORDER_STATE", "Đơn dịch vụ đã hoàn thành, không thể hủy.");
+        }
+
+        if (!ServiceOrderStatus.ORDERED.name().equalsIgnoreCase(order.getStatus())) {
+            throw new BusinessException("SERVICE_ORDER_STATE", "Chỉ đơn dịch vụ đang chờ xác nhận mới có thể hủy.");
+        }
+
         if (isOrderConfirmedByStaff(order)) {
             throw new BusinessException("ORDER_ALREADY_CONFIRMED",
                     "Đơn dịch vụ đã được nhân viên xác nhận chuyển sang chờ phục vụ, không thể hủy.");
         }
+
+        if ("CUSTOMER".equalsIgnoreCase(callerRole) && !isStayOwner(order.getGuestStay(), callerAccountId)) {
+            throw new BusinessException("AUTH_FORBIDDEN", "Quý khách không có quyền hủy đơn dịch vụ của phòng này.",
+                    org.springframework.http.HttpStatus.FORBIDDEN);
+        }
+
         order.setStatus(ServiceOrderStatus.VOIDED.name());
         order.setCancelledAt(Instant.now());
 
@@ -927,6 +1026,7 @@ public class BillingServiceImpl implements BillingService {
                 .checkOutDate(folioDetail.getCheckOutDate())
                 .actualCheckIn(stay.getActualCheckIn())
                 .actualCheckOut(stay.getActualCheckOut())
+                .specialNotes(res != null ? res.getSpecialNotes() : null)
                 .roomNights(folioDetail.getRoomNights())
                 .serviceOrders(folioDetail.getServiceOrders())
                 .additionalCharges(folioDetail.getAdditionalCharges())
@@ -1130,6 +1230,7 @@ public class BillingServiceImpl implements BillingService {
                 .checkOutDate(checkOutDate)
                 .actualCheckIn(stay.getActualCheckIn())
                 .actualCheckOut(stay.getActualCheckOut())
+                .specialNotes(res != null ? res.getSpecialNotes() : null)
                 .roomNights(roomNights)
                 .serviceOrders(serviceOrders)
                 .additionalCharges(additionalCharges)
@@ -1208,6 +1309,7 @@ public class BillingServiceImpl implements BillingService {
                 .checkOutDate(folioDetail.getCheckOutDate())
                 .actualCheckIn(stay.getActualCheckIn())
                 .actualCheckOut(stay.getActualCheckOut())
+                .specialNotes(res != null ? res.getSpecialNotes() : null)
                 .roomNights(folioDetail.getRoomNights())
                 .serviceOrders(folioDetail.getServiceOrders())
                 .additionalCharges(folioDetail.getAdditionalCharges())
@@ -1295,20 +1397,39 @@ public class BillingServiceImpl implements BillingService {
     @Override
     @Transactional
     public String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer callerAccountId, String callerRole) {
-        return cancelPreOrderFromNotes(reservationId, serviceId, null, null, callerAccountId, callerRole);
+        return cancelPreOrderFromNotes(reservationId, serviceId, null, null, null, callerAccountId, callerRole);
     }
 
     @Override
     @Transactional
     public String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer itemIndex, Integer cancelQuantity, Integer callerAccountId, String callerRole) {
+        return cancelPreOrderFromNotes(reservationId, serviceId, itemIndex, cancelQuantity, null, callerAccountId, callerRole);
+    }
+
+    @Override
+    @Transactional
+    public String cancelPreOrderFromNotes(Integer reservationId, Integer serviceId, Integer itemIndex, Integer cancelQuantity, String cancelReason, Integer callerAccountId, String callerRole) {
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng."));
 
-        if ("CUSTOMER".equals(callerRole)) {
+        if (cancelReason == null || cancelReason.isBlank()) {
+            throw new BusinessException("CANCEL_REASON_REQUIRED", "Vui lòng nhập lý do hủy dịch vụ đặt trước.");
+        }
+
+        if ("CUSTOMER".equalsIgnoreCase(callerRole)) {
             Customer customer = reservation.getCustomer();
             if (customer == null || customer.getAccount() == null
                     || !customer.getAccount().getAccountId().equals(callerAccountId)) {
                 throw new BusinessException("AUTH_FORBIDDEN", "Quý khách không có quyền thao tác trên đơn đặt phòng này.");
+            }
+        }
+
+        Optional<GuestStay> stayOpt = guestStayRepository.findByReservation_ReservationId(reservationId);
+        if (stayOpt.isPresent()) {
+            GuestStay stay = stayOpt.get();
+            Folio folio = folioRepository.findByGuestStay_StayId(stay.getStayId()).orElse(null);
+            if (folio != null && FOLIO_CLOSED.equalsIgnoreCase(folio.getStatus())) {
+                throw new BusinessException("FOLIO_ALREADY_CLOSED", "Kỳ lưu trú đã quyết toán và đóng hóa đơn, không thể hủy dịch vụ đặt trước.");
             }
         }
 
@@ -1318,63 +1439,151 @@ public class BillingServiceImpl implements BillingService {
         }
 
         String[] lines = notes.split("\n");
+        java.util.regex.Pattern idPattern = java.util.regex.Pattern.compile("Mã DV:\\s*(\\d+)");
         java.util.regex.Pattern qtyPattern = java.util.regex.Pattern.compile("SL:\\s*(\\d+)");
+        java.util.regex.Pattern timePattern = java.util.regex.Pattern.compile("Thời gian:\\s*([^|]+)");
+        java.util.regex.Pattern detailPattern = java.util.regex.Pattern.compile("Chi tiết:\\s*(.+)$");
 
-        int totalPreOrderedForService = 0;
-        for (String line : lines) {
-            if (line.contains("[ĐẶT TRƯỚC]") && line.contains("Mã DV: " + serviceId + ")")) {
-                java.util.regex.Matcher m = qtyPattern.matcher(line);
-                totalPreOrderedForService += m.find() ? Integer.parseInt(m.group(1)) : 1;
+        // 1. Phân tích toàn bộ các dòng [ĐẶT TRƯỚC] theo đúng thứ tự
+        List<Integer> preOrderLineIndices = new ArrayList<>();
+        List<Integer> preOrderServiceIds = new ArrayList<>();
+        List<String> preOrderTimes = new ArrayList<>();
+        List<String> preOrderDetails = new ArrayList<>();
+
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.contains("[ĐẶT TRƯỚC]")) {
+                preOrderLineIndices.add(i);
+                java.util.regex.Matcher idM = idPattern.matcher(line);
+                preOrderServiceIds.add(idM.find() ? Integer.parseInt(idM.group(1)) : -1);
+                java.util.regex.Matcher timeM = timePattern.matcher(line);
+                preOrderTimes.add(timeM.find() ? timeM.group(1).trim() : "");
+                java.util.regex.Matcher detailM = detailPattern.matcher(line);
+                preOrderDetails.add(detailM.find() ? detailM.group(1).trim() : "");
             }
         }
 
-        int totalChargedOrOrdered = 0;
-        java.util.Optional<GuestStay> stayOpt = guestStayRepository.findByReservation_ReservationId(reservationId);
-        if (stayOpt.isPresent()) {
-            GuestStay stay = stayOpt.get();
-            totalChargedOrOrdered = serviceOrderRepository.findByGuestStay_StayIdOrderByOrderTimeDesc(stay.getStayId())
-                    .stream()
-                    .filter(o -> o.getHotelService() != null
-                            && o.getHotelService().getServiceId().equals(serviceId)
-                            && ("ORDERED".equalsIgnoreCase(o.getStatus()) || "COMPLETED".equalsIgnoreCase(o.getStatus())))
-                    .mapToInt(o -> o.getQuantity() != null ? o.getQuantity() : 1)
-                    .sum();
+        // 2. Xác định đúng vị trí lượt đặt trước cần hủy (targetPreOrderIdx)
+        int targetPreOrderIdx = -1;
+        for (int pIdx = 0; pIdx < preOrderLineIndices.size(); pIdx++) {
+            boolean isServiceMatch = preOrderServiceIds.get(pIdx).equals(serviceId);
+            boolean isIndexMatch = (itemIndex == null) || (pIdx == itemIndex);
+            if (isServiceMatch && isIndexMatch) {
+                targetPreOrderIdx = pIdx;
+                break;
+            }
         }
 
-        int unchargedRemaining = totalPreOrderedForService - totalChargedOrOrdered;
+        if (targetPreOrderIdx == -1) {
+            return "Đã hủy dịch vụ đặt trước thành công.";
+        }
 
-        java.util.List<String> updatedLines = new java.util.ArrayList<>();
-        int currentPreOrderIdx = 0;
-        boolean targetHandled = false;
+        // 3. Nếu khách đã nhận phòng (GuestStay), đối chiếu 1-1 các lượt [ĐẶT TRƯỚC] với các đơn có thẻ [Đặt trước]
+        // Tuyệt đối KHÔNG lấy các đơn dịch vụ gọi tại phòng thông thường (không có [Đặt trước]) để chặn hủy đặt trước!
+        ServiceOrder matchedOrderForTarget = null;
+        if (stayOpt.isPresent()) {
+            GuestStay stay = stayOpt.get();
+            List<ServiceOrder> preOrderStayOrders = serviceOrderRepository.findByGuestStay_StayIdOrderByOrderTimeDesc(stay.getStayId())
+                    .stream()
+                    .filter(o -> !ServiceOrderStatus.VOIDED.name().equalsIgnoreCase(o.getStatus()))
+                    .filter(o -> {
+                        String raw = o.getCancelReason();
+                        if (raw == null) return false;
+                        String lower = raw.toLowerCase();
+                        return lower.contains("[đặt trước") || lower.contains("[dat truoc");
+                    })
+                    .toList();
 
-        for (String line : lines) {
-            if (line.contains("[ĐẶT TRƯỚC]")) {
-                boolean isServiceMatch = line.contains("Mã DV: " + serviceId + ")");
-                boolean isIndexMatch = (itemIndex == null) || (currentPreOrderIdx == itemIndex);
+            java.util.Set<Integer> usedOrderIds = new java.util.HashSet<>();
+            java.util.Map<Integer, ServiceOrder> matchedByPreOrderIdx = new java.util.HashMap<>();
 
-                if (!targetHandled && isServiceMatch && isIndexMatch) {
-                    java.util.regex.Matcher m = qtyPattern.matcher(line);
-                    int lineQty = m.find() ? Integer.parseInt(m.group(1)) : 1;
-                    int qtyToCancel = (cancelQuantity != null && cancelQuantity > 0)
-                            ? Math.min(cancelQuantity, lineQty)
-                            : lineQty;
+            // Bước 3a: Khớp chính xác theo thẻ [Đặt trước #idx] hoặc (Giờ hẹn & Yêu cầu)
+            for (int pIdx = 0; pIdx < preOrderLineIndices.size(); pIdx++) {
+                Integer pServiceId = preOrderServiceIds.get(pIdx);
+                String pTime = preOrderTimes.get(pIdx);
+                String pDetail = preOrderDetails.get(pIdx);
+                String legacyTag = "[Đặt trước #" + (pIdx + 1) + "]";
+                String timeTag = (!pTime.isEmpty() && !"Không".equalsIgnoreCase(pTime)) ? "Giờ hẹn: " + pTime : null;
+                String detailTag = (!pDetail.isEmpty() && !"Không".equalsIgnoreCase(pDetail)) ? "Yêu cầu: " + pDetail : null;
 
-                    if (stayOpt.isPresent() && qtyToCancel > unchargedRemaining) {
-                        throw new BusinessException("PREORDER_ALREADY_CHARGED",
-                                "Dịch vụ này đã được nạp vào phòng / Folio của khách, không thể hủy từ danh sách đặt trước. Vui lòng hủy thông qua đơn gọi dịch vụ phòng.");
+                for (ServiceOrder o : preOrderStayOrders) {
+                    if (usedOrderIds.contains(o.getServiceOrderId())) continue;
+                    if (o.getHotelService() == null || !o.getHotelService().getServiceId().equals(pServiceId)) continue;
+                    String raw = o.getCancelReason() != null ? o.getCancelReason() : "";
+                    boolean isExact = raw.contains(legacyTag)
+                            || ((timeTag == null || raw.contains(timeTag)) && (detailTag == null || raw.contains(detailTag)));
+                    if (isExact) {
+                        usedOrderIds.add(o.getServiceOrderId());
+                        matchedByPreOrderIdx.put(pIdx, o);
+                        break;
                     }
-
-                    if (qtyToCancel < lineQty) {
-                        int newQty = lineQty - qtyToCancel;
-                        String updatedLine = line.replaceFirst("SL:\\s*\\d+", "SL: " + newQty);
-                        updatedLines.add(updatedLine);
-                    }
-                    // Nếu qtyToCancel >= lineQty thì không add vào updatedLines (tức là xóa dòng này)
-                    targetHandled = true;
-                } else {
-                    updatedLines.add(line);
                 }
-                currentPreOrderIdx++;
+            }
+
+            // Bước 3b: Khớp dự phòng theo thứ tự thời gian cho các đơn [Đặt trước] còn lại
+            List<ServiceOrder> chronologicalPreOrders = new ArrayList<>(preOrderStayOrders);
+            chronologicalPreOrders.sort(java.util.Comparator.comparingInt(o -> o.getServiceOrderId() != null ? o.getServiceOrderId() : 0));
+            for (int pIdx = 0; pIdx < preOrderLineIndices.size(); pIdx++) {
+                if (matchedByPreOrderIdx.containsKey(pIdx)) continue;
+                Integer pServiceId = preOrderServiceIds.get(pIdx);
+                for (ServiceOrder o : chronologicalPreOrders) {
+                    if (usedOrderIds.contains(o.getServiceOrderId())) continue;
+                    if (o.getHotelService() != null && o.getHotelService().getServiceId().equals(pServiceId)) {
+                        usedOrderIds.add(o.getServiceOrderId());
+                        matchedByPreOrderIdx.put(pIdx, o);
+                        break;
+                    }
+                }
+            }
+
+            matchedOrderForTarget = matchedByPreOrderIdx.get(targetPreOrderIdx);
+        }
+
+        // 4. Kiểm tra trạng thái của lượt đặt trước mục tiêu: Chỉ được hủy khi CHƯA XÁC NHẬN / CHƯA HOÀN THÀNH
+        if (matchedOrderForTarget != null) {
+            if (ServiceOrderStatus.COMPLETED.name().equalsIgnoreCase(matchedOrderForTarget.getStatus())) {
+                throw new BusinessException("PREORDER_ALREADY_COMPLETED",
+                        "Lượt dịch vụ đặt trước này đã hoàn thành và tính vào tiền phòng, không thể hủy.");
+            }
+            if (isOrderConfirmedByStaff(matchedOrderForTarget)) {
+                throw new BusinessException("ORDER_ALREADY_CONFIRMED",
+                        "Lượt dịch vụ đặt trước này đã được nhân viên xác nhận chuyển sang chờ phục vụ, không thể hủy.");
+            }
+            // Nếu đơn liên kết đang ở trạng thái ORDERED nhưng chưa xác nhận -> hủy luôn đơn đó
+            matchedOrderForTarget.setStatus(ServiceOrderStatus.VOIDED.name());
+            matchedOrderForTarget.setCancelledAt(Instant.now());
+            matchedOrderForTarget.setCancelledByStaff(findStaff(callerAccountId));
+            String curNotes = matchedOrderForTarget.getCancelReason();
+            String voidText = "[HỦY TỪ LỊCH ĐẶT TRƯỚC] " + cancelReason.trim();
+            if (curNotes != null && curNotes.contains("[GHI CHÚ] ")) {
+                int noteStart = curNotes.indexOf("[GHI CHÚ] ");
+                String existingNotes = curNotes.contains(" || [HỦY] ")
+                        ? curNotes.substring(noteStart, curNotes.indexOf(" || [HỦY] "))
+                        : curNotes.substring(noteStart);
+                matchedOrderForTarget.setCancelReason(existingNotes + " || [HỦY] " + voidText);
+            } else {
+                matchedOrderForTarget.setCancelReason(voidText);
+            }
+            serviceOrderRepository.save(matchedOrderForTarget);
+        }
+
+        // 5. Cập nhật lại danh sách specialNotes (giảm số lượng hoặc xóa dòng đặt trước đã hủy)
+        int targetLineIndexInNotes = preOrderLineIndices.get(targetPreOrderIdx);
+        List<String> updatedLines = new ArrayList<>();
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (i == targetLineIndexInNotes) {
+                java.util.regex.Matcher m = qtyPattern.matcher(line);
+                int lineQty = m.find() ? Integer.parseInt(m.group(1)) : 1;
+                int qtyToCancel = (cancelQuantity != null && cancelQuantity > 0)
+                        ? Math.min(cancelQuantity, lineQty)
+                        : lineQty;
+                if (qtyToCancel < lineQty) {
+                    int newQty = lineQty - qtyToCancel;
+                    String updatedLine = line.replaceFirst("SL:\\s*\\d+", "SL: " + newQty);
+                    updatedLines.add(updatedLine);
+                }
+                // Nếu qtyToCancel >= lineQty thì xóa dòng này khỏi danh sách đặt trước
             } else {
                 updatedLines.add(line);
             }
