@@ -113,7 +113,7 @@ public class GlobalExceptionHandler {
                                                                 HttpServletRequest request) {
         log.warn("Upload rejected: file exceeds the configured size limit");
         return buildResponse(HttpStatus.PAYLOAD_TOO_LARGE, "MSG_IMAGE_TOO_LARGE",
-                "Dung lượng ảnh vượt quá giới hạn cho phép (tối đa 5 MB mỗi file, 25 MB mỗi lần tải lên).",
+                "Dung lượng ảnh vượt quá giới hạn cho phép (tối đa 10 MB mỗi file, 25 MB mỗi lần tải lên).",
                 request);
     }
 

@@ -4,24 +4,17 @@ import { roomApi } from '../../../services/roomApi';
 import { resolveImageUrl } from '../../../lib/imageUrl';
 import { notifyToast } from '../../../lib/http';
 
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB / file (khớp backend app.upload.max-file-size)
-const MAX_FILES_PER_UPLOAD = 10; // khớp backend FileStorageService.MAX_FILES_PER_REQUEST
+// Chỉ 1 ảnh đại diện cho mỗi hạng phòng, tối đa 10 MB/file
+// (khớp backend app.upload.max-file-size).
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
-const splitGallery = (value) =>
-  (value || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-const validateImageFiles = (files) => {
-  for (const file of files) {
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      return `File "${file.name}" không phải ảnh JPG, PNG, WebP hoặc GIF.`;
-    }
-    if (file.size > MAX_IMAGE_SIZE) {
-      return `File "${file.name}" vượt quá 5 MB.`;
-    }
+const validateImageFile = (file) => {
+  if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    return `File "${file.name}" không phải ảnh JPG, PNG, WebP hoặc GIF.`;
+  }
+  if (file.size > MAX_IMAGE_SIZE) {
+    return `File "${file.name}" vượt quá 10 MB.`;
   }
   return null;
 };
@@ -36,14 +29,12 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
     amenities: '',
     description: '',
     imageUrl: '',
-    galleryImages: '',
     isActive: true,
   });
 
-  // File ảnh chọn từ máy (chưa upload): ảnh đại diện + ảnh gallery thêm mới.
+  // File ảnh đại diện chọn từ máy (chưa upload).
   const [mainImageFile, setMainImageFile] = useState(null);
   const [mainPreview, setMainPreview] = useState(null);
-  const [galleryFiles, setGalleryFiles] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -58,7 +49,6 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
         amenities: roomType.amenities || '',
         description: roomType.description || '',
         imageUrl: roomType.imageUrl || '',
-        galleryImages: roomType.galleryImages || '',
         isActive: roomType.isActive !== undefined ? roomType.isActive : true,
       });
     } else {
@@ -69,12 +59,10 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
         amenities: '',
         description: '',
         imageUrl: '',
-        galleryImages: '',
         isActive: true,
       });
     }
     setMainImageFile(null);
-    setGalleryFiles([]);
     setErrorMsg(null);
   }, [roomType, show]);
 
@@ -97,7 +85,7 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    const validationError = validateImageFiles([file]);
+    const validationError = validateImageFile(file);
     if (validationError) {
       setErrorMsg(validationError);
       return;
@@ -112,34 +100,6 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
     if (mainPreview) URL.revokeObjectURL(mainPreview);
     setMainImageFile(null);
     setMainPreview(null);
-  };
-
-  const handleGalleryFilesChange = (e) => {
-    const files = [...(e.target.files || [])];
-    e.target.value = '';
-    if (files.length === 0) return;
-    if (galleryFiles.length + files.length > MAX_FILES_PER_UPLOAD) {
-      setErrorMsg(`Mỗi lần chỉ được tải lên tối đa ${MAX_FILES_PER_UPLOAD} ảnh gallery.`);
-      return;
-    }
-    const validationError = validateImageFiles(files);
-    if (validationError) {
-      setErrorMsg(validationError);
-      return;
-    }
-    setErrorMsg(null);
-    setGalleryFiles((prev) => [...prev, ...files]);
-  };
-
-  const removeGalleryUrl = (url) => {
-    setFormData((prev) => ({
-      ...prev,
-      galleryImages: splitGallery(prev.galleryImages).filter((u) => u !== url).join(','),
-    }));
-  };
-
-  const removeGalleryFile = (index) => {
-    setGalleryFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e) => {
@@ -161,21 +121,16 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
 
     setLoading(true);
     try {
-      // Upload trước, lấy đường dẫn rồi mới lưu form — đường dẫn trả về
-      // được lưu vào imageUrl / galleryImages y như khi dán link ngoài.
-      // Gộp ảnh đại diện + gallery vào 1 lần upload, giữ đúng thứ tự:
-      // link đầu tiên là ảnh đại diện, các link còn lại vào gallery.
+      // Upload ảnh đại diện trước, lấy đường dẫn rồi mới lưu form —
+      // đường dẫn trả về được lưu vào imageUrl y như khi dán link ngoài.
       let imageUrl = formData.imageUrl.trim();
-      let galleryList = splitGallery(formData.galleryImages);
-      const filesToUpload = [...(mainImageFile ? [mainImageFile] : []), ...galleryFiles];
 
-      if (filesToUpload.length > 0) {
+      if (mainImageFile) {
         setUploading(true);
         try {
-          const { data } = await roomApi.uploadRoomTypeImages(filesToUpload);
+          const { data } = await roomApi.uploadRoomTypeImages([mainImageFile]);
           const urls = data?.imageUrls || [];
-          if (mainImageFile && urls[0]) imageUrl = urls[0];
-          galleryList = [...galleryList, ...urls.slice(mainImageFile ? 1 : 0)];
+          if (urls[0]) imageUrl = urls[0];
         } finally {
           setUploading(false);
         }
@@ -188,7 +143,9 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
         amenities: formData.amenities.trim(),
         description: formData.description.trim(),
         imageUrl,
-        galleryImages: galleryList.join(','),
+        // Không sửa gallery ở đây nữa: giữ nguyên gallery cũ (nếu có) khi
+        // chỉnh sửa, hạng phòng mới không có gallery.
+        galleryImages: isEdit ? roomType.galleryImages || '' : '',
         ...(isEdit && { isActive: formData.isActive }),
       };
 
@@ -209,7 +166,6 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
     }
   };
 
-  const galleryList = splitGallery(formData.galleryImages);
   const mainPreviewSrc = mainPreview || resolveImageUrl(formData.imageUrl);
 
   return (
@@ -298,7 +254,7 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
               maxLength={500}
             />
             <Form.Text className="text-muted">
-              Hoặc tải ảnh từ máy (JPG, PNG, WebP, GIF — tối đa 5 MB). File tải lên sẽ thay thế link ở trên khi lưu.
+              Hoặc tải ảnh từ máy (JPG, PNG, WebP, GIF — tối đa 10 MB). File tải lên sẽ thay thế link ở trên khi lưu.
             </Form.Text>
             <Form.Control
               type="file"
@@ -321,58 +277,6 @@ export const RoomTypeModal = ({ show, onHide, roomType, onSuccess }) => {
                 className="mt-2 rounded"
                 style={{ maxWidth: '100%', maxHeight: 180, objectFit: 'cover' }}
               />
-            )}
-          </Form.Group>
-
-          <Form.Group className="mb-3">
-            <Form.Label style={{ fontWeight: 600 }}>Ảnh gallery (trang chi tiết phòng)</Form.Label>
-            {galleryList.length > 0 && (
-              <div className="d-flex flex-wrap gap-2 mb-2">
-                {galleryList.map((url) => (
-                  <div key={url} className="position-relative">
-                    <img
-                      src={resolveImageUrl(url)}
-                      alt="Ảnh gallery"
-                      className="rounded"
-                      style={{ width: 72, height: 72, objectFit: 'cover' }}
-                    />
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      className="position-absolute top-0 end-0 p-0"
-                      style={{ width: 20, height: 20, lineHeight: 1 }}
-                      onClick={() => removeGalleryUrl(url)}
-                      title="Xóa ảnh này khỏi gallery"
-                    >
-                      ×
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <Form.Control
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              multiple
-              onChange={handleGalleryFilesChange}
-            />
-            <Form.Text className="text-muted">
-              Chọn nhiều file cùng lúc để thêm vào gallery. Tối đa {MAX_FILES_PER_UPLOAD} file/lần,
-              mỗi file tối đa 5 MB. Các link trả về được nối bằng dấu phẩy và lưu vào gallery của hạng phòng.
-            </Form.Text>
-            {galleryFiles.length > 0 && (
-              <div className="text-muted small mt-1">
-                File gallery sẽ tải lên khi lưu:{' '}
-                {galleryFiles.map((file, i) => (
-                  <span key={`${file.name}-${i}`}>
-                    {i > 0 && ', '}
-                    {file.name}{' '}
-                    <Button variant="link" size="sm" className="p-0" onClick={() => removeGalleryFile(i)}>
-                      ×
-                    </Button>
-                  </span>
-                ))}
-              </div>
             )}
           </Form.Group>
 
