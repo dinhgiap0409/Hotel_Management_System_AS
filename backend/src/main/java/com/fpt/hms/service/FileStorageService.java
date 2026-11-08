@@ -69,7 +69,7 @@ public class FileStorageService {
 
     public FileStorageService(
             @Value("${app.upload.dir:uploads}") String uploadDir,
-            @Value("${app.upload.max-file-size:5MB}") DataSize maxFileSize) {
+            @Value("${app.upload.max-file-size:10MB}") DataSize maxFileSize) {
         this.uploadDir = Path.of(uploadDir).toAbsolutePath().normalize();
         this.maxFileSize = maxFileSize;
     }

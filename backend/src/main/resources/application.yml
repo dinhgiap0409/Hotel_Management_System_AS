@@ -28,10 +28,10 @@ spring:
   servlet:
     multipart:
       # Uploaded room-type photos (FileStorageService). The per-file cap must
-      # match app.upload.max-file-size below; the request cap covers a gallery
-      # batch of up to 10 files. Oversize requests surface as 413 via
-      # GlobalExceptionHandler instead of a generic 500.
-      max-file-size: 5MB
+      # match app.upload.max-file-size below; the request cap covers the
+      # single avatar upload (max 10 MB). Oversize requests surface as 413
+      # via GlobalExceptionHandler instead of a generic 500.
+      max-file-size: 10MB
       max-request-size: 25MB
   messages:
     basename: messages
@@ -67,7 +67,7 @@ app:
   # Override with env UPLOAD_DIR (e.g. /var/hms/uploads on the server).
   upload:
     dir: ${UPLOAD_DIR:uploads}
-    max-file-size: 5MB
+    max-file-size: 10MB
   jwt:
     secret: ${JWT_SECRET:HMS_SBA301_GroupProject_SuperSecretKey_AtLeast256BitsLong_2026_FPT}
     access-token-expiration-ms: 900000       # 15 minutes (SDD 4.1.5.1)
