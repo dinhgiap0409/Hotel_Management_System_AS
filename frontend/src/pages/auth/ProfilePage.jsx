@@ -6,7 +6,7 @@ import { formatDateTime } from '../../lib/datetime';
 import { getDepartmentLabel } from '../../config/constants';
 
 export const ProfilePage = () => {
-  const { user, updateSavedUser } = useAuth();
+  const { user, setSession, updateSavedUser } = useAuth();
   const [profile, setProfile] = useState(user);
   const [form, setForm] = useState({
     fullName: user?.fullName || '',
@@ -100,8 +100,11 @@ export const ProfilePage = () => {
       return;
     }
     try {
-      await authApi.changePassword(pwdForm);
-      setPwdMsg('Đổi mật khẩu thành công!');
+      const res = await authApi.changePassword(pwdForm);
+      if (res.data?.accessToken) {
+        setSession({ accessToken: res.data.accessToken });
+      }
+      setPwdMsg(res.data?.message || 'Đổi mật khẩu thành công!');
       setPwdForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
     } catch (err) {
       const validationMsg = err.response?.data?.validationErrors
