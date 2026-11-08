@@ -79,7 +79,7 @@ const MENU_ITEMS = [
   {
     label: 'Báo Cáo Doanh Thu & Đánh Giá',
     to: '/staff/reports',
-    allowedRoles: [ROLES.GENERAL_MANAGER, ROLES.ACCOUNTANT, ROLES.SALES_MANAGER, ROLES.ADMIN],
+    allowedRoles: [ROLES.GENERAL_MANAGER, ROLES.ACCOUNTANT, ROLES.SALES_MANAGER, ROLES.SERVICE_MANAGER, ROLES.FRONT_DESK, ROLES.ADMIN],
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
         <line x1="18" y1="20" x2="18" y2="10" />
@@ -130,9 +130,16 @@ export const StaffLayout = () => {
     if (item.to === '/staff/services-billing') {
       if (role === ROLES.FRONT_DESK) return 'Quyết Toán & Dịch Vụ';
       if (role === ROLES.SALES_MANAGER) return 'Khuyến Mãi & Dịch Vụ';
-      if (role === ROLES.ACCOUNTANT) return 'Quyết Toán & Hóa Đơn';
+      if (role === ROLES.ACCOUNTANT) return 'Đối Soát Folio & Hóa Đơn';
       if (role === ROLES.SERVICE_STAFF || role === ROLES.SERVICE_MANAGER) return 'Dịch Vụ & Đơn Phòng';
       return 'Dịch Vụ, Hóa Đơn & Khuyến Mãi';
+    }
+    if (item.to === '/staff/reports') {
+      if (role === ROLES.FRONT_DESK) return 'Phản Hồi Đánh Giá Khách Sạn';
+      if (role === ROLES.SERVICE_MANAGER) return 'Phân Tích Tiêu Thụ Dịch Vụ';
+      if (role === ROLES.SALES_MANAGER) return 'Công Suất & Kiểm Duyệt Đánh Giá';
+      if (role === ROLES.ACCOUNTANT) return 'Báo Cáo Doanh Thu & Dịch Vụ';
+      return 'Báo Cáo Quản Trị & Đánh Giá';
     }
     return item.label;
   };

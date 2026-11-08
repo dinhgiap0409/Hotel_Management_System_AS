@@ -89,7 +89,7 @@ export const AssignTaskModal = ({ show, onHide, preselectedRoom, rooms = [], onS
     <Modal show={show} onHide={onHide} centered backdrop="static">
       <Modal.Header closeButton>
         <Modal.Title style={{ fontSize: '1.15rem', fontWeight: 600 }}>
-          Phân Công Nhiệm Vụ Buồng Phòng (UC-51)
+          Phân Công Nhiệm Vụ Buồng Phòng
         </Modal.Title>
       </Modal.Header>
       <Form onSubmit={handleSubmit}>
