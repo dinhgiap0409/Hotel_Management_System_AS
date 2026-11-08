@@ -1,5 +1,6 @@
 import { Card, Row, Col, Button } from 'react-bootstrap';
 import { formatVND } from '../../lib/money';
+import { resolveImageUrl } from '../../lib/imageUrl';
 import { formatVietnameseDate, parseAmenities } from './js/bookingUtils';
 
 export const RoomCategoryCard = ({
@@ -8,7 +9,7 @@ export const RoomCategoryCard = ({
   activeSearchMeta,
   onSelectCategory,
 }) => {
-  const imageSrc = roomType.imageUrl || '/images/hotel-bg.jpg';
+  const imageSrc = resolveImageUrl(roomType.imageUrl) || '/images/hotel-bg.jpg';
   const amenities = parseAmenities(roomType);
   const stayNights = roomType.nights || activeSearchMeta?.nights || 0;
   // Single price rule: the total comes from the backend, summed nightly

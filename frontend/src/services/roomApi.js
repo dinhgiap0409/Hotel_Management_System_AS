@@ -12,6 +12,19 @@ export const roomApi = {
   getRoomTypeById: (id) => http.get(`/room-types/${id}`),
   createRoomType: (data) => http.post('/room-types', data),
   updateRoomType: (id, data) => http.put(`/room-types/${id}`, data),
+  /**
+   * Uploads room-type photos (main image + gallery batch). `files` is a
+   * FileList or an array of File. Returns { imageUrls: [...] } — relative
+   * public paths (/uploads/room-types/xxx.jpg) to store in imageUrl /
+   * galleryImages exactly like a pasted image URL.
+   * No explicit Content-Type header: axios lets the browser set
+   * multipart/form-data with the correct boundary for FormData.
+   */
+  uploadRoomTypeImages: (files) => {
+    const formData = new FormData();
+    [...files].forEach((file) => formData.append('files', file));
+    return http.post('/room-types/images', formData);
+  },
   toggleRoomTypeStatus: (id) => http.patch(`/room-types/${id}/status`),
   getRoomTypePrices: (id) => http.get(`/room-types/${id}/prices`),
   updateRoomTypePrices: (id, data) => http.put(`/room-types/${id}/prices`, data),
