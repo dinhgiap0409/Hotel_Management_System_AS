@@ -16,6 +16,7 @@ import com.fpt.hms.enums.RoomStatus;
 import com.fpt.hms.enums.StayStatus;
 import com.fpt.hms.exception.BusinessException;
 import com.fpt.hms.exception.ResourceNotFoundException;
+import com.fpt.hms.repository.AccountRepository;
 import com.fpt.hms.repository.HousekeepingTaskRepository;
 import com.fpt.hms.repository.ReservationRepository;
 import com.fpt.hms.repository.RoomRepository;
@@ -37,6 +38,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Module 2 (Owner: HieuVQ) - Room Types, Physical Rooms, Housekeeping & Maintenance.
@@ -50,9 +52,17 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
     private final RoomRepository roomRepository;
     private final HousekeepingTaskRepository housekeepingTaskRepository;
     private final StaffRepository staffRepository;
+    private final AccountRepository accountRepository;
     private final ReservationRepository reservationRepository;
     private final StayRoomAssignmentRepository stayRoomAssignmentRepository;
     private final MessageResolver messageResolver;
+
+    // UC-51: task types (V1 Housekeeping_Task comment) and priorities (V4).
+    private static final Set<String> TASK_TYPES = Set.of("CLEANING", "MAINTENANCE");
+    private static final Set<String> TASK_PRIORITIES = Set.of("LOW", "NORMAL", "HIGH", "URGENT");
+    // UC-51 task lifecycle: ASSIGNED -> IN_PROGRESS -> COMPLETED, or CANCELLED
+    // from ASSIGNED / IN_PROGRESS. COMPLETED and CANCELLED are terminal.
+    private static final Set<String> TASK_FINAL_STATUSES = Set.of("COMPLETED", "CANCELLED");
 
     // =========================================================================
     // 1. ROOM TYPES (UC-11..14) & DYNAMIC PRICING
@@ -481,6 +491,9 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
                     String role = s.getAccount().getRole().getRoleName();
                     return "HOUSEKEEPING".equalsIgnoreCase(role) || "HOUSEKEEPING_MANAGER".equalsIgnoreCase(role);
                 })
+                // UC-51 alternative flow: never offer an inactive staff member
+                // for assignment (employmentStatus or account not ACTIVE).
+                .filter(this::isActiveStaff)
                 .map(s -> StaffSimpleDto.builder()
                         .staffId(s.getStaffId())
                         .staffCode(s.getStaffCode())
@@ -537,15 +550,39 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
     @Override
     @Transactional
     public HousekeepingTaskDto createTask(CreateHousekeepingTaskRequest request, Integer currentAccountId) {
+        String taskType = request.getTaskType() != null ? request.getTaskType().trim().toUpperCase() : "";
+        if (!TASK_TYPES.contains(taskType)) {
+            throw new BusinessException("MSG_INVALID_TASK_TYPE",
+                    messageResolver.resolve("MSG_INVALID_TASK_TYPE"));
+        }
+
         Room room = roomRepository.findById(request.getRoomId())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy phòng với mã: " + request.getRoomId()));
+
+        // UC-51 main flow: cleaning tasks are assigned from rooms with Dirty
+        // status only. (MAINTENANCE is an equipment check, so it has no
+        // cleaning-status requirement.)
+        if ("CLEANING".equals(taskType)
+                && !CleaningStatus.DIRTY.name().equalsIgnoreCase(room.getCleaningStatus())) {
+            throw new BusinessException("MSG_TASK_ROOM_NOT_DIRTY",
+                    messageResolver.resolve("MSG_TASK_ROOM_NOT_DIRTY"));
+        }
 
         Staff assignedToStaff = staffRepository.findById(request.getAssignedToStaffId())
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy nhân viên được giao việc với mã: " + request.getAssignedToStaffId()));
 
-        // Tìm nhân viên thực hiện giao việc theo tài khoản đang đăng nhập
+        // UC-51 alternative flow: block assigning to an inactive staff member.
+        if (!isActiveStaff(assignedToStaff)) {
+            throw new BusinessException("MSG_TASK_STAFF_INACTIVE",
+                    messageResolver.resolve("MSG_TASK_STAFF_INACTIVE"));
+        }
+
+        // Whoever assigns must have a Staff record; silently recording the
+        // assignee as the assigner would log the wrong person (old fallback).
         Staff assignedByStaff = (currentAccountId != null)
-                ? staffRepository.findByAccount_AccountId(currentAccountId).orElse(assignedToStaff)
+                ? staffRepository.findByAccount_AccountId(currentAccountId)
+                        .orElseThrow(() -> new BusinessException("MSG_TASK_ASSIGNER_NOT_FOUND",
+                                messageResolver.resolve("MSG_TASK_ASSIGNER_NOT_FOUND")))
                 : assignedToStaff;
 
         Instant scheduledAt = request.getScheduledAt() != null ? request.getScheduledAt() : Instant.now();
@@ -554,10 +591,11 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
                 .room(room)
                 .assignedToStaff(assignedToStaff)
                 .assignedByStaff(assignedByStaff)
-                .taskType(request.getTaskType().trim().toUpperCase())
+                .taskType(taskType)
                 .scheduledAt(scheduledAt)
                 .estimatedCompletionDate(request.getEstimatedCompletionDate())
                 .status("ASSIGNED")
+                .priority(normalizePriority(request.getPriority()))
                 .note(request.getNote())
                 .createdAt(Instant.now())
                 .build();
@@ -571,7 +609,19 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
         HousekeepingTask task = housekeepingTaskRepository.findById(taskId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy nhiệm vụ dọn phòng với mã: " + taskId));
 
-        String newStatus = request.getStatus().trim().toUpperCase();
+        String newStatus = request.getStatus() != null ? request.getStatus().trim().toUpperCase() : "";
+        if (!isValidTaskTransition(task.getStatus(), newStatus)) {
+            throw new BusinessException("MSG_INVALID_TASK_TRANSITION",
+                    messageResolver.resolve("MSG_INVALID_TASK_TRANSITION"));
+        }
+
+        // Only the assignee, the housekeeping manager or an admin may change
+        // a task's status.
+        if (!canUpdateTask(task, currentAccountId)) {
+            throw new BusinessException("MSG_TASK_UPDATE_FORBIDDEN",
+                    messageResolver.resolve("MSG_TASK_UPDATE_FORBIDDEN"));
+        }
+
         task.setStatus(newStatus);
         if (request.getNote() != null) {
             task.setNote(request.getNote());
@@ -597,6 +647,61 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
         }
 
         return toTaskDto(housekeepingTaskRepository.save(task));
+    }
+
+    // --- UC-51 helpers -------------------------------------------------------
+
+    /** A staff member counts as active only when both the employment record
+     *  and the login account are ACTIVE (SRS UC-51 alternative flow). */
+    private boolean isActiveStaff(Staff staff) {
+        if (staff == null) return false;
+        if (!"ACTIVE".equalsIgnoreCase(staff.getEmploymentStatus())) return false;
+        return staff.getAccount() != null && "ACTIVE".equalsIgnoreCase(staff.getAccount().getStatus());
+    }
+
+    /** Blank priority defaults to NORMAL (the value the API used to hardcode);
+     *  anything outside LOW / NORMAL / HIGH / URGENT is rejected. */
+    private String normalizePriority(String priority) {
+        if (priority == null || priority.isBlank()) return "NORMAL";
+        String normalized = priority.trim().toUpperCase();
+        if (!TASK_PRIORITIES.contains(normalized)) {
+            throw new BusinessException("MSG_INVALID_TASK_PRIORITY",
+                    messageResolver.resolve("MSG_INVALID_TASK_PRIORITY"));
+        }
+        return normalized;
+    }
+
+    /** UC-51 lifecycle: ASSIGNED -> IN_PROGRESS -> COMPLETED, or CANCELLED
+     *  from ASSIGNED / IN_PROGRESS. COMPLETED and CANCELLED are terminal,
+     *  same-status and ASSIGNED-as-target are rejected. */
+    private boolean isValidTaskTransition(String currentStatus, String newStatus) {
+        if (currentStatus == null || newStatus == null || newStatus.isBlank()) return false;
+        String current = currentStatus.trim().toUpperCase();
+        if (TASK_FINAL_STATUSES.contains(current)) return false;
+        if (current.equals(newStatus)) return false;
+        return switch (current) {
+            case "ASSIGNED" -> "IN_PROGRESS".equals(newStatus) || "CANCELLED".equals(newStatus);
+            case "IN_PROGRESS" -> "COMPLETED".equals(newStatus) || "CANCELLED".equals(newStatus);
+            default -> false;
+        };
+    }
+
+    private boolean canUpdateTask(HousekeepingTask task, Integer currentAccountId) {
+        // Unauthenticated callers keep the old lenient behaviour; in practice
+        // the endpoint is authenticated and an account id is always present.
+        if (currentAccountId == null) return true;
+        return staffRepository.findByAccount_AccountId(currentAccountId)
+                .map(actor -> actor.getStaffId().equals(task.getAssignedToStaff().getStaffId())
+                        || isManagerRole(actor.getAccount()))
+                .orElseGet(() -> accountRepository.findById(currentAccountId)
+                        .map(account -> "ADMIN".equalsIgnoreCase(account.getRole().getRoleName()))
+                        .orElse(false));
+    }
+
+    private boolean isManagerRole(com.fpt.hms.entity.Account account) {
+        if (account == null || account.getRole() == null) return false;
+        String role = account.getRole().getRoleName();
+        return "HOUSEKEEPING_MANAGER".equalsIgnoreCase(role) || "ADMIN".equalsIgnoreCase(role);
     }
 
     // =========================================================================
@@ -657,6 +762,7 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
                 .scheduledAt(task.getScheduledAt())
                 .estimatedCompletionDate(task.getEstimatedCompletionDate())
                 .status(task.getStatus())
+                .priority(task.getPriority())
                 .startedAt(task.getStartedAt())
                 .completedAt(task.getCompletedAt())
                 .note(task.getNote())
