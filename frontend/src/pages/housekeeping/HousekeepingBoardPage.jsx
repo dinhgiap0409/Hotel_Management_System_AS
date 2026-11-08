@@ -9,6 +9,11 @@ import { SetMaintenanceModal } from './components/SetMaintenanceModal';
 import { EndMaintenanceModal } from './components/EndMaintenanceModal';
 import { AssignTaskModal } from './components/AssignTaskModal';
 
+// UC-51 (V4): task priority badge colours. A missing value means NORMAL
+// (tasks created before the priority column existed).
+const PRIORITY_BADGE_BG = { URGENT: 'danger', HIGH: 'warning', NORMAL: 'secondary', LOW: 'success' };
+const priorityBadgeBg = (priority) => PRIORITY_BADGE_BG[(priority || 'NORMAL').toUpperCase()] || 'secondary';
+
 export const HousekeepingBoardPage = () => {
   const { user } = useAuth();
   const isManager = user?.role === 'HOUSEKEEPING_MANAGER' || user?.role === 'ADMIN';
@@ -531,6 +536,7 @@ export const HousekeepingBoardPage = () => {
                     <th>Mã</th>
                     <th>Phòng</th>
                     <th>Loại công việc</th>
+                    <th>Ưu tiên</th>
                     <th>Nhân viên phụ trách</th>
                     <th>Người giao việc</th>
                     <th>Hạn hoàn tất</th>
@@ -557,6 +563,14 @@ export const HousekeepingBoardPage = () => {
                         <td>
                           <Badge bg={t.taskType === 'CLEANING' ? 'info' : 'warning'} className="text-dark">
                             {t.taskType}
+                          </Badge>
+                        </td>
+                        <td>
+                          <Badge
+                            bg={priorityBadgeBg(t.priority)}
+                            className={(t.priority || 'NORMAL').toUpperCase() === 'HIGH' ? 'text-dark' : ''}
+                          >
+                            {t.priority || 'NORMAL'}
                           </Badge>
                         </td>
                         <td>
