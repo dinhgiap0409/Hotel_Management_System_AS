@@ -37,6 +37,7 @@ public class FolioDetailDto {
 
     private Instant actualCheckIn;
     private Instant actualCheckOut;
+    private String specialNotes;
 
     // Line items
     @Builder.Default
