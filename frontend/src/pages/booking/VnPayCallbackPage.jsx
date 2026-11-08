@@ -40,14 +40,19 @@ export const VnPayCallbackPage = () => {
   const [errorMsg, setErrorMsg] = useState(null);
   const [countdown, setCountdown] = useState(5);
 
-  // Xác định trang quay về:
-  // Nếu là nhân viên lễ tân / staff hoặc đơn walk-in -> quay về Quầy Lễ Tân (/staff/frontdesk)
-  // Nếu là khách hàng -> quay về Đặt phòng của tôi (/my-bookings)
-  const isFrontDesk =
+  // Xác định đối tượng đang thực hiện thanh toán:
+  // Nếu là nhân viên Lễ tân / Staff (role != CUSTOMER) hoặc đơn tạo tại quầy (BK-WALKIN-...) -> luôn quay về Quầy Lễ Tân (/staff/frontdesk)
+  // Nếu là khách hàng cá nhân tự đặt online -> quay về Đặt phòng của tôi (/my-bookings)
+  const isFrontDesk = Boolean(
+    user?.role === 'FRONT_DESK' ||
     user?.roleName === 'FRONT_DESK' ||
-    user?.roleName === 'GENERAL_MANAGER' ||
+    user?.role === 'ADMIN' ||
     user?.roleName === 'ADMIN' ||
-    (txnRef && txnRef.startsWith('BK-WALKIN-'));
+    user?.role === 'GENERAL_MANAGER' ||
+    user?.roleName === 'GENERAL_MANAGER' ||
+    (user?.role && user.role !== 'CUSTOMER') ||
+    (txnRef && txnRef.startsWith('BK-WALKIN-'))
+  );
 
   const targetReturnUrl = isFrontDesk ? '/staff/frontdesk' : '/my-bookings';
   const targetReturnLabel = isFrontDesk
@@ -84,7 +89,7 @@ export const VnPayCallbackPage = () => {
         setPaymentSuccess(isOk);
       } catch (err) {
         if (!isMounted) return;
-        // Fallback: nếu gọi confirm báo lỗi (ví dụ đã confirm trước đó), truy vấn lại đơn đặt phòng
+        // Fallback: nếu gọi confirm báo lỗi, truy vấn lại đơn đặt phòng
         try {
           const fallbackRes = await bookingApi.findReservationByCode(txnRef);
           const fallbackData = fallbackRes.data?.data || fallbackRes.data;
@@ -115,7 +120,7 @@ export const VnPayCallbackPage = () => {
     };
   }, [externalResponseCode, txnRef, externalTransactionNo, externalBankCode]);
 
-  // Đếm ngược 5 giây rồi tự động chuyển về trang cũ
+  // Đếm ngược 5 giây rồi tự động chuyển về trang phù hợp
   useEffect(() => {
     if (processing) return;
 
@@ -138,18 +143,20 @@ export const VnPayCallbackPage = () => {
       <Row className="justify-content-center">
         <Col lg={8} xl={7}>
           {processing ? (
-            /* Trạng thái đang xác thực kết quả từ Cổng VNPay */
-            <Card className="border-0 shadow-sm rounded-4 p-5 text-center">
-              <div className="mb-4">
-                <Spinner animation="border" variant="primary" style={{ width: 52, height: 52 }} />
-              </div>
-              <h4 className="fw-bold text-dark mb-2">
-                Đang xác thực giao dịch từ Cổng VNPay...
-              </h4>
-              <p className="text-secondary small mb-0">
-                Hệ thống đang kết nối Cổng Thanh Toán VNPay để kiểm tra kết quả và ghi nhận tiền cọc.
-                Vui lòng không tắt hoặc tải lại trình duyệt.
-              </p>
+            <Card className="border-0 shadow-lg rounded-4 text-center p-5">
+              <Card.Body>
+                <Spinner
+                  animation="border"
+                  variant="primary"
+                  style={{ width: '3.5rem', height: '3.5rem' }}
+                />
+                <h4 className="mt-4 fw-bold text-dark">
+                  Đang xác thực giao dịch VNPay...
+                </h4>
+                <p className="text-secondary small mb-0">
+                  Hệ thống đang kiểm tra chữ ký số bảo mật và cập nhật trạng thái đơn đặt phòng #{txnRef}.
+                </p>
+              </Card.Body>
             </Card>
           ) : paymentSuccess ? (
             /* Giao dịch thành công */
@@ -157,50 +164,49 @@ export const VnPayCallbackPage = () => {
               <div
                 className="p-4 text-white text-center"
                 style={{
-                  background: 'linear-gradient(135deg, #15803d 0%, #166534 100%)',
+                  background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
                 }}
               >
                 <div className="fs-1 mb-2">
                   <i className="bi bi-check-circle-fill"></i>
                 </div>
                 <h3 className="h4 fw-bold mb-1">
-                  Thanh toán đặt cọc VNPay thành công!
+                  {isFrontDesk ? 'Xác Nhận Thanh Toán Cọc Thành Công' : 'Đặt Phòng Thành Công!'}
                 </h3>
                 <div className="small opacity-90 mb-2">
-                  Đơn đặt phòng <strong>{resultBooking?.reservationCode || txnRef}</strong> đã chuyển sang trạng thái CONFIRMED (Đã xác nhận).
+                  {isFrontDesk
+                    ? `Đã ghi nhận thanh toán cọc đơn #${txnRef} thành công. Trạng thái đơn đã chuyển sang CONFIRMED.`
+                    : `Cảm ơn bạn đã lựa chọn HMS Luxury Hotel. Mã đơn đặt phòng của bạn là:`}
                 </div>
-                <Badge bg="light" text="dark" className="px-3 py-2 fw-semibold">
-                  <i className="bi bi-arrow-repeat me-1 spinner-border spinner-border-sm"></i>
-                  Tự động quay về sau {countdown} giây...
-                </Badge>
+                <div className="badge bg-white text-dark fs-6 px-3 py-2 fw-bold font-monospace shadow-sm">
+                  #{txnRef}
+                </div>
+                <div className="mt-3">
+                  <Badge bg="light" text="dark" className="px-3 py-2 fw-semibold">
+                    Tự động quay về {isFrontDesk ? 'Quầy Lễ Tân' : 'trang quản lý'} sau {countdown} giây...
+                  </Badge>
+                </div>
               </div>
 
               <Card.Body className="p-4">
-                <div className="p-3 rounded-3 border bg-light mb-4">
-                  <h6 className="fw-bold text-dark border-bottom pb-2 mb-3">
-                    Chi tiết biên lai giao dịch VNPay ({resultBooking?.reservationCode || txnRef})
+                <div className="bg-light p-3 rounded-3 mb-4">
+                  <h6 className="fw-bold text-dark mb-3">
+                    <i className="bi bi-receipt me-2 text-primary"></i>
+                    Chi tiết giao dịch thanh toán
                   </h6>
                   <Row className="g-2 small">
                     <Col sm={6}>
-                      <span className="text-secondary">Khách hàng:</span>{' '}
-                      <strong className="text-dark">
-                        {resultBooking?.contactName || 'Khách đặt tại quầy'}
-                      </strong>
+                      <span className="text-secondary">Ngân hàng / Cổng:</span>{' '}
+                      <strong className="text-dark">{externalBankCode} (VNPay QR)</strong>
                     </Col>
-                    <Col sm={6}>
-                      <span className="text-secondary">Trạng thái hồ sơ:</span>{' '}
-                      <Badge bg="success">
-                        {resultBooking?.status || 'CONFIRMED'}
-                      </Badge>
-                    </Col>
-                    <Col sm={6}>
-                      <span className="text-secondary">Ngân hàng thanh toán:</span>{' '}
-                      <strong className="text-primary">{externalBankCode}</strong>
-                    </Col>
-                    <Col sm={6}>
-                      <span className="text-secondary">Mã GD VNPay:</span>{' '}
-                      <strong className="text-dark">{externalTransactionNo || 'VNP-SUCCESS'}</strong>
-                    </Col>
+                    {externalTransactionNo && (
+                      <Col sm={6}>
+                        <span className="text-secondary">Mã giao dịch VNPay:</span>{' '}
+                        <strong className="text-dark font-monospace">
+                          {externalTransactionNo}
+                        </strong>
+                      </Col>
+                    )}
                     {resultBooking?.roomTypeName && (
                       <Col sm={6}>
                         <span className="text-secondary">Hạng phòng:</span>{' '}
@@ -236,17 +242,38 @@ export const VnPayCallbackPage = () => {
                 </div>
 
                 <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2 border-top">
-                  <Button className="btn-hms-light" onClick={() => navigate('/')}>
-                    <i className="bi bi-house-door me-2"></i>
-                    Về trang chủ
-                  </Button>
-                  <Button
-                    className="btn-hms-primary px-4 fw-bold"
-                    onClick={() => navigate(targetReturnUrl, { replace: true })}
-                  >
-                    <i className="bi bi-arrow-left-circle-fill me-2"></i>
-                    {targetReturnLabel} ({countdown}s)
-                  </Button>
+                  {isFrontDesk ? (
+                    <>
+                      <Button
+                        className="btn-hms-light"
+                        onClick={() => navigate('/staff/frontdesk', { replace: true })}
+                      >
+                        <i className="bi bi-card-checklist me-2"></i>
+                        Xem danh sách khách đến (Arrivals)
+                      </Button>
+                      <Button
+                        className="btn-hms-primary px-4 fw-bold"
+                        onClick={() => navigate('/staff/frontdesk', { replace: true })}
+                      >
+                        <i className="bi bi-box-arrow-in-right me-2"></i>
+                        Về Quầy Lễ Tân Làm Thủ Tục Check-in ({countdown}s)
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button className="btn-hms-light" onClick={() => navigate('/')}>
+                        <i className="bi bi-house-door me-2"></i>
+                        Về trang chủ
+                      </Button>
+                      <Button
+                        className="btn-hms-primary px-4 fw-bold"
+                        onClick={() => navigate(targetReturnUrl, { replace: true })}
+                      >
+                        <i className="bi bi-arrow-left-circle-fill me-2"></i>
+                        {targetReturnLabel} ({countdown}s)
+                      </Button>
+                    </>
+                  )}
                 </div>
               </Card.Body>
             </Card>
@@ -270,28 +297,51 @@ export const VnPayCallbackPage = () => {
                     `Giao dịch thanh toán tiền cọc đơn ${txnRef} chưa được xác nhận. Đơn đặt phòng vẫn ở trạng thái Chờ đặt cọc (PENDING).`}
                 </div>
                 <Badge bg="light" text="dark" className="px-3 py-2 fw-semibold">
-                  Tự động quay về sau {countdown} giây...
+                  Tự động quay về {isFrontDesk ? 'Quầy Lễ Tân' : 'trang trước'} sau {countdown} giây...
                 </Badge>
               </div>
 
               <Card.Body className="p-4">
                 <Alert variant="warning" className="small rounded-3 mb-4">
                   <i className="bi bi-info-circle-fill me-2"></i>
-                  Quý khách hoặc lễ tân có thể quét lại mã QR trên Cổng VNPay hoặc lựa chọn hình thức thanh toán tiền mặt tại quầy bất cứ lúc nào trước khi hết hạn giữ chỗ.
+                  {isFrontDesk
+                    ? 'Quý lễ tân có thể thu tiền mặt trực tiếp tại quầy hoặc yêu cầu khách quét lại mã QR tại Quầy Lễ Tân bất cứ lúc nào trước khi hết hạn giữ chỗ.'
+                    : 'Quý khách hoặc lễ tân có thể quét lại mã QR trên Cổng VNPay hoặc lựa chọn hình thức thanh toán tiền mặt tại quầy bất cứ lúc nào trước khi hết hạn giữ chỗ.'}
                 </Alert>
 
                 <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2 border-top">
-                  <Button className="btn-hms-light" onClick={() => navigate('/')}>
-                    <i className="bi bi-house-door me-2"></i>
-                    Về trang chủ
-                  </Button>
-                  <Button
-                    className="btn-hms-primary px-4 fw-bold"
-                    onClick={() => navigate(targetReturnUrl, { replace: true })}
-                  >
-                    <i className="bi bi-arrow-left-circle-fill me-2"></i>
-                    {targetReturnLabel} ({countdown}s)
-                  </Button>
+                  {isFrontDesk ? (
+                    <>
+                      <Button
+                        className="btn-hms-light"
+                        onClick={() => navigate('/staff/frontdesk', { replace: true })}
+                      >
+                        <i className="bi bi-arrow-left me-2"></i>
+                        Xem danh sách đơn tại Quầy
+                      </Button>
+                      <Button
+                        className="btn-hms-primary px-4 fw-bold"
+                        onClick={() => navigate('/staff/frontdesk', { replace: true })}
+                      >
+                        <i className="bi bi-arrow-left-circle-fill me-2"></i>
+                        Quay lại Quầy Lễ Tân ({countdown}s)
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button className="btn-hms-light" onClick={() => navigate('/')}>
+                        <i className="bi bi-house-door me-2"></i>
+                        Về trang chủ
+                      </Button>
+                      <Button
+                        className="btn-hms-primary px-4 fw-bold"
+                        onClick={() => navigate(targetReturnUrl, { replace: true })}
+                      >
+                        <i className="bi bi-arrow-left-circle-fill me-2"></i>
+                        {targetReturnLabel} ({countdown}s)
+                      </Button>
+                    </>
+                  )}
                 </div>
               </Card.Body>
             </Card>

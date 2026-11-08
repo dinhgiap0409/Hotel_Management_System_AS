@@ -6,6 +6,14 @@ import { StatusBadge } from '../../components/common/StatusBadge';
 import { formatDateTime, formatDate } from '../../lib/datetime';
 import { formatVND } from '../../lib/money';
 import { notifyToast } from '../../lib/http';
+import './frontDesk.css';
+import { CheckInModal } from './components/CheckInModal';
+import { ExtendStayModal } from './components/ExtendStayModal';
+import { RoomTransferModal } from './components/RoomTransferModal';
+import { CheckOutModal } from './components/CheckOutModal';
+import { StayDetailModal } from './components/StayDetailModal';
+import { CancelOverdueArrivalModal } from './components/CancelOverdueArrivalModal';
+import { DirectBookingSuccessModal } from './components/DirectBookingSuccessModal';
 
 const PaginationControl = ({ totalItems, currentPage, pageSize, onPageChange, onPageSizeChange }) => {
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -703,8 +711,37 @@ export const FrontDeskDashboardPage = () => {
     }
   };
 
+  const handleConfirmCancelArrival = async () => {
+    if (!cancelArrivalModalData) return;
+    setIsCancellingArrival(true);
+    try {
+      await frontDeskApi.cancelDirectBooking(
+        cancelArrivalModalData.reservationCode,
+        cancelArrivalReason || 'Khách không đến nhận phòng quá thời gian quy định (No-show)'
+      );
+      notifyToast({
+        type: 'SUCCESS',
+        message: `Đã hủy đơn #${cancelArrivalModalData.reservationCode} do quá thời gian thành công. Quota phòng đã được giải phóng.`,
+      });
+      setCancelArrivalModalData(null);
+      loadData();
+    } catch (err) {
+      notifyToast({
+        type: 'ERROR',
+        message: err.response?.data?.message || 'Hủy đơn thất bại.',
+      });
+    } finally {
+      setIsCancellingArrival(false);
+    }
+  };
+
   const openCheckInModal = async (reservation) => {
-    if (reservation.depositPaymentStatus && reservation.depositPaymentStatus !== 'PAID') {
+    // Đơn đã check-in một phần (đang nhận dở) hoặc status CHECKED_IN thì không bao giờ bị chặn cọc
+    const isPartial =
+      (reservation.checkedInRoomsCount || 0) > 0 ||
+      reservation.status === 'CHECKED_IN';
+
+    if (!isPartial && reservation.depositPaymentStatus && reservation.depositPaymentStatus !== 'PAID') {
       notifyToast({
         type: 'WARNING',
         message: `Đơn #${reservation.reservationCode} chưa hoàn tất thanh toán tiền cọc! Vui lòng thu tiền cọc trước khi làm thủ tục Check-in.`,
@@ -780,8 +817,10 @@ export const FrontDeskDashboardPage = () => {
 
       // Compute checkedInCount & pendingCount for each category
       const categories = Array.from(catMap.values()).map((cat) => {
-        const checkedInCount = (cat.checkedInRoomNumbers || []).length;
-        const totalQty = cat.quantity || 1;
+        const assignedFromNumbers = (cat.checkedInRoomNumbers || []).length;
+        const totalQty = cat.quantity || reservation.totalBookedRoomsCount || reservation.roomQuantity || 1;
+        // Nếu đã có phòng nhận dở nhưng assignedFromNumbers rỗng, đồng bộ theo checkedInRoomsCount
+        const checkedInCount = assignedFromNumbers > 0 ? assignedFromNumbers : Math.min(totalQty, reservation.checkedInRoomsCount || 0);
         const pendingCount = Math.max(0, totalQty - checkedInCount);
         return {
           ...cat,
@@ -827,7 +866,7 @@ export const FrontDeskDashboardPage = () => {
             selectedRoomId: initialRoom ? initialRoom.roomId : (typeAvailRooms[0]?.roomId || ''),
             keyCardNumber: initialRoom ? `CARD-${initialRoom.roomNumber}` : (typeAvailRooms[0] ? `CARD-${typeAvailRooms[0].roomNumber}` : ''),
             guestName: reservation.contactName || '',
-            guestIdNumber: reservation.contactPhone || '',
+            guestIdNumber: reservation.contactPhone || reservation.guestIdNumber || '001200000001',
           });
         }
       });
@@ -1182,6 +1221,61 @@ export const FrontDeskDashboardPage = () => {
     );
   }, [bookings, searchQuery]);
 
+  // --- Search & Filter States ---
+  const [arrivalsSearchQuery, setArrivalsSearchQuery] = useState('');
+  const [staysSearchQuery, setStaysSearchQuery] = useState('');
+
+  // --- Modal: Cancel Overdue Arrival States ---
+  const [cancelArrivalModalData, setCancelArrivalModalData] = useState(null);
+  const [cancelArrivalReason, setCancelArrivalReason] = useState('Khách không đến nhận phòng quá thời gian quy định (No-show)');
+  const [isCancellingArrival, setIsCancellingArrival] = useState(false);
+
+  const checkOverdueArrival = (r) => {
+    if (!r) return { isOverdue: false, reason: '' };
+    // Đơn đã check-in một phần (khách đã nhận ít nhất 1 phòng) thì đang lưu trú, không tính No-show/quá hạn
+    if ((r.checkedInRoomsCount || 0) > 0) {
+      return { isOverdue: false, reason: '' };
+    }
+    const now = new Date();
+    if (r.holdExpiresAt && new Date(r.holdExpiresAt) < now) {
+      return { isOverdue: true, reason: 'Quá thời hạn giữ chỗ 24h' };
+    }
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    if (r.checkInDate && r.checkInDate < todayStr) {
+      return { isOverdue: true, reason: `Quá ngày nhận phòng (${formatDate(r.checkInDate)})` };
+    }
+    if (r.checkInDate === todayStr && now.getHours() >= 18) {
+      return { isOverdue: true, reason: 'Quá 18:00 ngày nhận phòng (No-show)' };
+    }
+    return { isOverdue: false, reason: '' };
+  };
+
+  const filteredArrivals = useMemo(() => {
+    if (!arrivalsSearchQuery.trim()) return arrivals;
+    const q = arrivalsSearchQuery.toLowerCase().trim();
+    return arrivals.filter(
+      (r) =>
+        (r.reservationCode && r.reservationCode.toLowerCase().includes(q)) ||
+        (r.contactName && r.contactName.toLowerCase().includes(q)) ||
+        (r.contactPhone && r.contactPhone.includes(q)) ||
+        (r.roomTypeName && r.roomTypeName.toLowerCase().includes(q))
+    );
+  }, [arrivals, arrivalsSearchQuery]);
+
+  const filteredStays = useMemo(() => {
+    if (!staysSearchQuery.trim()) return stays;
+    const q = staysSearchQuery.toLowerCase().trim();
+    return stays.filter(
+      (s) =>
+        (s.roomNumber && s.roomNumber.toLowerCase().includes(q)) ||
+        (s.guestName && s.guestName.toLowerCase().includes(q)) ||
+        (s.guestIdNumber && s.guestIdNumber.toLowerCase().includes(q)) ||
+        (s.reservationCode && s.reservationCode.toLowerCase().includes(q)) ||
+        (s.roomTypeName && s.roomTypeName.toLowerCase().includes(q)) ||
+        String(s.stayId || '').includes(q)
+    );
+  }, [stays, staysSearchQuery]);
+
   // --- Pagination States ---
   const [arrivalsPage, setArrivalsPage] = useState(1);
   const [arrivalsPageSize, setArrivalsPageSize] = useState(10);
@@ -1198,8 +1292,8 @@ export const FrontDeskDashboardPage = () => {
   // Paginated Data
   const paginatedArrivals = useMemo(() => {
     const start = (arrivalsPage - 1) * arrivalsPageSize;
-    return arrivals.slice(start, start + arrivalsPageSize);
-  }, [arrivals, arrivalsPage, arrivalsPageSize]);
+    return filteredArrivals.slice(start, start + arrivalsPageSize);
+  }, [filteredArrivals, arrivalsPage, arrivalsPageSize]);
 
   const paginatedPendingDeposits = useMemo(() => {
     const start = (pendingPage - 1) * pendingPageSize;
@@ -1208,8 +1302,8 @@ export const FrontDeskDashboardPage = () => {
 
   const paginatedStays = useMemo(() => {
     const start = (staysPage - 1) * staysPageSize;
-    return stays.slice(start, start + staysPageSize);
-  }, [stays, staysPage, staysPageSize]);
+    return filteredStays.slice(start, start + staysPageSize);
+  }, [filteredStays, staysPage, staysPageSize]);
 
   const paginatedBookings = useMemo(() => {
     const start = (bookingsPage - 1) * bookingsPageSize;
@@ -1412,16 +1506,44 @@ export const FrontDeskDashboardPage = () => {
       {/* ========================================================================= */}
       {activeTab === 'arrivals' && (
         <div>
-          <div style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: '#0f172a' }}>
-              Danh Sách Khách Đến (Arrivals)
-            </h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: '#0f172a' }}>
+                Danh Sách Khách Đến (Arrivals)
+              </h2>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                Tổng cộng {filteredArrivals.length} đơn chờ nhận phòng
+              </div>
+            </div>
+            <div style={{ position: 'relative', width: 320 }}>
+              <i
+                className="bi bi-search"
+                style={{ position: 'absolute', left: 12, top: 10, fontSize: 13, color: '#94a3b8' }}
+              ></i>
+              <input
+                type="text"
+                placeholder="Tìm mã đặt, tên khách, SĐT, loại phòng..."
+                value={arrivalsSearchQuery}
+                onChange={(e) => {
+                  setArrivalsSearchQuery(e.target.value);
+                  setArrivalsPage(1);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px 8px 34px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 6,
+                  fontSize: 13,
+                  color: '#0f172a',
+                }}
+              />
+            </div>
           </div>
 
           <DataTable
             keyField="reservationId"
             data={paginatedArrivals}
-            emptyMessage="Không có khách nào đang chờ làm thủ tục nhận phòng."
+            emptyMessage={arrivalsSearchQuery.trim() ? "Không tìm thấy khách đến nào phù hợp với từ khóa tìm kiếm." : "Không có khách nào đang chờ làm thủ tục nhận phòng."}
             columns={[
               {
                 header: 'Mã Đặt Phòng',
@@ -1453,12 +1575,35 @@ export const FrontDeskDashboardPage = () => {
               },
               {
                 header: 'Lịch Lưu Trú',
-                render: (r) => (
-                  <div style={{ fontSize: 13 }}>
-                    <div>{formatDate(r.checkInDate)} → {formatDate(r.checkOutDate)}</div>
-                    <div style={{ fontSize: 12, color: '#64748b' }}>{r.nights || 1} đêm</div>
-                  </div>
-                ),
+                render: (r) => {
+                  const overdueInfo = checkOverdueArrival(r);
+                  return (
+                    <div style={{ fontSize: 13 }}>
+                      <div>{formatDate(r.checkInDate)} → {formatDate(r.checkOutDate)}</div>
+                      <div style={{ fontSize: 12, color: '#64748b' }}>{r.nights || 1} đêm</div>
+                      {overdueInfo.isOverdue && (
+                        <div style={{ marginTop: 3 }}>
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 3,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: '#b91c1c',
+                              background: '#fee2e2',
+                              padding: '1px 6px',
+                              borderRadius: 4,
+                            }}
+                            title={overdueInfo.reason}
+                          >
+                            <i className="bi bi-exclamation-triangle-fill"></i> Quá giờ nhận
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                },
               },
               {
                 header: 'Tạm Tính',
@@ -1523,53 +1668,122 @@ export const FrontDeskDashboardPage = () => {
               {
                 header: 'Thao Tác',
                 render: (r) => {
-                  const isPartial = (r.checkedInRoomsCount || 0) > 0 && (r.checkedInRoomsCount < (r.totalBookedRoomsCount || r.roomQuantity || 1));
+                  const totalRooms = r.totalBookedRoomsCount || r.roomQuantity || 1;
+                  const checkedInCount = r.checkedInRoomsCount || 0;
+                  const isPartial = checkedInCount > 0 && checkedInCount < totalRooms;
                   const isDepositPaid = r.depositPaymentStatus === 'PAID';
+                  const overdueInfo = checkOverdueArrival(r);
 
-                  if (!isDepositPaid && !isPartial) {
+                  // 1. Đơn check-in một phần: Tiếp tục nhận các phòng còn lại, không hiện nút hủy
+                  if (isPartial) {
                     return (
                       <button
-                        disabled
-                        title="Đơn này chưa hoàn tất thanh toán tiền cọc"
+                        type="button"
+                        onClick={() => openCheckInModal(r)}
                         style={{
-                          background: '#f1f5f9',
-                          color: '#94a3b8',
-                          border: '1px solid #cbd5e1',
+                          background: '#0284c7',
+                          color: '#ffffff',
+                          border: 'none',
                           borderRadius: 6,
                           padding: '6px 14px',
                           fontSize: 13,
                           fontWeight: 500,
-                          cursor: 'not-allowed',
+                          cursor: 'pointer',
                           display: 'inline-flex',
                           alignItems: 'center',
                           gap: 6,
                         }}
                       >
-                        <i className="bi bi-lock-fill" style={{ fontSize: 13 }}></i>
-                        <span>Chờ cọc</span>
+                        <i className="bi bi-key" style={{ fontSize: 14 }}></i>
+                        <span>Nhận tiếp ({checkedInCount}/{totalRooms})</span>
+                      </button>
+                    );
+                  }
+
+                  // 2. Đơn quá thời gian: Hiện nút HỦY ĐƠN QUÁ HẠN và ẨN NÚT CHECK-IN
+                  if (overdueInfo.isOverdue) {
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCancelArrivalModalData(r);
+                          setCancelArrivalReason(`Quá thời gian nhận phòng (${overdueInfo.reason})`);
+                        }}
+                        title={`Đơn đã quá thời gian (${overdueInfo.reason}). Bấm để hủy đơn và giải phóng phòng.`}
+                        style={{
+                          background: '#fee2e2',
+                          color: '#b91c1c',
+                          border: '1px solid #f87171',
+                          borderRadius: 6,
+                          padding: '6px 12px',
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          transition: 'all 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = '#fecaca';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = '#fee2e2';
+                        }}
+                      >
+                        <i className="bi bi-x-circle-fill"></i>
+                        <span>Hủy đơn quá hạn</span>
+                      </button>
+                    );
+                  }
+
+                  // 3. Đơn chưa quá hạn: Nếu đã cọc thì cho Check-in, nếu chưa thì Chờ cọc
+                  if (isDepositPaid) {
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => openCheckInModal(r)}
+                        style={{
+                          background: '#0f172a',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: 6,
+                          padding: '6px 14px',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                      >
+                        <i className="bi bi-key" style={{ fontSize: 14 }}></i>
+                        <span>Check-in</span>
                       </button>
                     );
                   }
 
                   return (
                     <button
-                      onClick={() => openCheckInModal(r)}
+                      type="button"
+                      disabled
+                      title="Đơn này chưa hoàn tất thanh toán tiền cọc"
                       style={{
-                        background: isPartial ? '#0284c7' : '#0f172a',
-                        color: '#ffffff',
-                        border: 'none',
+                        background: '#f1f5f9',
+                        color: '#94a3b8',
+                        border: '1px solid #cbd5e1',
                         borderRadius: 6,
                         padding: '6px 14px',
                         fontSize: 13,
                         fontWeight: 500,
-                        cursor: 'pointer',
+                        cursor: 'not-allowed',
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: 6,
                       }}
                     >
-                      <i className="bi bi-key" style={{ fontSize: 14 }}></i>
-                      <span>{isPartial ? `Nhận tiếp (${r.checkedInRoomsCount}/${r.totalBookedRoomsCount || r.roomQuantity})` : 'Check-in'}</span>
+                      <i className="bi bi-lock-fill" style={{ fontSize: 13 }}></i>
+                      <span>Chờ cọc</span>
                     </button>
                   );
                 },
@@ -1577,7 +1791,7 @@ export const FrontDeskDashboardPage = () => {
             ]}
           />
           <PaginationControl
-            totalItems={arrivals.length}
+            totalItems={filteredArrivals.length}
             currentPage={arrivalsPage}
             pageSize={arrivalsPageSize}
             onPageChange={setArrivalsPage}
@@ -1814,16 +2028,44 @@ export const FrontDeskDashboardPage = () => {
       {/* ========================================================================= */}
       {activeTab === 'stays' && (
         <div>
-          <div style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: '#0f172a' }}>
-              Danh Sách Phòng Đang Phục Vụ Lưu Trú
-            </h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: '#0f172a' }}>
+                Danh Sách Phòng Đang Phục Vụ Lưu Trú
+              </h2>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                Tổng cộng {filteredStays.length} phòng đang có khách
+              </div>
+            </div>
+            <div style={{ position: 'relative', width: 320 }}>
+              <i
+                className="bi bi-search"
+                style={{ position: 'absolute', left: 12, top: 10, fontSize: 13, color: '#94a3b8' }}
+              ></i>
+              <input
+                type="text"
+                placeholder="Tìm số phòng, tên khách, CCCD, mã lưu trú..."
+                value={staysSearchQuery}
+                onChange={(e) => {
+                  setStaysSearchQuery(e.target.value);
+                  setStaysPage(1);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px 8px 34px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 6,
+                  fontSize: 13,
+                  color: '#0f172a',
+                }}
+              />
+            </div>
           </div>
 
           <DataTable
             keyField="stayId"
             data={paginatedStays}
-            emptyMessage="Hiện tại không có phòng nào đang có khách lưu trú."
+            emptyMessage={staysSearchQuery.trim() ? "Không tìm thấy phòng lưu trú nào phù hợp với từ khóa tìm kiếm." : "Hiện tại không có phòng nào đang có khách lưu trú."}
             columns={[
               {
                 header: 'Mã Lưu Trú',
@@ -1981,7 +2223,7 @@ export const FrontDeskDashboardPage = () => {
             ]}
           />
           <PaginationControl
-            totalItems={stays.length}
+            totalItems={filteredStays.length}
             currentPage={staysPage}
             pageSize={staysPageSize}
             onPageChange={setStaysPage}
@@ -2887,1846 +3129,97 @@ export const FrontDeskDashboardPage = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 1: CHECK-IN DIALOG (BỐ CỤC 70% / 30% THEO WIREFRAME & PARTIAL CHECK-IN) */}
+      {/* MODALS REFACTORED INTO INDEPENDENT COMPONENTS                             */}
       {/* ========================================================================= */}
-      {checkInModalData && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15, 23, 42, 0.55)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 9999,
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              background: '#ffffff',
-              borderRadius: 8,
-              maxWidth: 1040,
-              width: '100%',
-              maxHeight: '92vh',
-              display: 'flex',
-              flexDirection: 'column',
-              border: '1px solid #e2e8f0',
-              boxShadow: '0 20px 35px -5px rgba(0, 0, 0, 0.12)',
-              overflow: 'hidden',
-            }}
-          >
-            {/* Header bar */}
-            <div
-              style={{
-                padding: '16px 24px',
-                borderBottom: '1px solid #e2e8f0',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                background: '#f8fafc',
-              }}
-            >
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      background: '#0f172a',
-                      color: '#ffffff',
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                    }}
-                  >
-                    Check-in
-                  </span>
-                  <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', margin: 0 }}>
-                    Thủ Tục Nhận Phòng — Mã Đặt: #{checkInModalData.reservationCode}
-                  </h3>
-                  {checkInModalData.checkedInRoomsCount > 0 && (
-                    <span
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: '#0284c7',
-                        background: '#e0f2fe',
-                        padding: '2px 8px',
-                        borderRadius: 4,
-                      }}
-                    >
-                      Đang nhận dở ({checkInModalData.checkedInRoomsCount}/{checkInModalData.totalBookedRoomsCount || checkInModalData.roomQuantity || 1} phòng)
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: 13, color: '#64748b', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                  <span>Khách chính: <strong style={{ color: '#0f172a' }}>{checkInModalData.contactName}</strong> ({checkInModalData.contactPhone})</span>
-                  <span>•</span>
-                  <span>Thời gian: <strong style={{ color: '#0f172a' }}>{formatDate(checkInModalData.checkInDate)} → {formatDate(checkInModalData.checkOutDate)}</strong> ({checkInModalData.nights || 1} đêm)</span>
-                  <span>•</span>
-                  <span>Sức chứa: <strong>{checkInModalData.guestCount || 2} khách</strong></span>
-                </div>
-              </div>
+      <CheckInModal
+        data={checkInModalData}
+        onClose={() => setCheckInModalData(null)}
+        isLoadingRooms={isLoadingRooms}
+        checkInCategories={checkInCategories}
+        checkInSlots={checkInSlots}
+        availableRoomsByType={availableRoomsByType}
+        activeCheckingInSlotId={activeCheckingInSlotId}
+        handleCheckInSingleSlot={handleCheckInSingleSlot}
+        handleSlotRoomChange={handleSlotRoomChange}
+        updateSlotField={updateSlotField}
+        handleCheckInAllSlots={handleCheckInAllSlots}
+        isCheckingIn={isCheckingIn}
+        checkInDepositAmount={checkInDepositAmount}
+        setCheckInDepositAmount={setCheckInDepositAmount}
+        checkInDepositMethod={checkInDepositMethod}
+        setCheckInDepositMethod={setCheckInDepositMethod}
+        checkInSavedCCCD={checkInSavedCCCD}
+        setCheckInSavedCCCD={setCheckInSavedCCCD}
+        checkInIncludeBreakfast={checkInIncludeBreakfast}
+        setCheckInIncludeBreakfast={setCheckInIncludeBreakfast}
+        checkInStaffNotes={checkInStaffNotes}
+        setCheckInStaffNotes={setCheckInStaffNotes}
+      />
 
-              <button
-                type="button"
-                onClick={() => setCheckInModalData(null)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  fontSize: 20,
-                  cursor: 'pointer',
-                  color: '#94a3b8',
-                  padding: 4,
-                  lineHeight: 1,
-                }}
-              >
-                ✕
-              </button>
-            </div>
+      <ExtendStayModal
+        stay={extendStayModal}
+        onClose={() => setExtendStayModal(null)}
+        onSubmit={handleExecuteExtendStay}
+        newCheckOutDate={newCheckOutDate}
+        setNewCheckOutDate={setNewCheckOutDate}
+        extendReason={extendReason}
+        setExtendReason={setExtendReason}
+        availabilityCheck={availabilityCheck}
+        isExtending={isExtending}
+        getStayRoomPrice={getStayRoomPrice}
+      />
 
-            {/* Modal Body: 2 Columns (68% / 32%) */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'minmax(0, 1.9fr) minmax(300px, 1.1fr)',
-                gap: 20,
-                padding: 24,
-                overflowY: 'auto',
-                flex: 1,
-              }}
-            >
-              {/* CỘT TRÁI (68%): PHÂN BỔ PHÒNG & KHÁCH Ở CÁC PHÒNG */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                  <h4 style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', margin: 0, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    Phân Bổ Phòng Vật Lý & Khách Lưu Trú
-                  </h4>
-                  <span style={{ fontSize: 12, color: '#64748b' }}>
-                    Chỉ chọn các phòng Trống và Sạch (Clean/Inspected)
-                  </span>
-                </div>
+      <RoomTransferModal
+        stay={transferModalStay}
+        onClose={() => setTransferModalStay(null)}
+        onSubmit={handleExecuteTransferRoom}
+        transferAvailableRooms={transferAvailableRooms}
+        isLoadingTransferRooms={isLoadingTransferRooms}
+        transferTargetRoomId={transferTargetRoomId}
+        setTransferTargetRoomId={setTransferTargetRoomId}
+        transferReason={transferReason}
+        setTransferReason={setTransferReason}
+        transferAdditionalCharge={transferAdditionalCharge}
+        setTransferAdditionalCharge={setTransferAdditionalCharge}
+        isTransferring={isTransferring}
+        getStayRoomPrice={getStayRoomPrice}
+      />
 
-                {isLoadingRooms ? (
-                  <div style={{ padding: '40px 16px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: 6 }}>
-                    Đang tra cứu danh sách phòng vật lý trống sạch...
-                  </div>
-                ) : checkInSlots.length === 0 ? (
-                  <div style={{ padding: '24px 16px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: 6 }}>
-                    Không tìm thấy danh sách phòng cho đơn đặt này.
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                    {checkInCategories.map((category) => {
-                      const categorySlots = checkInSlots.filter((s) => s.roomTypeId === category.roomTypeId);
-                      const typeRooms = availableRoomsByType[category.roomTypeId] || [];
-                      const isAllCheckedIn = category.pendingCount === 0;
+      <CheckOutModal
+        stay={checkOutModalStay}
+        onClose={() => setCheckOutModalStay(null)}
+        onConfirm={handleExecuteCheckOut}
+        isCheckingOut={isCheckingOut}
+      />
 
-                      return (
-                        <div
-                          key={category.roomTypeId}
-                          style={{
-                            border: `1px solid ${isAllCheckedIn ? '#bbf7d0' : '#cbd5e1'}`,
-                            borderRadius: 8,
-                            overflow: 'hidden',
-                            background: isAllCheckedIn ? '#f0fdf4' : '#f8fafc',
-                          }}
-                        >
-                          {/* Category Header */}
-                          <div
-                            style={{
-                              background: isAllCheckedIn ? '#166534' : '#0f172a',
-                              color: '#ffffff',
-                              padding: '10px 16px',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              flexWrap: 'wrap',
-                              gap: 8,
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                              <i className="bi bi-door-open-fill" style={{ fontSize: 16 }}></i>
-                              <span style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                                Hạng phòng: {category.roomTypeName}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: 12,
-                                  fontWeight: 600,
-                                  color: isAllCheckedIn ? '#166534' : '#0f172a',
-                                  background: '#ffffff',
-                                  padding: '2px 8px',
-                                  borderRadius: 4,
-                                }}
-                              >
-                                Đã nhận: {category.checkedInCount}/{category.totalQty} phòng
-                              </span>
-                              {category.pendingCount > 0 && (
-                                <span
-                                  style={{
-                                    fontSize: 11,
-                                    fontWeight: 600,
-                                    color: '#fef08a',
-                                    background: 'rgba(255,255,255,0.15)',
-                                    padding: '2px 8px',
-                                    borderRadius: 4,
-                                  }}
-                                >
-                                  Còn lại: {category.pendingCount} phòng cần nhận
-                                </span>
-                              )}
-                            </div>
-                            {category.unitPrice && (
-                              <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>
-                                {formatVND(category.unitPrice)} / đêm
-                              </span>
-                            )}
-                          </div>
+      <StayDetailModal
+        data={stayDetailModal}
+        onClose={() => setStayDetailModal(null)}
+        onTransferRoom={(stay) => openTransferRoomModal(stay)}
+        onExtendStay={(stay) => openExtendStayModal(stay)}
+        onCheckOut={(stay) => openCheckOutModal(stay)}
+      />
 
-                          {/* Slots list for this Category */}
-                          <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                            {category.checkedInCount > 0 && (
-                              <div
-                                style={{
-                                  background: '#dcfce7',
-                                  border: '1px solid #86efac',
-                                  borderRadius: 6,
-                                  padding: '8px 12px',
-                                  fontSize: 12,
-                                  color: '#15803d',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 8,
-                                }}
-                              >
-                                <i className="bi bi-check-circle-fill"></i>
-                                <span>
-                                  <strong>Phòng đã nhận ({category.checkedInCount} phòng):</strong>{' '}
-                                  {category.checkedInRoomNumbers.map((rn) => `Phòng ${rn}`).join(', ')}
-                                </span>
-                              </div>
-                            )}
+      <CancelOverdueArrivalModal
+        data={cancelArrivalModalData}
+        onClose={() => setCancelArrivalModalData(null)}
+        onSuccess={loadData}
+        checkOverdueArrival={checkOverdueArrival}
+      />
 
-                            {isAllCheckedIn ? (
-                              <div style={{ fontSize: 13, color: '#166534', fontWeight: 500, padding: '4px 0' }}>
-                                ✓ Hạng phòng này đã hoàn tất nhận toàn bộ {category.totalQty} phòng. Không còn phòng nào chờ nhận.
-                              </div>
-                            ) : (
-                              categorySlots.map((slot) => {
-                                const assignedOtherRoomIds = new Set(
-                                  checkInSlots
-                                    .filter((s) => s.slotId !== slot.slotId && s.selectedRoomId)
-                                    .map((s) => Number(s.selectedRoomId))
-                                );
-                                const filteredTypeRooms = typeRooms.filter(
-                                  (r) => !assignedOtherRoomIds.has(r.roomId) || r.roomId === Number(slot.selectedRoomId)
-                                );
+      <DirectBookingSuccessModal
+        data={successModalData}
+        onClose={() => setSuccessModalData(null)}
+        isCashPaidConfirmed={isCashPaidConfirmed}
+        onConfirmCash={handleConfirmCash}
+        isProcessingCash={isProcessingCash}
+        onCancelPendingBooking={handleCancelPendingBooking}
+        onProceedCheckIn={() => {
+          setSuccessModalData(null);
+          setActiveTab('arrivals');
+        }}
+      />
 
-                                return (
-                                  <div
-                                    key={slot.slotId}
-                                    style={{
-                                      background: '#ffffff',
-                                      border: '1px solid #e2e8f0',
-                                      borderRadius: 6,
-                                      padding: 14,
-                                      boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-                                    }}
-                                  >
-                                    {/* Slot Header */}
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                        <span
-                                          style={{
-                                            fontSize: 12,
-                                            fontWeight: 700,
-                                            color: '#0f172a',
-                                            background: '#f1f5f9',
-                                            padding: '2px 8px',
-                                            borderRadius: 4,
-                                          }}
-                                        >
-                                          Phòng {slot.slotIndex}/{slot.totalSlotsForType}
-                                        </span>
-                                        <span style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>
-                                          Cần nhận: {slot.roomTypeName}
-                                        </span>
-                                      </div>
-
-                                      <button
-                                        type="button"
-                                        onClick={() => handleCheckInSingleSlot(slot)}
-                                        disabled={activeCheckingInSlotId === slot.slotId || isCheckingIn || !slot.selectedRoomId}
-                                        style={{
-                                          background: '#0f172a',
-                                          color: '#ffffff',
-                                          border: 'none',
-                                          borderRadius: 4,
-                                          padding: '5px 12px',
-                                          fontSize: 12,
-                                          fontWeight: 600,
-                                          cursor: (!slot.selectedRoomId || isCheckingIn) ? 'default' : 'pointer',
-                                          opacity: (!slot.selectedRoomId || isCheckingIn) ? 0.6 : 1,
-                                        }}
-                                      >
-                                        {activeCheckingInSlotId === slot.slotId ? 'Đang check-in...' : 'Check-in Phòng Này'}
-                                      </button>
-                                    </div>
-
-                                    {/* Slot Form Fields */}
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                                      <div>
-                                        <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                                          Gán Phòng Vật Lý * (Chỉ hiện phòng {category.roomTypeName})
-                                        </label>
-                                        {filteredTypeRooms.length === 0 ? (
-                                          <div style={{ fontSize: 12, color: '#ef4444', padding: '6px 0' }}>
-                                            Hết phòng sạch trống cho {category.roomTypeName}
-                                          </div>
-                                        ) : (
-                                          <select
-                                            value={slot.selectedRoomId}
-                                            onChange={(e) => handleSlotRoomChange(slot.slotId, e.target.value)}
-                                            style={{
-                                              width: '100%',
-                                              padding: '7px 10px',
-                                              border: '1px solid #cbd5e1',
-                                              borderRadius: 6,
-                                              fontSize: 13,
-                                              background: '#ffffff',
-                                              color: '#0f172a',
-                                            }}
-                                          >
-                                            {filteredTypeRooms.map((r) => (
-                                              <option key={r.roomId} value={r.roomId}>
-                                                Phòng {r.roomNumber} (Tầng {r.floor} • {r.cleaningStatus})
-                                              </option>
-                                            ))}
-                                          </select>
-                                        )}
-                                      </div>
-
-                                      <div>
-                                        <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                                          Mã Thẻ Từ (Keycard)
-                                        </label>
-                                        <input
-                                          type="text"
-                                          value={slot.keyCardNumber}
-                                          onChange={(e) => updateSlotField(slot.slotId, 'keyCardNumber', e.target.value)}
-                                          placeholder="Ví dụ: CARD-101"
-                                          style={{
-                                            width: '100%',
-                                            padding: '7px 10px',
-                                            border: '1px solid #cbd5e1',
-                                            borderRadius: 6,
-                                            fontSize: 13,
-                                            color: '#0f172a',
-                                          }}
-                                        />
-                                      </div>
-
-                                      <div>
-                                        <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                                          Khách Đại Diện Ở Phòng Này
-                                        </label>
-                                        <input
-                                          type="text"
-                                          value={slot.guestName}
-                                          onChange={(e) => updateSlotField(slot.slotId, 'guestName', e.target.value)}
-                                          placeholder="Họ và tên khách"
-                                          style={{
-                                            width: '100%',
-                                            padding: '7px 10px',
-                                            border: '1px solid #cbd5e1',
-                                            borderRadius: 6,
-                                            fontSize: 13,
-                                            color: '#0f172a',
-                                          }}
-                                        />
-                                      </div>
-
-                                      <div>
-                                        <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                                          Số CCCD / Passport *
-                                        </label>
-                                        <input
-                                          type="text"
-                                          value={slot.guestIdNumber}
-                                          onChange={(e) => updateSlotField(slot.slotId, 'guestIdNumber', e.target.value)}
-                                          placeholder="Nhập số CCCD/Passport"
-                                          style={{
-                                            width: '100%',
-                                            padding: '7px 10px',
-                                            border: '1px solid #cbd5e1',
-                                            borderRadius: 6,
-                                            fontSize: 13,
-                                            color: '#0f172a',
-                                          }}
-                                        />
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* CỘT PHẢI (32%): TÀI CHÍNH, TIỆN ÍCH & NÚT HOÀN TẤT */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                {/* Khối 1: Thông tin thanh toán */}
-                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, padding: 16 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 12 }}>
-                    Thông Tin Thanh Toán
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13, color: '#334155' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Tổng tiền phòng:</span>
-                      <strong style={{ color: '#0f172a' }}>{formatVND(checkInModalData.estimatedTotal || 0)}</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Đã thanh toán / cọc:</span>
-                      <span style={{ color: '#16a34a', fontWeight: 600 }}>{formatVND(checkInModalData.depositAmount || 0)}</span>
-                    </div>
-                    <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                      <span style={{ fontWeight: 600, color: '#475569' }}>Còn phải thu:</span>
-                      <strong style={{ fontSize: 15, color: '#0f172a' }}>
-                        {formatVND(Math.max(0, (checkInModalData.estimatedTotal || 0) - (checkInModalData.depositAmount || 0)))}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Khối 2: Đặt cọc / Ký quỹ (Deposit) */}
-                <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 6, padding: 16 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
-                    Đặt Cọc / Ký Quỹ (Deposit)
-                  </div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
-                    Bảo đảm minibar, giặt là và thẻ từ khi bàn giao phòng.
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 10 }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                        Tiền Cọc (VNĐ)
-                      </label>
-                      <input
-                        type="number"
-                        value={checkInDepositAmount}
-                        onChange={(e) => setCheckInDepositAmount(e.target.value)}
-                        placeholder="500000"
-                        style={{
-                          width: '100%',
-                          padding: '7px 10px',
-                          border: '1px solid #cbd5e1',
-                          borderRadius: 6,
-                          fontSize: 13,
-                          color: '#0f172a',
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                        Hình Thức
-                      </label>
-                      <select
-                        value={checkInDepositMethod}
-                        onChange={(e) => setCheckInDepositMethod(e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '7px 10px',
-                          border: '1px solid #cbd5e1',
-                          borderRadius: 6,
-                          fontSize: 13,
-                          background: '#ffffff',
-                          color: '#0f172a',
-                        }}
-                      >
-                        <option value="CASH">Tiền mặt</option>
-                        <option value="CARD">Quẹt thẻ POS</option>
-                        <option value="TRANSFER">Chuyển khoản QR</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Khối 3: Tiện ích Check-in & Ghi chú */}
-                <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 6, padding: 16 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 10 }}>
-                    Thủ Tục Kèm Theo & Ghi Chú
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13, color: '#334155', marginBottom: 12 }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={checkInSavedCCCD}
-                        onChange={(e) => setCheckInSavedCCCD(e.target.checked)}
-                      />
-                      <span>Đã chụp & lưu bản sao CCCD/Passport</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={checkInIncludeBreakfast}
-                        onChange={(e) => setCheckInIncludeBreakfast(e.target.checked)}
-                      />
-                      <span>Kèm phiếu ăn sáng ({checkInModalData.guestCount || 2} suất)</span>
-                    </label>
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                      Ghi Chú Ca Trực Lễ Tân
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={checkInStaffNotes}
-                      onChange={(e) => setCheckInStaffNotes(e.target.value)}
-                      placeholder="Ghi chú ca trực, yêu cầu của khách..."
-                      style={{
-                        width: '100%',
-                        padding: '7px 10px',
-                        border: '1px solid #cbd5e1',
-                        borderRadius: 6,
-                        fontSize: 12,
-                        color: '#0f172a',
-                        resize: 'none',
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Bottom Action: Hoàn tất nhận tất cả các phòng */}
-                <div style={{ marginTop: 'auto', paddingTop: 8 }}>
-                  <button
-                    type="button"
-                    onClick={handleCheckInAllSlots}
-                    disabled={isCheckingIn || checkInSlots.length === 0}
-                    style={{
-                      width: '100%',
-                      background: '#0f172a',
-                      color: '#ffffff',
-                      border: 'none',
-                      borderRadius: 6,
-                      padding: '12px 16px',
-                      fontSize: 14,
-                      fontWeight: 600,
-                      cursor: (isCheckingIn || checkInSlots.length === 0) ? 'default' : 'pointer',
-                      opacity: (isCheckingIn || checkInSlots.length === 0) ? 0.6 : 1,
-                      boxShadow: '0 2px 4px rgba(15,23,42,0.15)',
-                    }}
-                  >
-                    {isCheckingIn
-                      ? 'Đang hoàn tất nhận phòng...'
-                      : checkInSlots.length === 0
-                        ? 'Đã nhận đủ toàn bộ phòng'
-                        : `Hoàn Tất Check-in (${checkInSlots.length} phòng còn lại)`}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL: EXTEND STAY DIALOG (UC-29: GIA HẠN LƯU TRÚ)                       */}
-      {/* ========================================================================= */}
-      {extendStayModal && (() => {
-        const extraNights =
-          extendStayModal.checkOutDate && newCheckOutDate && newCheckOutDate > extendStayModal.checkOutDate
-            ? Math.max(1, Math.round((new Date(newCheckOutDate) - new Date(extendStayModal.checkOutDate)) / (1000 * 60 * 60 * 24)))
-            : 0;
-        const stayUnitPrice = getStayRoomPrice(extendStayModal);
-        const extraRoomCharge = extraNights * stayUnitPrice;
-        const currentFolioBalance = extendStayModal.folioTotalAmount ? Number(extendStayModal.folioTotalAmount) : 0;
-        const estimatedNewFolioBalance = currentFolioBalance + extraRoomCharge;
-        const isConflict = availabilityCheck.checked && !availabilityCheck.isAvailable;
-
-        return (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(15, 23, 42, 0.45)',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              zIndex: 9999,
-              padding: 16,
-            }}
-          >
-            <div
-              style={{
-                background: '#ffffff',
-                borderRadius: 8,
-                maxWidth: 560,
-                width: '100%',
-                padding: 24,
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 10px 25px rgba(0, 0, 0, 0.08)',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      background: '#0284c7',
-                      color: '#ffffff',
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                    }}
-                  >
-                    Gia Hạn Lưu Trú
-                  </span>
-                  <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', margin: 0 }}>
-                    Phòng {extendStayModal.roomNumber} — {extendStayModal.roomTypeName || 'Tiêu chuẩn'}
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setExtendStayModal(null)}
-                  style={{ background: 'transparent', border: 'none', fontSize: 18, cursor: 'pointer', color: '#94a3b8' }}
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* Thông tin lưu trú hiện tại */}
-              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, padding: 12, marginBottom: 16, fontSize: 13 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, color: '#334155' }}>
-                  <div>Mã Đặt: <strong>#{extendStayModal.reservationCode}</strong></div>
-                  <div>Khách hàng: <strong>{extendStayModal.guestName}</strong></div>
-                  <div>Giờ nhận phòng: {formatDateTime(extendStayModal.actualCheckIn)}</div>
-                  <div>Ngày trả hiện tại: <strong style={{ color: '#0284c7' }}>{formatDate(extendStayModal.checkOutDate)}</strong></div>
-                </div>
-              </div>
-
-              <form onSubmit={handleExecuteExtendStay}>
-                {/* Chọn ngày trả phòng mới */}
-                <div style={{ marginBottom: 14 }}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
-                    Ngày Trả Phòng Mới (New Check-out Date) *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    min={
-                      extendStayModal.checkOutDate
-                        ? new Date(new Date(extendStayModal.checkOutDate).getTime() + 86400000).toISOString().split('T')[0]
-                        : ''
-                    }
-                    value={newCheckOutDate}
-                    onChange={(e) => setNewCheckOutDate(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '9px 12px',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: 6,
-                      fontSize: 14,
-                      color: '#0f172a',
-                      fontWeight: 600,
-                    }}
-                  />
-                </div>
-
-                {/* Kiểm tra Quota & Cảnh báo Xung đột Overbooking thời gian thực */}
-                <div style={{ marginBottom: 14 }}>
-                  {availabilityCheck.checking && (
-                    <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span className="spinner-border spinner-border-sm" role="status" style={{ width: 12, height: 12 }}></span>
-                      Đang đối soát quỹ phòng trống với máy chủ...
-                    </div>
-                  )}
-
-                  {!availabilityCheck.checking && isConflict && (
-                    <div
-                      style={{
-                        background: '#fef2f2',
-                        border: '1px solid #fecaca',
-                        borderRadius: 6,
-                        padding: '10px 12px',
-                        color: '#991b1b',
-                        fontSize: 12,
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <i className="bi bi-exclamation-octagon-fill"></i>
-                        Xung Đột Lịch Phòng: Hạng phòng đã kín chỗ (0 phòng trống)!
-                      </div>
-                      <div>
-                        Khách khác đã đặt cọc trước phòng của hạng này trong giai đoạn từ{' '}
-                        <strong>{formatDate(extendStayModal.checkOutDate)}</strong> đến{' '}
-                        <strong>{formatDate(newCheckOutDate)}</strong>. Hệ thống không cho phép gia hạn trực tiếp tại phòng này để tránh Overbooking.
-                      </div>
-                      <div style={{ marginTop: 6, fontWeight: 600, color: '#b91c1c' }}>
-                        👉 Hướng giải quyết: Lễ tân tư vấn khách đổi sang hạng phòng khác còn trống qua chức năng <strong>Đổi Phòng (Room Transfer)</strong>.
-                      </div>
-                    </div>
-                  )}
-
-                  {!availabilityCheck.checking && availabilityCheck.checked && !isConflict && extraNights > 0 && (
-                    <div
-                      style={{
-                        background: '#f0fdf4',
-                        border: '1px solid #bbf7d0',
-                        borderRadius: 6,
-                        padding: '8px 12px',
-                        color: '#166534',
-                        fontSize: 12,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 6,
-                      }}
-                    >
-                      <i className="bi bi-check-circle-fill"></i>
-                      <span>
-                        Quỹ phòng khả dụng: Còn <strong>{availabilityCheck.availableRoomsCount}</strong> phòng trống hạng này. Đủ điều kiện gia hạn thêm <strong>{extraNights} đêm</strong>.
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Bảng Kê Chi Tiết Chi Phí Phát Sinh (Cost & Folio Calculation) */}
-                {extraNights > 0 && (
-                  <div
-                    style={{
-                      border: '1px solid #e2e8f0',
-                      borderRadius: 6,
-                      background: '#ffffff',
-                      padding: 12,
-                      marginBottom: 16,
-                      fontSize: 13,
-                    }}
-                  >
-                    <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.04em', marginBottom: 8 }}>
-                      Bảng Tính Chi Phí Gia Hạn
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', color: '#475569' }}>
-                      <span>Đơn giá phòng ({extendStayModal.roomTypeName || 'Hạng phòng'}):</span>
-                      <span style={{ fontWeight: 600 }}>{formatVND(stayUnitPrice)} / đêm</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', color: '#475569' }}>
-                      <span>Số đêm gia hạn thêm:</span>
-                      <span style={{ fontWeight: 600, color: '#0284c7' }}>+ {extraNights} đêm</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', color: '#0f172a', fontWeight: 600 }}>
-                      <span>Tiền phòng phát sinh:</span>
-                      <span style={{ color: '#0284c7', fontSize: 14 }}>+ {formatVND(extraRoomCharge)}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', color: '#64748b', fontSize: 12 }}>
-                      <span>Công nợ Folio hiện tại (#{extendStayModal.folioId}):</span>
-                      <span>{formatVND(currentFolioBalance)}</span>
-                    </div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        padding: '8px 10px',
-                        background: '#f8fafc',
-                        borderRadius: 4,
-                        marginTop: 6,
-                        borderTop: '1px dashed #cbd5e1',
-                        color: '#0f172a',
-                        fontWeight: 700,
-                      }}
-                    >
-                      <span>Tổng công nợ Folio sau gia hạn:</span>
-                      <span style={{ color: '#0f172a', fontSize: 14 }}>{formatVND(estimatedNewFolioBalance)}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Lý Do / Ghi Chú Gia Hạn */}
-                <div style={{ marginBottom: 20 }}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
-                    Lý Do / Ghi Chú Gia Hạn
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={extendReason}
-                    onChange={(e) => setExtendReason(e.target.value)}
-                    placeholder="Ví dụ: Khách gia hạn thêm 1 ngày công tác..."
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: 6,
-                      fontSize: 13,
-                      color: '#0f172a',
-                      resize: 'none',
-                    }}
-                  />
-                </div>
-
-                {/* Nút hành động */}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => setExtendStayModal(null)}
-                    style={{
-                      background: '#ffffff',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: 6,
-                      padding: '8px 16px',
-                      fontSize: 13,
-                      fontWeight: 500,
-                      color: '#475569',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Hủy bỏ
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={
-                      isExtending ||
-                      !newCheckOutDate ||
-                      (extendStayModal.checkOutDate && newCheckOutDate <= extendStayModal.checkOutDate) ||
-                      isConflict
-                    }
-                    title={isConflict ? 'Không thể gia hạn do hạng phòng đã kín chỗ' : undefined}
-                    style={{
-                      background: '#0284c7',
-                      color: '#ffffff',
-                      border: 'none',
-                      borderRadius: 6,
-                      padding: '8px 18px',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor:
-                        isExtending ||
-                        !newCheckOutDate ||
-                        (extendStayModal.checkOutDate && newCheckOutDate <= extendStayModal.checkOutDate) ||
-                        isConflict
-                          ? 'not-allowed'
-                          : 'pointer',
-                      opacity:
-                        isExtending ||
-                        !newCheckOutDate ||
-                        (extendStayModal.checkOutDate && newCheckOutDate <= extendStayModal.checkOutDate) ||
-                        isConflict
-                          ? 0.5
-                          : 1,
-                    }}
-                  >
-                    {isExtending ? 'Đang xử lý...' : 'Xác Nhận Gia Hạn'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ========================================================================= */}
-      {/* MODAL: ROOM TRANSFER DIALOG (UC-28: ĐỔI PHÒNG LƯU TRÚ)                    */}
-      {/* ========================================================================= */}
-      {transferModalStay && (() => {
-        const selectedTargetRoom = transferAvailableRooms.find((r) => r.roomId === Number(transferTargetRoomId));
-        const currentRoomPrice = getStayRoomPrice(transferModalStay);
-        const targetRoomPrice = selectedTargetRoom?.basePrice ? Number(selectedTargetRoom.basePrice) : 0;
-        const priceDiff = selectedTargetRoom ? Math.max(0, targetRoomPrice - currentRoomPrice) : 0;
-        const quickReasons = [
-          'Sự cố thiết bị / điều hòa',
-          'Khách phàn nàn tiếng ồn',
-          'Khách yêu cầu đổi loại giường',
-          'Nâng hạng dịch vụ (Room Upgrade)',
-          'Yêu cầu phòng tầng cao hơn',
-        ];
-
-        return (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(15, 23, 42, 0.45)',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              zIndex: 9999,
-              padding: 16,
-            }}
-          >
-            <div
-              style={{
-                background: '#ffffff',
-                borderRadius: 8,
-                maxWidth: 580,
-                width: '100%',
-                padding: 24,
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 10px 25px rgba(0, 0, 0, 0.08)',
-                maxHeight: '90vh',
-                overflowY: 'auto',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      background: '#475569',
-                      color: '#ffffff',
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                    }}
-                  >
-                    Đổi Phòng
-                  </span>
-                  <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', margin: 0 }}>
-                    Thủ Tục Chuyển Phòng
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setTransferModalStay(null)}
-                  style={{ background: 'transparent', border: 'none', fontSize: 18, cursor: 'pointer', color: '#94a3b8' }}
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* Thông tin phòng hiện tại */}
-              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, padding: 12, marginBottom: 16, fontSize: 13 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, color: '#334155' }}>
-                  <div>Phòng hiện tại: <strong style={{ color: '#0f172a' }}>Phòng {transferModalStay.roomNumber}</strong></div>
-                  <div>Hạng phòng: <strong>{transferModalStay.roomTypeName || 'Tiêu chuẩn'}</strong></div>
-                  <div>Khách hàng: <strong>{transferModalStay.guestName}</strong></div>
-                  <div>Mã đặt phòng: <strong style={{ fontFamily: 'monospace' }}>#{transferModalStay.reservationCode}</strong></div>
-                </div>
-              </div>
-
-              <form onSubmit={handleExecuteTransferRoom}>
-                {/* Chọn phòng mới */}
-                <div style={{ marginBottom: 14 }}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
-                    Phòng Mới Chuyển Đến *
-                  </label>
-                  {isLoadingTransferRooms ? (
-                    <div style={{ fontSize: 13, color: '#64748b', fontStyle: 'italic', padding: 8 }}>
-                      Đang tải danh sách phòng khả dụng...
-                    </div>
-                  ) : transferAvailableRooms.length === 0 ? (
-                    <div style={{ padding: '10px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, color: '#991b1b', fontSize: 13 }}>
-                      ⚠️ Hiện không có phòng trống và sạch nào khả dụng để chuyển.
-                    </div>
-                  ) : (
-                    <select
-                      required
-                      value={transferTargetRoomId}
-                      onChange={(e) => {
-                        const rId = e.target.value;
-                        setTransferTargetRoomId(rId);
-                        const sel = transferAvailableRooms.find((r) => r.roomId === Number(rId));
-                        if (sel && sel.basePrice && currentRoomPrice && Number(sel.basePrice) > currentRoomPrice) {
-                          setTransferAdditionalCharge(Number(sel.basePrice) - currentRoomPrice);
-                        } else {
-                          setTransferAdditionalCharge(0);
-                        }
-                      }}
-                      style={{
-                        width: '100%',
-                        padding: '9px 12px',
-                        border: '1px solid #cbd5e1',
-                        borderRadius: 6,
-                        fontSize: 13,
-                        color: '#0f172a',
-                        fontWeight: 500,
-                        background: '#ffffff',
-                      }}
-                    >
-                      <option value="">-- Chọn phòng mới chuyển đến ({transferAvailableRooms.length} phòng khả dụng) --</option>
-                      {transferAvailableRooms.map((r) => (
-                        <option key={r.roomId} value={r.roomId}>
-                          Phòng {r.roomNumber} (Tầng {r.floor}) • {r.roomTypeName} — {formatVND(r.basePrice || 0)}/đêm
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                {/* Khối so sánh phòng & Chênh lệch */}
-                {selectedTargetRoom && (
-                  <div
-                    style={{
-                      border: '1px solid #e2e8f0',
-                      borderRadius: 6,
-                      background: '#f8fafc',
-                      padding: 12,
-                      marginBottom: 14,
-                      fontSize: 12.5,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <span style={{ color: '#64748b' }}>Phòng cũ:</span>
-                      <strong>Phòng {transferModalStay.roomNumber} ({formatVND(currentRoomPrice)}/đêm)</strong>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <span style={{ color: '#64748b' }}>Phòng mới:</span>
-                      <strong style={{ color: '#0284c7' }}>
-                        Phòng {selectedTargetRoom.roomNumber} ({formatVND(selectedTargetRoom.basePrice || 0)}/đêm)
-                      </strong>
-                    </div>
-                    {priceDiff > 0 ? (
-                      <div style={{ color: '#b45309', fontSize: 12, marginTop: 4, fontWeight: 500 }}>
-                        ★ Nâng hạng phòng: Đơn giá phòng mới cao hơn +{formatVND(priceDiff)}/đêm.
-                      </div>
-                    ) : (
-                      <div style={{ color: '#166534', fontSize: 12, marginTop: 4, fontWeight: 500 }}>
-                        ✓ Chuyển phòng ngang hạng (Cùng đơn giá hoặc thấp hơn).
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Phụ thu đổi phòng / nâng hạng (Readonly tự động tính) */}
-                <div style={{ marginBottom: 14 }}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                    Phụ Thu Đổi Phòng / Nâng Hạng
-                  </label>
-                  <input
-                    type="text"
-                    readOnly
-                    value={formatVND(transferAdditionalCharge)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      border: '1px solid #e2e8f0',
-                      borderRadius: 6,
-                      fontSize: 13,
-                      color: transferAdditionalCharge > 0 ? '#0284c7' : '#0f172a',
-                      fontWeight: 600,
-                      background: '#f8fafc',
-                      cursor: 'not-allowed',
-                    }}
-                  />
-                  <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>
-                    Số tiền phụ thu sẽ được ghi nhận trực tiếp vào Folio của khách.
-                  </div>
-                </div>
-
-                {/* Lý do đổi phòng */}
-                <div style={{ marginBottom: 20 }}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>
-                    Lý Do Đổi Phòng *
-                  </label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                    {quickReasons.map((reason) => (
-                      <button
-                        key={reason}
-                        type="button"
-                        onClick={() => setTransferReason(reason)}
-                        style={{
-                          background: transferReason === reason ? '#0f172a' : '#f1f5f9',
-                          color: transferReason === reason ? '#ffffff' : '#475569',
-                          border: 'none',
-                          borderRadius: 4,
-                          padding: '3px 8px',
-                          fontSize: 11,
-                          fontWeight: 500,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {reason}
-                      </button>
-                    ))}
-                  </div>
-                  <textarea
-                    required
-                    rows={2}
-                    value={transferReason}
-                    onChange={(e) => setTransferReason(e.target.value)}
-                    placeholder="Mô tả nguyên nhân chuyển phòng..."
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: 6,
-                      fontSize: 13,
-                      color: '#0f172a',
-                      resize: 'none',
-                    }}
-                  />
-                </div>
-
-                {/* Nút hành động */}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => setTransferModalStay(null)}
-                    style={{
-                      background: '#ffffff',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: 6,
-                      padding: '8px 16px',
-                      fontSize: 13,
-                      fontWeight: 500,
-                      color: '#475569',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Hủy bỏ
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isTransferring || !transferTargetRoomId || !transferReason.trim()}
-                    style={{
-                      background: '#0f172a',
-                      color: '#ffffff',
-                      border: 'none',
-                      borderRadius: 6,
-                      padding: '8px 18px',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: isTransferring || !transferTargetRoomId || !transferReason.trim() ? 'not-allowed' : 'pointer',
-                      opacity: isTransferring || !transferTargetRoomId || !transferReason.trim() ? 0.6 : 1,
-                    }}
-                  >
-                    {isTransferring ? 'Đang xử lý...' : 'Xác Nhận Đổi Phòng'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ========================================================================= */}
-      {/* MODAL 2: CHECK-OUT DIALOG (ĐỐI SOÁT FOLIO & ZERO DƯ NỢ THEO BR-26 & MSG10) */}
-      {/* ========================================================================= */}
-      {checkOutModalStay && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15, 23, 42, 0.45)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 9999,
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              background: '#ffffff',
-              borderRadius: 8,
-              maxWidth: 520,
-              width: '100%',
-              padding: 24,
-              border: '1px solid #e2e8f0',
-              boxShadow: '0 10px 25px rgba(0, 0, 0, 0.08)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', margin: 0 }}>
-                Thủ Tục Trả Phòng — Phòng {checkOutModalStay.roomNumber}
-              </h3>
-              <button
-                onClick={() => setCheckOutModalStay(null)}
-                style={{ background: 'transparent', border: 'none', fontSize: 18, cursor: 'pointer', color: '#94a3b8' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, padding: 14, marginBottom: 16, fontSize: 13 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, color: '#334155' }}>
-                <div>Mã Đặt: <strong>{checkOutModalStay.reservationCode}</strong></div>
-                <div>Khách hàng: <strong>{checkOutModalStay.guestName}</strong></div>
-                <div>Nhận phòng lúc: {formatDateTime(checkOutModalStay.actualCheckIn)}</div>
-                <div>Mã Folio: <strong>#{checkOutModalStay.folioId || 'N/A'}</strong></div>
-              </div>
-
-              {Number(checkOutModalStay.depositPaid || 0) > 0 && (
-                <div style={{ borderTop: '1px dashed #e2e8f0', marginTop: 10, paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 600 }}>
-                    <i className="bi bi-shield-check me-1"></i> Đã khấu trừ tiền cọc:
-                  </span>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: '#16a34a' }}>
-                    - {formatVND(checkOutModalStay.depositPaid)}
-                  </span>
-                </div>
-              )}
-
-              <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 10, paddingTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>Dư nợ Folio còn lại phải thanh toán:</span>
-                <span style={{ fontSize: 18, fontWeight: 700, color: Number(checkOutModalStay.folioTotalAmount || 0) > 0 ? '#b91c1c' : '#16a34a' }}>
-                  {formatVND(checkOutModalStay.folioTotalAmount || 0)}
-                </span>
-              </div>
-            </div>
-
-            {Number(checkOutModalStay.folioTotalAmount || 0) > 0 ? (
-              <div
-                style={{
-                  background: '#fffbeb',
-                  border: '1px solid #fef3c7',
-                  color: '#92400e',
-                  padding: '12px 14px',
-                  borderRadius: 6,
-                  fontSize: 13,
-                  lineHeight: 1.5,
-                  marginBottom: 18,
-                }}
-              >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                  ⚠️ Chưa Thể Hoàn Tất Trả Phòng
-                </div>
-                <div>
-                  Phòng này còn khoản chưa thanh toán <strong>{formatVND(checkOutModalStay.folioTotalAmount)}</strong>. Vui lòng thanh toán hóa đơn để số dư về 0 VND trước khi hoàn tất thủ tục trả phòng.
-                </div>
-              </div>
-            ) : (
-              <div
-                style={{
-                  background: '#f0fdf4',
-                  border: '1px solid #bbf7d0',
-                  color: '#166534',
-                  padding: '12px 14px',
-                  borderRadius: 6,
-                  fontSize: 13,
-                  lineHeight: 1.5,
-                  marginBottom: 18,
-                }}
-              >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>
-                  ✓ Đã hoàn tất thanh toán (0 VND)
-                </div>
-                <div>
-                  Đủ điều kiện trả phòng. Sau khi xác nhận, phòng <strong>{checkOutModalStay.roomNumber}</strong> sẽ được chuyển sang trạng thái <strong>Chờ dọn dẹp</strong> để bàn giao cho bộ phận Buồng phòng.
-                </div>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => setCheckOutModalStay(null)}
-                style={{
-                  background: '#ffffff',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: 6,
-                  padding: '8px 16px',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  color: '#475569',
-                  cursor: 'pointer',
-                }}
-              >
-                Đóng
-              </button>
-              <button
-                type="button"
-                onClick={handleExecuteCheckOut}
-                disabled={isCheckingOut || Number(checkOutModalStay.folioTotalAmount || 0) > 0}
-                style={{
-                  background: '#0f172a',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: 6,
-                  padding: '8px 18px',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: (isCheckingOut || Number(checkOutModalStay.folioTotalAmount || 0) > 0) ? 'not-allowed' : 'pointer',
-                  opacity: (isCheckingOut || Number(checkOutModalStay.folioTotalAmount || 0) > 0) ? 0.45 : 1,
-                }}
-              >
-                {isCheckingOut ? 'Đang xử lý...' : 'Xác Nhận Trả Phòng'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL: STAY & ROOM DETAILS (BẢNG THÔNG TIN CHI TIẾT PHÒNG & LƯU TRÚ)      */}
-      {/* ========================================================================= */}
-      {stayDetailModal && (() => {
-        const { stay, booking, roomType } = stayDetailModal;
-        const currentPrice = stay.roomPrice || roomType?.basePrice || 0;
-        const folioAmount = Number(stay.folioTotalAmount || 0);
-
-        return (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(15, 23, 42, 0.45)',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              zIndex: 9999,
-              padding: 16,
-            }}
-          >
-            <div
-              style={{
-                background: '#ffffff',
-                borderRadius: 8,
-                maxWidth: 620,
-                width: '100%',
-                padding: 24,
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 10px 25px rgba(0, 0, 0, 0.08)',
-                maxHeight: '90vh',
-                overflowY: 'auto',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      background: '#0284c7',
-                      color: '#ffffff',
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                    }}
-                  >
-                    Phòng {stay.roomNumber}
-                  </span>
-                  <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', margin: 0 }}>
-                    Hồ Sơ Chi Tiết Lưu Trú
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setStayDetailModal(null)}
-                  style={{ background: 'transparent', border: 'none', fontSize: 18, cursor: 'pointer', color: '#94a3b8' }}
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* Khối 1: Thông tin phòng & Lưu trú */}
-              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, padding: 14, marginBottom: 14 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.04em', marginBottom: 8 }}>
-                  Thông Tin Phòng & Thời Gian Lưu Trú
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 13, color: '#334155' }}>
-                  <div>Số phòng: <strong style={{ color: '#0f172a' }}>Phòng {stay.roomNumber}</strong></div>
-                  <div>Hạng phòng: <strong>{stay.roomTypeName || roomType?.typeName || 'Tiêu chuẩn'}</strong></div>
-                  <div>Đơn giá phòng: <strong>{formatVND(currentPrice)} / đêm</strong></div>
-                  <div>Mã lưu trú: <strong style={{ fontFamily: 'monospace' }}>#{stay.stayId}</strong></div>
-                  <div>Ngày nhận: <strong>{formatDate(stay.checkInDate)}</strong></div>
-                  <div>Ngày trả dự kiến: <strong style={{ color: '#0284c7' }}>{formatDate(stay.checkOutDate)}</strong></div>
-                  <div style={{ gridColumn: 'span 2' }}>
-                    Giờ check-in thực tế: <strong>{formatDateTime(stay.actualCheckIn)}</strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* Khối 2: Thông tin khách hàng & Đơn đặt */}
-              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 6, padding: 14, marginBottom: 14 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.04em', marginBottom: 8 }}>
-                  Khách Hàng & Liên Hệ
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 13, color: '#334155' }}>
-                  <div>Họ tên khách: <strong style={{ color: '#0f172a' }}>{stay.guestName}</strong></div>
-                  <div>CCCD / Passport: <strong>{stay.guestIdNumber || 'Chưa cung cấp'}</strong></div>
-                  <div>Số điện thoại: <strong>{booking?.contactPhone || '—'}</strong></div>
-                  <div>Email: <strong>{booking?.contactEmail || '—'}</strong></div>
-                  <div>Mã đặt phòng: <strong style={{ fontFamily: 'monospace' }}>#{stay.reservationCode}</strong></div>
-                  <div>Số khách đăng ký: <strong>{booking?.guestCount || 2} khách</strong></div>
-                </div>
-              </div>
-
-              {/* Khối 3: Tài chính & Folio */}
-              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, padding: 14, marginBottom: 14 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.04em', marginBottom: 8 }}>
-                  Dư Nợ Folio
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, color: '#475569' }}>Mã tài khoản Folio:</span>
-                  <strong style={{ fontFamily: 'monospace', fontSize: 13 }}>#{stay.folioId || 'N/A'}</strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, color: '#475569' }}>Dư nợ Folio:</span>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: folioAmount > 0 ? '#b91c1c' : '#166534' }}>
-                    {formatVND(folioAmount)}
-                  </span>
-                </div>
-                <div style={{ fontSize: 12, color: folioAmount > 0 ? '#b45309' : '#166534', marginTop: 4 }}>
-                  {folioAmount > 0
-                    ? '• Đang có công nợ cần quyết toán trước khi trả phòng.'
-                    : '✓ Đã thanh toán đầy đủ (Đủ điều kiện hoàn tất thủ tục trả phòng).'}
-                </div>
-              </div>
-
-              {/* Khối 4: Lịch sử ghi chú & chuyển phòng */}
-              {booking?.specialNotes && (
-                <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 6, padding: 12, marginBottom: 16 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.04em', marginBottom: 4 }}>
-                    Lịch Sử Lưu Trú & Ghi Chú
-                  </div>
-                  <div style={{ fontSize: 12.5, color: '#334155', lineHeight: 1.5 }}>
-                    {booking.specialNotes}
-                  </div>
-                </div>
-              )}
-
-              {/* Nút thao tác nhanh */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, borderTop: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStayDetailModal(null);
-                      openTransferRoomModal(stay);
-                    }}
-                    style={{
-                      background: '#ffffff',
-                      color: '#475569',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: 6,
-                      padding: '6px 12px',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                    title="Đổi phòng"
-                  >
-                    <i className="bi bi-arrow-left-right"></i>
-                    <span>Đổi phòng</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStayDetailModal(null);
-                      openExtendStayModal(stay);
-                    }}
-                    style={{
-                      background: '#ffffff',
-                      color: '#0284c7',
-                      border: '1px solid #bae6fd',
-                      borderRadius: 6,
-                      padding: '6px 12px',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                    title="Gia hạn lưu trú"
-                  >
-                    <i className="bi bi-calendar-plus"></i>
-                    <span>Gia hạn</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStayDetailModal(null);
-                      openCheckOutModal(stay);
-                    }}
-                    style={{
-                      background: '#ffffff',
-                      color: '#b91c1c',
-                      border: '1px solid #fecaca',
-                      borderRadius: 6,
-                      padding: '6px 12px',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                    title="Làm thủ tục trả phòng"
-                  >
-                    <i className="bi bi-box-arrow-right"></i>
-                    <span>Trả phòng</span>
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setStayDetailModal(null)}
-                  style={{
-                    background: '#0f172a',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: 6,
-                    padding: '7px 18px',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Đóng
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Modal Thông Báo Đặt Phòng Thành Công & Thanh Toán */}
-      {successModalData && (() => {
-        const isPaid = isCashPaidConfirmed || successModalData.depositPaymentStatus === 'PAID';
-        const depositVal = successModalData.depositAmount || successModalData.estimatedTotal || 0;
-        const vnpayAmount = Math.round(depositVal * 100);
-        const payUrl =
-          successModalData.vnpayPaymentUrl ||
-          `http://localhost:5173/booking/payment-callback?vnp_TxnRef=${encodeURIComponent(
-            successModalData.reservationCode
-          )}`;
-
-        return (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(15, 23, 42, 0.55)',
-              backdropFilter: 'blur(3px)',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              zIndex: 9999,
-              padding: 16,
-            }}
-          >
-            <div
-              style={{
-                background: '#ffffff',
-                borderRadius: 12,
-                maxWidth: 480,
-                width: '100%',
-                padding: '18px 20px',
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
-                maxHeight: '92vh',
-                overflowY: 'auto',
-              }}
-            >
-              {/* Header modal */}
-              <div style={{ textAlign: 'center', marginBottom: 14 }}>
-                {isPaid ? (
-                  <>
-                    <div
-                      style={{
-                        width: 42,
-                        height: 42,
-                        borderRadius: '50%',
-                        background: '#ecfdf5',
-                        color: '#059669',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 20,
-                        marginBottom: 6,
-                      }}
-                    >
-                      <i className="bi bi-check-lg"></i>
-                    </div>
-                    <h3 style={{ fontSize: 17, fontWeight: 700, margin: '0 0 2px', color: '#0f172a' }}>
-                      Đặt Phòng & Đặt Cọc Thành Công
-                    </h3>
-                    <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
-                      Đã ghi nhận thanh toán cọc đơn #{successModalData.reservationCode}.
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <div
-                      style={{
-                        width: 42,
-                        height: 42,
-                        borderRadius: '50%',
-                        background: '#eff6ff',
-                        color: '#0284c7',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 20,
-                        marginBottom: 6,
-                      }}
-                    >
-                      <i className="bi bi-qr-code-scan"></i>
-                    </div>
-                    <h3 style={{ fontSize: 17, fontWeight: 700, margin: '0 0 2px', color: '#0f172a' }}>
-                      Thanh Toán Tiền Cọc
-                    </h3>
-                    <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
-                      Quét mã QR VNPay hoặc thanh toán tiền mặt tại quầy.
-                    </p>
-                  </>
-                )}
-              </div>
-
-              {/* Thông tin đơn đặt phòng */}
-              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <span style={{ color: '#64748b' }}>Mã đặt phòng:</span>
-                  <strong style={{ color: '#0f172a' }}>{successModalData.reservationCode}</strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <span style={{ color: '#64748b' }}>Khách hàng:</span>
-                  <span style={{ color: '#0f172a', fontWeight: 600 }}>{successModalData.contactName} ({successModalData.contactPhone})</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <span style={{ color: '#64748b' }}>Hạng phòng:</span>
-                  <span style={{ color: '#0f172a', fontWeight: 500 }}>{successModalData.roomTypeName}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <span style={{ color: '#64748b' }}>Thời gian lưu trú:</span>
-                  <span style={{ color: '#0f172a' }}>
-                    {formatDate(successModalData.checkInDate)} → {formatDate(successModalData.checkOutDate)}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: 5, marginTop: 4 }}>
-                  <span style={{ color: '#475569', fontWeight: 600 }}>Tổng tiền dự kiến:</span>
-                  <strong style={{ color: '#0f172a' }}>{formatVND(successModalData.estimatedTotal)}</strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                  <span style={{ color: '#0369a1', fontWeight: 600 }}>Tiền cọc yêu cầu (30%):</span>
-                  <strong style={{ color: '#0369a1', fontSize: 14 }}>
-                    {formatVND(depositVal)}
-                  </strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                  <span style={{ color: '#64748b' }}>Trạng thái thanh toán:</span>
-                  {isPaid ? (
-                    <span style={{ color: '#16a34a', background: '#dcfce7', padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: 12 }}>
-                      <i className="bi bi-check-circle-fill me-1"></i> Đã thanh toán cọc
-                    </span>
-                  ) : (
-                    <span style={{ color: '#b45309', background: '#fef3c7', padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: 12 }}>
-                      <i className="bi bi-clock-history me-1"></i> Chờ thanh toán cọc
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Khối Trạng thái & QR Code Thanh Toán */}
-              {isPaid ? (
-                <div
-                  style={{
-                    background: '#ecfdf5',
-                    border: '1px solid #a7f3d0',
-                    borderRadius: 8,
-                    padding: '14px 16px',
-                    textAlign: 'center',
-                    marginBottom: 14,
-                  }}
-                >
-                  <div style={{ color: '#059669', fontSize: 26, marginBottom: 2 }}>
-                    <i className="bi bi-check-circle-fill"></i>
-                  </div>
-                  <div style={{ fontWeight: 700, color: '#065f46', fontSize: 13, marginBottom: 2 }}>
-                    Đã Ghi Nhận Thanh Toán Đặt Cọc
-                  </div>
-                  <div style={{ fontSize: 12, color: '#047857' }}>
-                    Lễ tân có thể tiếp tục làm thủ tục Check-in phòng cho khách.
-                  </div>
-                </div>
-              ) : (
-                <div
-                  style={{
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: 8,
-                    padding: '12px 14px',
-                    marginBottom: 14,
-                    textAlign: 'center',
-                  }}
-                >
-                  <div
-                    onClick={() => window.open(payUrl, '_blank')}
-                    title="Bấm vào mã QR để mở Cổng thanh toán VNPay"
-                    style={{
-                      display: 'inline-block',
-                      cursor: 'pointer',
-                      padding: 6,
-                      background: '#ffffff',
-                      borderRadius: 8,
-                      border: '1px solid #cbd5e1',
-                      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.04)',
-                      transition: 'transform 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.02)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1.0)')}
-                  >
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&margin=3&data=${encodeURIComponent(
-                        payUrl
-                      )}`}
-                      alt="VNPay QR Code"
-                      style={{ width: 140, height: 140, display: 'block', borderRadius: 4 }}
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', gap: 10, marginTop: 12, justifyContent: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={() => window.open(payUrl, '_blank')}
-                      style={{
-                        flex: 1,
-                        background: '#005baa',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: 6,
-                        padding: '8px 12px',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                      }}
-                    >
-                      <i className="bi bi-qr-code"></i>
-                      <span>Cổng VNPay</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleConfirmCash(successModalData.reservationCode)}
-                      disabled={isProcessingCash}
-                      style={{
-                        flex: 1,
-                        background: '#16a34a',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: 6,
-                        padding: '8px 12px',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        cursor: isProcessingCash ? 'not-allowed' : 'pointer',
-                        opacity: isProcessingCash ? 0.7 : 1,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                      }}
-                    >
-                      <i className="bi bi-cash-stack"></i>
-                      <span>{isProcessingCash ? 'Đang xử lý...' : 'Khách Trả Tiền Mặt'}</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Nút chân modal */}
-              <div style={{ display: 'flex', gap: 10 }}>
-                {isPaid ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setSuccessModalData(null)}
-                      style={{
-                        flex: 1,
-                        background: '#ffffff',
-                        border: '1px solid #cbd5e1',
-                        borderRadius: 6,
-                        padding: '9px 14px',
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: '#334155',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Tạo Đơn Mới
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSuccessModalData(null);
-                        setActiveTab('arrivals');
-                      }}
-                      style={{
-                        flex: 1,
-                        background: '#0f172a',
-                        border: 'none',
-                        borderRadius: 6,
-                        padding: '9px 14px',
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: '#ffffff',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                      }}
-                    >
-                      <i className="bi bi-box-arrow-in-right"></i>
-                      <span>Tiến Hành Nhận Phòng Ngay</span>
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handleCancelPendingBooking(successModalData.reservationCode)}
-                      style={{
-                        flex: 1,
-                        background: '#fff1f2',
-                        border: '1px solid #fecdd3',
-                        borderRadius: 6,
-                        padding: '9px 14px',
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: '#e11d48',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                      }}
-                    >
-                      <i className="bi bi-x-circle"></i>
-                      <span>Hủy Đơn Này (Không cọc)</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSuccessModalData(null)}
-                      style={{
-                        flex: 1,
-                        background: '#f8fafc',
-                        border: '1px solid #cbd5e1',
-                        borderRadius: 6,
-                        padding: '9px 14px',
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: '#475569',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Đóng (Chờ cọc)
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-    </div>
+      </div>
   );
 };
