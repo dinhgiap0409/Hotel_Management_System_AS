@@ -32,5 +32,8 @@ public class HotelServiceRequest {
 
     @Size(max = 500, message = "Mô tả tối đa 500 ký tự")
     private String description;
+
+    @Size(max = 500, message = "URL hình ảnh tối đa 500 ký tự")
+    private String imageUrl;
 }
 

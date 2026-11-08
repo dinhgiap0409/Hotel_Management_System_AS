@@ -96,12 +96,16 @@ public class BillingServiceImpl implements BillingService {
     @Override
     @Transactional
     public HotelService createService(HotelServiceRequest request) {
+        String img = request.getImageUrl() != null && !request.getImageUrl().trim().isEmpty()
+                ? request.getImageUrl().trim()
+                : null;
         HotelService service = HotelService.builder()
                 .serviceName(request.getServiceName().trim())
                 .category(request.getCategory().trim().toUpperCase())
                 .billingUnit(request.getBillingUnit().trim().toUpperCase())
                 .unitPrice(request.getUnitPrice())
                 .description(request.getDescription())
+                .imageUrl(img)
                 .status(SERVICE_ACTIVE)
                 .build();
         return hotelServiceRepository.save(service);
@@ -112,11 +116,15 @@ public class BillingServiceImpl implements BillingService {
     public HotelService updateService(Integer serviceId, HotelServiceRequest request) {
         HotelService service = findService(serviceId);
         // BR-27: existing ServiceOrder rows keep their own snapshot unit_price, so a price change only affects new orders.
+        String img = request.getImageUrl() != null && !request.getImageUrl().trim().isEmpty()
+                ? request.getImageUrl().trim()
+                : null;
         service.setServiceName(request.getServiceName().trim());
         service.setCategory(request.getCategory().trim().toUpperCase());
         service.setBillingUnit(request.getBillingUnit().trim().toUpperCase());
         service.setUnitPrice(request.getUnitPrice());
         service.setDescription(request.getDescription());
+        service.setImageUrl(img);
         return hotelServiceRepository.save(service);
     }
 

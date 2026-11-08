@@ -74,6 +74,7 @@ const EMPTY_SERVICE_FORM = {
   billingUnit: 'Lượt',
   unitPrice: '',
   description: '',
+  imageUrl: '',
 };
 
 const EMPTY_ORDER_FORM = {
@@ -293,6 +294,7 @@ export const ServicesAndBillingPage = () => {
       billingUnit: s.billingUnit,
       unitPrice: s.unitPrice,
       description: s.description || '',
+      imageUrl: s.imageUrl || '',
     });
     setShowServiceModal(true);
   };
