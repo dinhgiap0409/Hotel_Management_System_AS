@@ -1,8 +1,8 @@
 # Phân Tích Tài Liệu SRS & SDD và Chiến Lược Phân Chia Code Nhóm 5 Người (Dự Án HMS)
 
 Tài liệu này tổng hợp kết quả phân tích chi tiết và cập nhật kiến trúc phân quyền **10 Roles chuyên biệt** (theo góp ý của Mentor) cho:
-- [HMS_SoftwareRequirementSpecification.docx](./HMS_SoftwareRequirementSpecification.docx) (`HMS-SRS v1.3`)
-- [HMS_SoftwareDesignDocument.docx](./HMS_SoftwareDesignDocument.docx) (`HMS_SDD v1.1`)
+- [HMS_SoftwareRequirementSpecification.docx](./HMS_SoftwareRequirementSpecification.docx) (`HMS-SRS v1.2`)
+- [HMS_SoftwareDesignDocument-2.docx](./HMS_SoftwareDesignDocument-2.docx) (`HMS_SDD v1.0`)
 
 ---
 
@@ -28,7 +28,7 @@ Trước đây, role `Manager` bị gộp chung nhiệm vụ của nhiều phòn
 
 ---
 
-## 2. Kiến Trúc Kỹ Thuật & Quy Ước Chung (SDD v1.1)
+## 2. Kiến Trúc Kỹ Thuật & Quy Ước Chung (SDD v1.0)
 
 - **Frontend (SPA)**: ReactJS 18 (Vite + Pure JavaScript / JSX `.js` & `.jsx`, Functional Components + Hooks — không dùng TypeScript/TSX để khớp 100% chương trình học trên trường), React Router DOM v6, React-Bootstrap + Bootstrap Icons, Axios.
 - **Backend (3-Layer REST API)**: Java 21, Spring Boot 3.2.5, Spring Security 6 (Stateless JWT + `@PreAuthorize` theo 10 Roles), Spring Data JPA (Hibernate), Jakarta Validation, Springdoc-OpenAPI (Swagger 3).
