@@ -4,20 +4,25 @@ import com.fpt.hms.common.MessageResolver;
 import com.fpt.hms.common.PageResponse;
 import com.fpt.hms.dto.room.*;
 import com.fpt.hms.entity.HousekeepingTask;
+import com.fpt.hms.entity.Reservation;
 import com.fpt.hms.entity.Room;
 import com.fpt.hms.entity.RoomType;
 import com.fpt.hms.entity.RoomTypePrice;
 import com.fpt.hms.entity.Staff;
 import com.fpt.hms.enums.CleaningStatus;
+import com.fpt.hms.enums.GuestStayStatus;
+import com.fpt.hms.enums.ReservationStatus;
 import com.fpt.hms.enums.RoomStatus;
 import com.fpt.hms.enums.StayStatus;
 import com.fpt.hms.exception.BusinessException;
 import com.fpt.hms.exception.ResourceNotFoundException;
 import com.fpt.hms.repository.HousekeepingTaskRepository;
+import com.fpt.hms.repository.ReservationRepository;
 import com.fpt.hms.repository.RoomRepository;
 import com.fpt.hms.repository.RoomTypePriceRepository;
 import com.fpt.hms.repository.RoomTypeRepository;
 import com.fpt.hms.repository.StaffRepository;
+import com.fpt.hms.repository.StayRoomAssignmentRepository;
 import com.fpt.hms.service.RoomHousekeepingService;
 import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +34,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -44,6 +50,8 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
     private final RoomRepository roomRepository;
     private final HousekeepingTaskRepository housekeepingTaskRepository;
     private final StaffRepository staffRepository;
+    private final ReservationRepository reservationRepository;
+    private final StayRoomAssignmentRepository stayRoomAssignmentRepository;
     private final MessageResolver messageResolver;
 
     // =========================================================================
@@ -112,10 +120,28 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
         roomType.setDescription(request.getDescription());
         roomType.setImageUrl(request.getImageUrl());
         if (request.getIsActive() != null) {
+            // BR-11: deactivating through the update endpoint is the same
+            // rule as the toggle endpoint — check before flipping the flag.
+            if (!request.getIsActive() && Boolean.TRUE.equals(roomType.getIsActive())) {
+                assertRoomTypeHasNoActiveRooms(roomTypeId);
+            }
             roomType.setIsActive(request.getIsActive());
         }
 
         return toRoomTypeDto(roomTypeRepository.save(roomType));
+    }
+
+    /**
+     * BR-11: a room type with assigned physical rooms cannot be deactivated.
+     * Archived rooms do not count — they are already out of inventory.
+     */
+    private void assertRoomTypeHasNoActiveRooms(Integer roomTypeId) {
+        long activeRooms = roomRepository.countByRoomType_RoomTypeIdAndRoomStatusNot(
+                roomTypeId, RoomStatus.ARCHIVED.name());
+        if (activeRooms > 0) {
+            throw new BusinessException("MSG_ROOMTYPE_HAS_ROOMS",
+                    messageResolver.resolve("MSG_ROOMTYPE_HAS_ROOMS"));
+        }
     }
 
     @Override
@@ -125,6 +151,10 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy hạng phòng với mã: " + roomTypeId));
 
         boolean newStatus = !Boolean.TRUE.equals(roomType.getIsActive());
+        // BR-11: only deactivation is guarded — reactivation is always allowed.
+        if (!newStatus) {
+            assertRoomTypeHasNoActiveRooms(roomTypeId);
+        }
         roomType.setIsActive(newStatus);
         return toRoomTypeDto(roomTypeRepository.save(roomType));
     }
@@ -296,8 +326,58 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
             throw new BusinessException("MSG08A", messageResolver.resolve("MSG08A"));
         }
 
+        // BR-12: archiving additionally requires no active stay and no
+        // upcoming reservation that this room's type is committed to.
+        if (RoomStatus.ARCHIVED.name().equals(targetStatus)) {
+            assertRoomHasNoActiveOrUpcomingBooking(room);
+        }
+
         room.setRoomStatus(targetStatus);
         return toRoomDto(roomRepository.save(room));
+    }
+
+    /**
+     * BR-12: an occupied room, or a room with active or upcoming reservations,
+     * cannot be archived.
+     *
+     * A specific room is only ever assigned at check-in (StayRoomAssignment),
+     * while a Reservation itself books a room <i>type</i>, not a room. So this
+     * checks two things:
+     * <ol>
+     *   <li>the room is still assigned to an ACTIVE stay, and</li>
+     *   <li>archiving it would leave fewer active rooms of its type than the
+     *   quantity already committed to upcoming PENDING/CONFIRMED reservations
+     *   overlapping the same dates — i.e. a future booking would be stranded.</li>
+     * </ol>
+     */
+    private void assertRoomHasNoActiveOrUpcomingBooking(Room room) {
+        if (stayRoomAssignmentRepository.existsByRoom_RoomIdAndAssignedToIsNullAndGuestStay_Status(
+                room.getRoomId(), GuestStayStatus.ACTIVE.name())) {
+            throw new BusinessException("MSG_ROOM_HAS_ACTIVE_BOOKING",
+                    messageResolver.resolve("MSG_ROOM_HAS_ACTIVE_BOOKING"));
+        }
+
+        Integer roomTypeId = room.getRoomType().getRoomTypeId();
+        long activeRoomsOfType = roomRepository.countByRoomType_RoomTypeIdAndRoomStatusNot(
+                roomTypeId, RoomStatus.ARCHIVED.name());
+        LocalDate today = LocalDate.now();
+        List<Reservation> upcoming = reservationRepository.findByStatusInAndCheckOutDateGreaterThanEqual(
+                List.of(ReservationStatus.PENDING.name(), ReservationStatus.CONFIRMED.name()), today);
+        for (Reservation reservation : upcoming) {
+            int committedForWindow = upcoming.stream()
+                    .filter(other -> other.getCheckInDate().isBefore(reservation.getCheckOutDate())
+                            && other.getCheckOutDate().isAfter(reservation.getCheckInDate()))
+                    .flatMap(other -> other.getDetails().stream())
+                    .filter(detail -> roomTypeId.equals(detail.getRoomType().getRoomTypeId()))
+                    .mapToInt(detail -> detail.getQuantity() != null ? detail.getQuantity() : 0)
+                    .sum();
+            // This room is still counted in activeRoomsOfType; archiving it
+            // leaves activeRoomsOfType - 1 rooms for committedForWindow bookings.
+            if (committedForWindow >= activeRoomsOfType) {
+                throw new BusinessException("MSG_ROOM_HAS_ACTIVE_BOOKING",
+                        messageResolver.resolve("MSG_ROOM_HAS_ACTIVE_BOOKING"));
+            }
+        }
     }
 
     // =========================================================================
@@ -315,11 +395,36 @@ public class RoomHousekeepingServiceImpl implements RoomHousekeepingService {
         }
 
         String targetCleaning = request.getNewCleaningStatus().trim().toUpperCase();
+        // BR-13: housekeeping follows Dirty -> Clean -> Inspected; the only
+        // backward step is Inspected -> Dirty, and it requires a recorded
+        // reason. Enforced here (not just in the UI) so a direct API call
+        // cannot bypass the state machine.
+        assertValidCleaningTransition(room.getCleaningStatus(), targetCleaning, request.getNotes());
         room.setCleaningStatus(targetCleaning);
         if (request.getNotes() != null) {
             room.setNotes(request.getNotes());
         }
         return toRoomDto(roomRepository.save(room));
+    }
+
+    private void assertValidCleaningTransition(String currentCleaning, String targetCleaning, String notes) {
+        CleaningStatus current;
+        CleaningStatus target;
+        try {
+            current = CleaningStatus.valueOf(currentCleaning.trim().toUpperCase());
+            target = CleaningStatus.valueOf(targetCleaning);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new BusinessException("MSG_INVALID_CLEANING_TRANSITION",
+                    messageResolver.resolve("MSG_INVALID_CLEANING_TRANSITION"));
+        }
+        boolean allowed = (current == CleaningStatus.DIRTY && target == CleaningStatus.CLEAN)
+                || (current == CleaningStatus.CLEAN && target == CleaningStatus.INSPECTED)
+                || (current == CleaningStatus.INSPECTED && target == CleaningStatus.DIRTY
+                        && notes != null && !notes.isBlank());
+        if (!allowed) {
+            throw new BusinessException("MSG_INVALID_CLEANING_TRANSITION",
+                    messageResolver.resolve("MSG_INVALID_CLEANING_TRANSITION"));
+        }
     }
 
     @Override
