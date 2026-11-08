@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Module 3B (Owner: TungPV) - Front-Desk Operations Controller (UC-26 to UC-30).
@@ -47,6 +48,29 @@ public class FrontDeskController {
         Integer staffAccountId = principal != null ? principal.getAccountId() : null;
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(frontDeskService.createDirectBooking(request, staffAccountId));
+    }
+
+    @PostMapping("/reservations/{reservationCode}/confirm-cash")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'GENERAL_MANAGER')")
+    @Operation(summary = "UC-26: Confirm direct cash payment for walk-in reservation at front desk")
+    public ResponseEntity<ReservationDto> confirmCashPayment(@PathVariable String reservationCode) {
+        return ResponseEntity.ok(frontDeskService.confirmCashPayment(reservationCode));
+    }
+
+    @GetMapping("/reservations/{reservationCode}/payment-status")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'GENERAL_MANAGER')")
+    @Operation(summary = "UC-26: Check real-time payment status of reservation deposit")
+    public ResponseEntity<Map<String, Object>> getReservationPaymentStatus(@PathVariable String reservationCode) {
+        return ResponseEntity.ok(frontDeskService.getReservationPaymentStatus(reservationCode));
+    }
+
+    @PostMapping("/reservations/{reservationCode}/cancel")
+    @PreAuthorize("hasAnyRole('FRONT_DESK', 'GENERAL_MANAGER')")
+    @Operation(summary = "UC-26: Cancel unpaid walk-in reservation")
+    public ResponseEntity<ReservationDto> cancelDirectBooking(
+            @PathVariable String reservationCode,
+            @RequestParam(required = false, defaultValue = "Khách không đặt cọc / hủy tại quầy") String reason) {
+        return ResponseEntity.ok(frontDeskService.cancelDirectBooking(reservationCode, reason));
     }
 
     @PostMapping("/quote")

@@ -15,6 +15,7 @@ import com.fpt.hms.entity.*;
 import com.fpt.hms.enums.*;
 import com.fpt.hms.exception.BusinessException;
 import com.fpt.hms.exception.ResourceNotFoundException;
+import com.fpt.hms.integration.VnPayGatewayService;
 import com.fpt.hms.repository.*;
 import com.fpt.hms.service.FrontDeskService;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -45,6 +47,9 @@ public class FrontDeskServiceImpl implements FrontDeskService {
     private final StayRoomAssignmentRepository stayRoomAssignmentRepository;
     private final FolioRepository folioRepository;
     private final InvoiceRepository invoiceRepository;
+    private final PaymentRepository paymentRepository;
+    private final PaymentAttemptRepository paymentAttemptRepository;
+    private final VnPayGatewayService vnPayGatewayService;
     private final MessageResolver messageResolver;
     private final Clock hotelClock;
 
@@ -141,7 +146,7 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .checkOutDate(request.getCheckOutDate())
                 .guestCount(finalGuestCount)
                 .specialNotes(request.getSpecialNotes())
-                .status(ReservationStatus.CONFIRMED.name())
+                .status(ReservationStatus.PENDING.name())
                 .contactName(request.getContactName().trim())
                 .contactPhone(phone)
                 .contactEmail(email)
@@ -174,6 +179,47 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         }
 
         Reservation savedReservation = reservationRepository.save(reservation);
+
+        // Tính tổng tiền phòng và tạo bản ghi Payment & PaymentAttempt chờ thanh toán
+        BigDecimal totalStayAmount = BigDecimal.ZERO;
+        for (ReservationDetail d : savedReservation.getDetails()) {
+            int qty = d.getQuantity() != null ? d.getQuantity() : 1;
+            if (d.getNightlyRates() != null && !d.getNightlyRates().isEmpty()) {
+                for (ReservationNightlyRate nr : d.getNightlyRates()) {
+                    if (nr.getUnitPrice() != null) {
+                        totalStayAmount = totalStayAmount.add(nr.getUnitPrice().multiply(BigDecimal.valueOf(qty)));
+                    }
+                }
+            } else if (d.getRoomType() != null && d.getRoomType().getBasePrice() != null) {
+                long nights = Math.max(1, ChronoUnit.DAYS.between(request.getCheckInDate(), request.getCheckOutDate()));
+                totalStayAmount = totalStayAmount.add(d.getRoomType().getBasePrice().multiply(BigDecimal.valueOf(nights * qty)));
+            }
+        }
+
+        // Quy định SDD/SRS: Tiền đặt cọc = 30% tổng tiền lưu trú dự kiến
+        BigDecimal depositAmount = totalStayAmount
+                .multiply(new BigDecimal("0.30"))
+                .setScale(0, RoundingMode.HALF_UP);
+
+        Payment payment = paymentRepository.save(Payment.builder()
+                .reservation(savedReservation)
+                .paymentType("DEPOSIT")
+                .amount(depositAmount)
+                .currency("VND")
+                .method("VNPAY")
+                .idempotencyKey(code + "-WALKIN")
+                .status("PENDING")
+                .createdAt(now)
+                .build());
+
+        paymentAttemptRepository.save(PaymentAttempt.builder()
+                .payment(payment)
+                .gatewayProvider("VNPAY")
+                .gatewayRequestRef(code)
+                .status("PENDING")
+                .createdAt(now)
+                .expiredAt(now.plus(1, ChronoUnit.DAYS))
+                .build());
 
         return toReservationDto(savedReservation);
     }
@@ -244,8 +290,10 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         return reservationRepository.findAll().stream()
                 .map(this::toReservationDto)
                 .filter(dto -> {
+                    // BR-23: Chỉ đưa vào danh sách Check-in các đơn đã CONFIRMED và ĐÃ THANH TOÁN TIỀN CỌC thành công
+                    boolean isDepositPaid = "PAID".equalsIgnoreCase(dto.getDepositPaymentStatus());
                     if (ReservationStatus.CONFIRMED.name().equalsIgnoreCase(dto.getStatus())) {
-                        return true;
+                        return isDepositPaid;
                     }
                     if (ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(dto.getStatus())) {
                         return dto.getCheckedInRoomsCount() != null
@@ -292,6 +340,16 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         if (!ReservationStatus.CONFIRMED.name().equalsIgnoreCase(reservation.getStatus())
                 && !ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(reservation.getStatus())) {
             throw new BusinessException("BR-23", "Thủ tục nhận phòng yêu cầu đơn đặt ở trạng thái CONFIRMED hoặc CHECKED_IN (đang nhận phòng dở).");
+        }
+
+        // BR-23: Bắt buộc đơn đặt phòng phải đã thanh toán cọc thành công (PAID) trước khi làm thủ tục Check-in
+        List<Payment> payments = paymentRepository.findByReservation_ReservationId(reservation.getReservationId());
+        boolean hasPaidDeposit = payments.stream()
+                .anyMatch(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType()) && "PAID".equalsIgnoreCase(p.getStatus()));
+
+        if (!hasPaidDeposit && !ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(reservation.getStatus())) {
+            throw new BusinessException("BR-23", "Không thể làm thủ tục nhận phòng: Đơn đặt phòng #"
+                    + reservation.getReservationCode() + " chưa hoàn tất thanh toán tiền cọc.");
         }
 
         Room room = roomRepository.findById(request.getRoomId())
@@ -390,10 +448,23 @@ public class FrontDeskServiceImpl implements FrontDeskService {
             }
         }
 
+        // Tìm khoản tiền cọc ĐÃ THANH TOÁN gắn với đơn đặt phòng này
+        BigDecimal depositPaid = BigDecimal.ZERO;
+        if (reservation.getReservationId() != null) {
+            depositPaid = paymentRepository.findByReservation_ReservationId(reservation.getReservationId()).stream()
+                    .filter(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType()) && PaymentStatus.PAID.name().equalsIgnoreCase(p.getStatus()))
+                    .map(Payment::getAmount)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+
+        // Khấu trừ tiền cọc vào dư nợ ban đầu của Folio
+        BigDecimal remainingFolioAmount = roomCharges.subtract(depositPaid).max(BigDecimal.ZERO);
+
         Folio folio = Folio.builder()
                 .guestStay(savedStay)
                 .createdAt(Instant.now())
-                .totalAmount(roomCharges)
+                .totalAmount(remainingFolioAmount)
                 .status(FolioStatus.OPEN.name())
                 .build();
         Folio savedFolio = folioRepository.save(folio);
@@ -745,6 +816,26 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         }
         List<ReservationDto.BookedRoomDetailDto> bookedDetails = new ArrayList<>(detailsMap.values());
 
+        List<Payment> payments = (r.getReservationId() != null)
+                ? paymentRepository.findByReservation_ReservationId(r.getReservationId())
+                : Collections.emptyList();
+        String depositStatus = payments.stream()
+                .filter(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType()))
+                .map(Payment::getStatus)
+                .findFirst()
+                .orElse("PENDING");
+
+        BigDecimal depositAmount = payments.stream()
+                .filter(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType()))
+                .map(Payment::getAmount)
+                .findFirst()
+                .orElse(total.multiply(new BigDecimal("0.30")).setScale(0, RoundingMode.HALF_UP));
+
+        String vnpayUrl = null;
+        if (!"PAID".equalsIgnoreCase(depositStatus) && r.getReservationCode() != null && depositAmount.compareTo(BigDecimal.ZERO) > 0) {
+            vnpayUrl = vnPayGatewayService.createDepositPaymentUrl(r.getReservationCode(), depositAmount);
+        }
+
         return ReservationDto.builder()
                 .reservationId(r.getReservationId())
                 .reservationCode(r.getReservationCode())
@@ -762,6 +853,9 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .specialNotes(r.getSpecialNotes())
                 .status(r.getStatus())
                 .estimatedTotal(total)
+                .depositAmount(depositAmount)
+                .depositPaymentStatus(depositStatus)
+                .vnpayPaymentUrl(vnpayUrl)
                 .reservationDate(r.getReservationDate())
                 .holdExpiresAt(r.getHoldExpiresAt())
                 .bookedDetails(bookedDetails)
@@ -775,6 +869,15 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 ? stay.getRoomAssignments().getLast().getRoom()
                 : null;
         RoomType rt = room != null ? room.getRoomType() : null;
+
+        BigDecimal depositPaid = BigDecimal.ZERO;
+        if (stay.getReservation() != null && stay.getReservation().getReservationId() != null) {
+            depositPaid = paymentRepository.findByReservation_ReservationId(stay.getReservation().getReservationId()).stream()
+                    .filter(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType()) && PaymentStatus.PAID.name().equalsIgnoreCase(p.getStatus()))
+                    .map(Payment::getAmount)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
 
         return GuestStayDto.builder()
                 .stayId(stay.getStayId())
@@ -793,6 +896,7 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .status(stay.getStatus())
                 .folioId(folio != null ? folio.getFolioId() : null)
                 .folioTotalAmount(folio != null ? folio.getTotalAmount() : BigDecimal.ZERO)
+                .depositPaid(depositPaid)
                 .build();
     }
 
@@ -991,6 +1095,88 @@ public class FrontDeskServiceImpl implements FrontDeskService {
             case 7 -> "CN";
             default -> "T" + dow;
         };
+    }
+
+    @Override
+    @Transactional
+    public ReservationDto confirmCashPayment(String reservationCode) {
+        Reservation reservation = reservationRepository.findByReservationCode(reservationCode)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng: " + reservationCode));
+
+        reservation.setStatus(ReservationStatus.CONFIRMED.name());
+        reservationRepository.save(reservation);
+
+        List<Payment> payments = paymentRepository.findByReservation_ReservationId(reservation.getReservationId());
+        Instant now = Instant.now(hotelClock);
+        for (Payment p : payments) {
+            p.setStatus("PAID");
+            p.setMethod("CASH");
+            p.setPaidAt(now);
+            paymentRepository.save(p);
+        }
+
+        PaymentAttempt attempt = paymentAttemptRepository.findByGatewayRequestRef(reservationCode).orElse(null);
+        if (attempt != null) {
+            attempt.setStatus("SUCCESS");
+            attempt.setGatewayTransactionId("CASH-" + System.currentTimeMillis());
+            attempt.setBankCode("CASH");
+            attempt.setCompletedAt(now);
+            paymentAttemptRepository.save(attempt);
+        }
+
+        return toReservationDto(reservation);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, Object> getReservationPaymentStatus(String reservationCode) {
+        Reservation reservation = reservationRepository.findByReservationCode(reservationCode)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng: " + reservationCode));
+
+        List<Payment> payments = paymentRepository.findByReservation_ReservationId(reservation.getReservationId());
+        Payment depositPayment = payments.stream()
+                .filter(p -> "DEPOSIT".equalsIgnoreCase(p.getPaymentType()))
+                .findFirst()
+                .orElse(null);
+
+        String depositStatus = (depositPayment != null) ? depositPayment.getStatus() : "PENDING";
+        String method = (depositPayment != null) ? depositPayment.getMethod() : "VNPAY";
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("reservationCode", reservationCode);
+        result.put("reservationStatus", reservation.getStatus());
+        result.put("depositPaymentStatus", depositStatus);
+        result.put("method", method);
+        result.put("amount", depositPayment != null ? depositPayment.getAmount() : BigDecimal.ZERO);
+        return result;
+    }
+
+    @Override
+    @Transactional
+    public ReservationDto cancelDirectBooking(String reservationCode, String reason) {
+        Reservation reservation = reservationRepository.findByReservationCode(reservationCode)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn đặt phòng: " + reservationCode));
+
+        if (ReservationStatus.CHECKED_IN.name().equalsIgnoreCase(reservation.getStatus())
+                || ReservationStatus.COMPLETED.name().equalsIgnoreCase(reservation.getStatus())) {
+            throw new BusinessException("BR-21", "Không thể hủy đơn đặt phòng đã nhận phòng hoặc đã hoàn tất.");
+        }
+
+        reservation.setStatus(ReservationStatus.CANCELLED.name());
+        if (reason != null && !reason.isBlank()) {
+            reservation.setSpecialNotes((reservation.getSpecialNotes() != null ? reservation.getSpecialNotes() + " | " : "") + "Lý do hủy: " + reason);
+        }
+        reservationRepository.save(reservation);
+
+        List<Payment> payments = paymentRepository.findByReservation_ReservationId(reservation.getReservationId());
+        for (Payment p : payments) {
+            if ("PENDING".equalsIgnoreCase(p.getStatus())) {
+                p.setStatus("CANCELLED");
+                paymentRepository.save(p);
+            }
+        }
+
+        return toReservationDto(reservation);
     }
 
     private static class DailyNightInfo {

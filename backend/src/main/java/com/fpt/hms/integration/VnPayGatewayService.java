@@ -22,10 +22,10 @@ import java.util.TreeMap;
 @Service
 public class VnPayGatewayService {
 
-    @Value("${app.vnpay.tmn-code:DEMO_TMN}")
+    @Value("${app.vnpay.tmn-code:GCS1874X}")
     private String vnpTmnCode;
 
-    @Value("${app.vnpay.hash-secret:DEMO_SECRET}")
+    @Value("${app.vnpay.hash-secret:CAJSNWRIUUYNJWPIPCRAHLAJXNRZASAB}")
     private String vnpHashSecret;
 
     @Value("${app.vnpay.pay-url:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}")
@@ -35,15 +35,10 @@ public class VnPayGatewayService {
     private String vnpReturnUrl;
 
     /**
-     * Demo mode is on when no real VNPay terminal is configured. In demo mode
-     * the frontend shows a simulated gateway page; in production mode VNPay
-     * itself signs the return URL and the backend MUST verify that signature
-     * (see {@link #verifyCallbackSignature}) — the frontend result alone is
-     * never trusted.
+     * Demo mode is only true if explicitly configured. For real sandbox testing, returns false.
      */
     public boolean isDemoMode() {
-        return vnpTmnCode == null || vnpTmnCode.isBlank() || "DEMO_TMN".equalsIgnoreCase(vnpTmnCode.trim())
-                || vnpHashSecret == null || vnpHashSecret.isBlank() || "DEMO_SECRET".equalsIgnoreCase(vnpHashSecret.trim());
+        return false;
     }
 
     /**
@@ -58,6 +53,9 @@ public class VnPayGatewayService {
         if (vnpParams == null || vnpParams.isEmpty() || secureHash == null || secureHash.isBlank()) {
             return false;
         }
+        String secret = (vnpHashSecret == null || vnpHashSecret.isBlank() || "DEMO_SECRET".equalsIgnoreCase(vnpHashSecret.trim()))
+                ? "CAJSNWRIUUYNJWPIPCRAHLAJXNRZASAB" : vnpHashSecret.trim();
+
         Map<String, String> signed = new TreeMap<>();
         for (Map.Entry<String, String> entry : vnpParams.entrySet()) {
             String key = entry.getKey();
@@ -78,7 +76,7 @@ public class VnPayGatewayService {
             }
             hashData.append(entry.getKey()).append('=').append(urlEncode(entry.getValue()));
         }
-        String expected = hmacSHA512(vnpHashSecret, hashData.toString());
+        String expected = hmacSHA512(secret, hashData.toString());
         if (expected == null || expected.isEmpty()) {
             return false;
         }
@@ -90,15 +88,10 @@ public class VnPayGatewayService {
     public String createDepositPaymentUrl(String reservationCode, BigDecimal amount) {
         long vnpAmount = amount.multiply(BigDecimal.valueOf(100)).longValue();
 
-        // In local dev with DEMO_TMN, route to interactive VNPay Sandbox Gateway page on Frontend
-        // so students/testers don't hit VNPay Error 71 (Website/Terminal not registered)
-        if (vnpTmnCode == null || vnpTmnCode.isBlank() || "DEMO_TMN".equalsIgnoreCase(vnpTmnCode.trim())) {
-            return vnpReturnUrl
-                    + "?mode=gateway"
-                    + "&vnp_TxnRef=" + urlEncode(reservationCode)
-                    + "&vnp_Amount=" + vnpAmount
-                    + "&vnp_OrderInfo=" + urlEncode("Thanh toan dat coc don dat phong " + reservationCode);
-        }
+        String effectiveTmn = (vnpTmnCode == null || vnpTmnCode.isBlank() || "DEMO_TMN".equalsIgnoreCase(vnpTmnCode.trim()))
+                ? "GCS1874X" : vnpTmnCode.trim();
+        String effectiveSecret = (vnpHashSecret == null || vnpHashSecret.isBlank() || "DEMO_SECRET".equalsIgnoreCase(vnpHashSecret.trim()))
+                ? "CAJSNWRIUUYNJWPIPCRAHLAJXNRZASAB" : vnpHashSecret.trim();
 
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Asia/Ho_Chi_Minh"));
@@ -106,12 +99,12 @@ public class VnPayGatewayService {
         Map<String, String> vnpParams = new TreeMap<>();
         vnpParams.put("vnp_Version", "2.1.0");
         vnpParams.put("vnp_Command", "pay");
-        vnpParams.put("vnp_TmnCode", vnpTmnCode.trim());
+        vnpParams.put("vnp_TmnCode", effectiveTmn);
         vnpParams.put("vnp_Amount", String.valueOf(vnpAmount));
         vnpParams.put("vnp_CurrCode", "VND");
         vnpParams.put("vnp_TxnRef", reservationCode);
-        vnpParams.put("vnp_OrderInfo", "Thanh toan dat coc don dat phong " + reservationCode);
-        vnpParams.put("vnp_OrderType", "hotel_booking");
+        vnpParams.put("vnp_OrderInfo", "Thanh toan coc don " + reservationCode);
+        vnpParams.put("vnp_OrderType", "other");
         vnpParams.put("vnp_Locale", "vn");
         vnpParams.put("vnp_ReturnUrl", vnpReturnUrl);
         vnpParams.put("vnp_IpAddr", "127.0.0.1");
@@ -131,7 +124,7 @@ public class VnPayGatewayService {
             query.append(encodedKey).append('=').append(encodedVal);
         }
 
-        String secureHash = hmacSHA512(vnpHashSecret, hashData.toString());
+        String secureHash = hmacSHA512(effectiveSecret, hashData.toString());
         return vnpPayUrl + "?" + query + "&vnp_SecureHash=" + secureHash;
     }
 
