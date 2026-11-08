@@ -7,6 +7,7 @@ export const AssignTaskModal = ({ show, onHide, preselectedRoom, rooms = [], onS
   const [staffList, setStaffList] = useState([]);
   const [assignedToStaffId, setAssignedToStaffId] = useState('');
   const [taskType, setTaskType] = useState('CLEANING');
+  const [priority, setPriority] = useState('NORMAL');
   const [note, setNote] = useState('');
   const [estimatedCompletionDate, setEstimatedCompletionDate] = useState('');
 
@@ -25,6 +26,7 @@ export const AssignTaskModal = ({ show, onHide, preselectedRoom, rooms = [], onS
         setRoomId(rooms[0].roomId);
       }
       setTaskType('CLEANING');
+      setPriority('NORMAL');
       setNote('');
       setEstimatedCompletionDate(todayStr);
       setError(null);
@@ -68,6 +70,7 @@ export const AssignTaskModal = ({ show, onHide, preselectedRoom, rooms = [], onS
         roomId: Number(roomId),
         assignedToStaffId: Number(assignedToStaffId),
         taskType: taskType,
+        priority: priority,
         note: note.trim() || undefined,
         estimatedCompletionDate: estimatedCompletionDate || undefined,
         scheduledAt: new Date().toISOString(),
@@ -167,6 +170,21 @@ export const AssignTaskModal = ({ show, onHide, preselectedRoom, rooms = [], onS
             >
               <option value="CLEANING">CLEANING (Dọn dẹp vệ sinh phòng)</option>
               <option value="MAINTENANCE">MAINTENANCE (Kiểm tra bảo dưỡng thiết bị phòng)</option>
+            </Form.Select>
+          </Form.Group>
+
+          {/* Priority (UC-51, V4) */}
+          <Form.Group className="mb-3">
+            <Form.Label className="fw-semibold">Mức ưu tiên</Form.Label>
+            <Form.Select
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+              disabled={submitting}
+            >
+              <option value="LOW">LOW (Thấp)</option>
+              <option value="NORMAL">NORMAL (Bình thường)</option>
+              <option value="HIGH">HIGH (Cao)</option>
+              <option value="URGENT">URGENT (Khẩn cấp)</option>
             </Form.Select>
           </Form.Group>
 
