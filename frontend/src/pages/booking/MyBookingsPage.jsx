@@ -181,18 +181,33 @@ export const MyBookingsPage = () => {
                   ),
                 },
                 {
-                  header: 'Thao tác',
+                  header: 'Thao tác & QR Thanh Toán',
                   render: (b) => (
-                    <div className="d-flex gap-2">
+                    <div className="d-flex gap-2 align-items-center">
                       {b.status === 'PENDING' && b.vnpayPaymentUrl && (
-                        <Button
-                          size="sm"
-                          className="btn-hms-primary"
-                          onClick={() => handlePayDeposit(b)}
+                        <div
+                          className="d-flex align-items-center gap-2 p-1 bg-white border rounded"
+                          style={{ borderColor: '#bfdbfe' }}
                         >
-                          <i className="bi bi-credit-card me-1"></i>
-                          Đặt cọc VNPay
-                        </Button>
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=52x52&margin=1&data=${encodeURIComponent(
+                              b.vnpayPaymentUrl
+                            )}`}
+                            alt="QR Pay"
+                            style={{ width: 38, height: 38, cursor: 'pointer', borderRadius: 4 }}
+                            onClick={() => handlePayDeposit(b)}
+                            title="Bấm hoặc quét mã QR để thanh toán cọc qua VNPay"
+                          />
+                          <Button
+                            size="sm"
+                            className="btn-hms-primary"
+                            onClick={() => handlePayDeposit(b)}
+                            style={{ fontSize: 12, padding: '4px 10px' }}
+                          >
+                            <i className="bi bi-credit-card me-1"></i>
+                            Đặt cọc VNPay
+                          </Button>
+                        </div>
                       )}
                       {(b.status === 'PENDING' || b.status === 'CONFIRMED') && (
                         <Button

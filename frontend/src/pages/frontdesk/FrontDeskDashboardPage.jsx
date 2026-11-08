@@ -7,6 +7,140 @@ import { formatDateTime, formatDate } from '../../lib/datetime';
 import { formatVND } from '../../lib/money';
 import { notifyToast } from '../../lib/http';
 
+const PaginationControl = ({ totalItems, currentPage, pageSize, onPageChange, onPageSizeChange }) => {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const endItem = Math.min(currentPage * pageSize, totalItems);
+
+  if (totalItems === 0) return null;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '12px 16px',
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
+        borderTop: 'none',
+        borderRadius: '0 0 8px 8px',
+        fontSize: 13,
+        color: '#64748b',
+        flexWrap: 'wrap',
+        gap: 12,
+        marginTop: -1,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span>
+          Hiển thị <strong>{startItem} - {endItem}</strong> trong <strong>{totalItems}</strong> kết quả
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span>Số hàng/trang:</span>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              onPageSizeChange(Number(e.target.value));
+              onPageChange(1);
+            }}
+            style={{
+              padding: '3px 8px',
+              borderRadius: 4,
+              border: '1px solid #cbd5e1',
+              fontSize: 12,
+              color: '#334155',
+              background: '#fff',
+              outline: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            <option value={5}>5</option>
+            <option value={10}>10</option>
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <button
+          type="button"
+          disabled={currentPage <= 1}
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          style={{
+            padding: '4px 10px',
+            borderRadius: 4,
+            border: '1px solid #cbd5e1',
+            background: currentPage <= 1 ? '#f8fafc' : '#ffffff',
+            color: currentPage <= 1 ? '#94a3b8' : '#0f172a',
+            cursor: currentPage <= 1 ? 'not-allowed' : 'pointer',
+            fontSize: 12,
+            fontWeight: 500,
+          }}
+        >
+          <i className="bi bi-chevron-left"></i> Trước
+        </button>
+
+        {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
+          if (totalPages > 7) {
+            if (p !== 1 && p !== totalPages && Math.abs(p - currentPage) > 2) {
+              if (p === 2 || p === totalPages - 1) {
+                return (
+                  <span key={p} style={{ padding: '0 4px', color: '#94a3b8' }}>
+                    ...
+                  </span>
+                );
+              }
+              return null;
+            }
+          }
+          const isCurrent = p === currentPage;
+          return (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onPageChange(p)}
+              style={{
+                minWidth: 28,
+                height: 28,
+                padding: '0 6px',
+                borderRadius: 4,
+                border: isCurrent ? '1px solid #0f172a' : '1px solid #cbd5e1',
+                background: isCurrent ? '#0f172a' : '#ffffff',
+                color: isCurrent ? '#ffffff' : '#334155',
+                fontWeight: isCurrent ? 700 : 500,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              {p}
+            </button>
+          );
+        })}
+
+        <button
+          type="button"
+          disabled={currentPage >= totalPages}
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          style={{
+            padding: '4px 10px',
+            borderRadius: 4,
+            border: '1px solid #cbd5e1',
+            background: currentPage >= totalPages ? '#f8fafc' : '#ffffff',
+            color: currentPage >= totalPages ? '#94a3b8' : '#0f172a',
+            cursor: currentPage >= totalPages ? 'not-allowed' : 'pointer',
+            fontSize: 12,
+            fontWeight: 500,
+          }}
+        >
+          Sau <i className="bi bi-chevron-right"></i>
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export const FrontDeskDashboardPage = () => {
   const [activeTab, setActiveTab] = useState('arrivals'); // 'arrivals' | 'stays' | 'direct-booking' | 'all-bookings'
   const [stays, setStays] = useState([]);
@@ -15,6 +149,16 @@ export const FrontDeskDashboardPage = () => {
   const [roomTypes, setRoomTypes] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Danh sách các đơn chờ đặt cọc (áp dụng cho cả đặt Online lẫn tại Quầy)
+  const pendingDeposits = useMemo(() => {
+    return bookings
+      .filter((b) => {
+        if (['CANCELLED', 'CHECKED_IN', 'COMPLETED'].includes(b.status)) return false;
+        return b.status === 'PENDING' || (b.depositPaymentStatus && b.depositPaymentStatus !== 'PAID');
+      })
+      .sort((a, b) => new Date(b.reservationDate || b.checkInDate) - new Date(a.reservationDate || a.checkInDate));
+  }, [bookings]);
 
   // --- Direct Booking Form State (Multi-room selection) ---
   const todayStr = new Date().toISOString().split('T')[0];
@@ -44,6 +188,8 @@ export const FrontDeskDashboardPage = () => {
   const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
   const [lastCreatedBooking, setLastCreatedBooking] = useState(null);
   const [successModalData, setSuccessModalData] = useState(null);
+  const [isCashPaidConfirmed, setIsCashPaidConfirmed] = useState(false);
+  const [isProcessingCash, setIsProcessingCash] = useState(false);
 
   // --- Check-in Modal State (70% / 30% Wireframe & Partial Check-in) ---
   const [checkInModalData, setCheckInModalData] = useState(null);
@@ -454,11 +600,12 @@ export const FrontDeskDashboardPage = () => {
       const res = await frontDeskApi.createDirectBooking(payload);
       const created = res.data?.data || res.data;
       setLastCreatedBooking(created);
+      setIsCashPaidConfirmed(false);
       setSuccessModalData(created);
 
       notifyToast({
-        type: 'SUCCESS',
-        message: `Đã tạo thành công đơn đặt phòng ${created.reservationCode}`,
+        type: 'INFO',
+        message: `Đã khởi tạo đơn ${created.reservationCode}. Vui lòng thu tiền cọc của khách.`,
       });
 
       // Reset form contact info
@@ -489,7 +636,82 @@ export const FrontDeskDashboardPage = () => {
     }
   };
 
+  const handleConfirmCash = async (reservationCode) => {
+    setIsProcessingCash(true);
+    try {
+      await frontDeskApi.confirmCashPayment(reservationCode);
+      setIsCashPaidConfirmed(true);
+      notifyToast({
+        type: 'SUCCESS',
+        message: 'Đã xác nhận thanh toán tiền mặt thành công!',
+      });
+      loadData();
+    } catch (err) {
+      notifyToast({
+        type: 'ERROR',
+        message: err.response?.data?.message || 'Xác nhận tiền mặt thất bại.',
+      });
+    } finally {
+      setIsProcessingCash(false);
+    }
+  };
+
+  // Real-time polling trạng thái thanh toán từ Database khi Modal thanh toán đang mở
+  useEffect(() => {
+    if (!successModalData || isCashPaidConfirmed || successModalData.depositPaymentStatus === 'PAID') {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await frontDeskApi.getPaymentStatus(successModalData.reservationCode);
+        const data = res.data;
+        if (data && (data.depositPaymentStatus === 'PAID' || data.reservationStatus === 'CONFIRMED')) {
+          setIsCashPaidConfirmed(true);
+          setSuccessModalData((prev) => (prev ? { ...prev, depositPaymentStatus: 'PAID', status: 'CONFIRMED' } : null));
+          notifyToast({
+            type: 'SUCCESS',
+            message: 'Đã nhận được thanh toán tiền cọc thành công!',
+          });
+          loadData();
+        }
+      } catch {
+        // bỏ qua lỗi polling mạng tạm thời
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [successModalData, isCashPaidConfirmed]);
+
+  const handleCancelPendingBooking = async (code) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn hủy đơn đặt phòng ${code} do khách chưa đặt cọc?`)) {
+      return;
+    }
+    try {
+      await frontDeskApi.cancelDirectBooking(code, 'Khách không đặt cọc tại quầy');
+      setSuccessModalData(null);
+      notifyToast({
+        type: 'INFO',
+        message: `Đã hủy đơn ${code}`,
+      });
+      loadData();
+    } catch (err) {
+      notifyToast({
+        type: 'ERROR',
+        message: err.response?.data?.message || 'Hủy đơn thất bại.',
+      });
+    }
+  };
+
   const openCheckInModal = async (reservation) => {
+    if (reservation.depositPaymentStatus && reservation.depositPaymentStatus !== 'PAID') {
+      notifyToast({
+        type: 'WARNING',
+        message: `Đơn #${reservation.reservationCode} chưa hoàn tất thanh toán tiền cọc! Vui lòng thu tiền cọc trước khi làm thủ tục Check-in.`,
+      });
+      return;
+    }
+
     setCheckInModalData(reservation);
     setIsLoadingRooms(true);
     setCheckInDepositAmount('500000');
@@ -960,17 +1182,48 @@ export const FrontDeskDashboardPage = () => {
     );
   }, [bookings, searchQuery]);
 
+  // --- Pagination States ---
+  const [arrivalsPage, setArrivalsPage] = useState(1);
+  const [arrivalsPageSize, setArrivalsPageSize] = useState(10);
+
+  const [pendingPage, setPendingPage] = useState(1);
+  const [pendingPageSize, setPendingPageSize] = useState(10);
+
+  const [staysPage, setStaysPage] = useState(1);
+  const [staysPageSize, setStaysPageSize] = useState(10);
+
+  const [bookingsPage, setBookingsPage] = useState(1);
+  const [bookingsPageSize, setBookingsPageSize] = useState(10);
+
+  // Paginated Data
+  const paginatedArrivals = useMemo(() => {
+    const start = (arrivalsPage - 1) * arrivalsPageSize;
+    return arrivals.slice(start, start + arrivalsPageSize);
+  }, [arrivals, arrivalsPage, arrivalsPageSize]);
+
+  const paginatedPendingDeposits = useMemo(() => {
+    const start = (pendingPage - 1) * pendingPageSize;
+    return pendingDeposits.slice(start, start + pendingPageSize);
+  }, [pendingDeposits, pendingPage, pendingPageSize]);
+
+  const paginatedStays = useMemo(() => {
+    const start = (staysPage - 1) * staysPageSize;
+    return stays.slice(start, start + staysPageSize);
+  }, [stays, staysPage, staysPageSize]);
+
+  const paginatedBookings = useMemo(() => {
+    const start = (bookingsPage - 1) * bookingsPageSize;
+    return filteredBookings.slice(start, start + bookingsPageSize);
+  }, [filteredBookings, bookingsPage, bookingsPageSize]);
+
   return (
     <div style={{ maxWidth: 1480, margin: '0 auto', padding: '20px 24px 64px', color: '#0f172a' }}>
       {/* Page Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 4px', letterSpacing: '-0.02em', color: '#0f172a' }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: '-0.02em', color: '#0f172a' }}>
             Nghiệp Vụ Lễ Tân & Quản Lý Lưu Trú
           </h1>
-          <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>
-            Tiếp nhận khách đến, bàn giao phòng vật lý, theo dõi lưu trú và quyết toán trả phòng.
-          </p>
         </div>
         <button
           onClick={loadData}
@@ -996,8 +1249,18 @@ export const FrontDeskDashboardPage = () => {
       </div>
 
       {/* Operational Metric Bar */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
-        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '16px 20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
+        <div
+          onClick={() => setActiveTab('arrivals')}
+          style={{
+            background: activeTab === 'arrivals' ? '#f8fafc' : '#ffffff',
+            border: activeTab === 'arrivals' ? '2px solid #0f172a' : '1px solid #e2e8f0',
+            borderRadius: 8,
+            padding: '16px 20px',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+        >
           <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             Khách Nhận Phòng Hôm Nay
           </div>
@@ -1007,7 +1270,39 @@ export const FrontDeskDashboardPage = () => {
           </div>
         </div>
 
-        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '16px 20px' }}>
+        <div
+          onClick={() => setActiveTab('pending-deposits')}
+          style={{
+            background: activeTab === 'pending-deposits' ? '#fffbeb' : '#ffffff',
+            border: activeTab === 'pending-deposits' ? '2px solid #f59e0b' : '1px solid #e2e8f0',
+            borderRadius: 8,
+            padding: '16px 20px',
+            cursor: 'pointer',
+            boxShadow: activeTab === 'pending-deposits' ? '0 4px 6px -1px rgba(245, 158, 11, 0.15)' : 'none',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Đơn Chờ Đặt Cọc</span>
+            <i className="bi bi-hourglass-split" style={{ color: '#f59e0b', fontSize: 14 }}></i>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 8 }}>
+            <span style={{ fontSize: 26, fontWeight: 700, color: '#d97706' }}>{pendingDeposits.length}</span>
+            <span style={{ fontSize: 12, color: '#d97706', fontWeight: 600 }}>chờ thu cọc</span>
+          </div>
+        </div>
+
+        <div
+          onClick={() => setActiveTab('stays')}
+          style={{
+            background: activeTab === 'stays' ? '#f8fafc' : '#ffffff',
+            border: activeTab === 'stays' ? '2px solid #0f172a' : '1px solid #e2e8f0',
+            borderRadius: 8,
+            padding: '16px 20px',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+        >
           <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             Phòng Đang Lưu Trú
           </div>
@@ -1017,7 +1312,17 @@ export const FrontDeskDashboardPage = () => {
           </div>
         </div>
 
-        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '16px 20px' }}>
+        <div
+          onClick={() => setActiveTab('all-bookings')}
+          style={{
+            background: activeTab === 'all-bookings' ? '#f8fafc' : '#ffffff',
+            border: activeTab === 'all-bookings' ? '2px solid #0f172a' : '1px solid #e2e8f0',
+            borderRadius: 8,
+            padding: '16px 20px',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+        >
           <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             Tổng Đặt Phòng Hệ Thống
           </div>
@@ -1032,6 +1337,13 @@ export const FrontDeskDashboardPage = () => {
       <div style={{ borderBottom: '1px solid #e2e8f0', marginBottom: 24, display: 'flex', gap: 24 }}>
         {[
           { id: 'arrivals', label: 'Khách Nhận Phòng', count: arrivals.length, icon: 'bi-box-arrow-in-right' },
+          {
+            id: 'pending-deposits',
+            label: 'Đơn Chờ Cọc',
+            count: pendingDeposits.length,
+            icon: 'bi-hourglass-split',
+            isSpecial: true,
+          },
           { id: 'stays', label: 'Đang Lưu Trú', count: stays.length, icon: 'bi-door-closed' },
           { id: 'direct-booking', label: 'Đặt Phòng Tại Quầy', icon: 'bi-calendar-plus' },
           { id: 'all-bookings', label: 'Tra Cứu Booking', icon: 'bi-search' },
@@ -1056,17 +1368,35 @@ export const FrontDeskDashboardPage = () => {
                 transition: 'color 0.15s ease',
               }}
             >
-              <i className={`bi ${tab.icon}`} style={{ fontSize: 15, color: isActive ? '#0f172a' : '#94a3b8' }}></i>
+              <i
+                className={`bi ${tab.icon}`}
+                style={{
+                  fontSize: 15,
+                  color: tab.isSpecial && tab.count > 0 ? '#d97706' : isActive ? '#0f172a' : '#94a3b8',
+                }}
+              ></i>
               <span>{tab.label}</span>
               {typeof tab.count === 'number' && tab.count > 0 && (
                 <span
                   style={{
-                    background: isActive ? '#0f172a' : '#e2e8f0',
-                    color: isActive ? '#ffffff' : '#475569',
+                    background: tab.isSpecial
+                      ? isActive
+                        ? '#d97706'
+                        : '#fef3c7'
+                      : isActive
+                      ? '#0f172a'
+                      : '#e2e8f0',
+                    color: tab.isSpecial
+                      ? isActive
+                        ? '#ffffff'
+                        : '#b45309'
+                      : isActive
+                      ? '#ffffff'
+                      : '#475569',
                     borderRadius: 10,
                     padding: '1px 7px',
                     fontSize: 11,
-                    fontWeight: 600,
+                    fontWeight: 700,
                   }}
                 >
                   {tab.count}
@@ -1083,17 +1413,14 @@ export const FrontDeskDashboardPage = () => {
       {activeTab === 'arrivals' && (
         <div>
           <div style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 2px', color: '#0f172a' }}>
+            <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: '#0f172a' }}>
               Danh Sách Khách Đến (Arrivals)
             </h2>
-            <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
-              Các đơn đặt phòng đã xác nhận sẵn sàng tiếp nhận và bàn giao phòng sạch.
-            </p>
           </div>
 
           <DataTable
             keyField="reservationId"
-            data={arrivals}
+            data={paginatedArrivals}
             emptyMessage="Không có khách nào đang chờ làm thủ tục nhận phòng."
             columns={[
               {
@@ -1142,6 +1469,54 @@ export const FrontDeskDashboardPage = () => {
                 ),
               },
               {
+                header: 'Tiền Cọc',
+                render: (r) => {
+                  const isPaid = r.depositPaymentStatus === 'PAID';
+                  return (
+                    <div>
+                      <div style={{ fontWeight: 600, color: '#0f172a' }}>
+                        {formatVND(r.depositAmount || 0)}
+                      </div>
+                      <div style={{ marginTop: 2 }}>
+                        {isPaid ? (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: '#16a34a',
+                              background: '#dcfce7',
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                            }}
+                          >
+                            <i className="bi bi-check-circle-fill"></i> Đã cọc
+                          </span>
+                        ) : (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: '#d97706',
+                              background: '#fef3c7',
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                            }}
+                          >
+                            <i className="bi bi-clock-history"></i> Chưa cọc
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                },
+              },
+              {
                 header: 'Trạng Thái',
                 render: (r) => <StatusBadge status={r.status} />,
               },
@@ -1149,6 +1524,33 @@ export const FrontDeskDashboardPage = () => {
                 header: 'Thao Tác',
                 render: (r) => {
                   const isPartial = (r.checkedInRoomsCount || 0) > 0 && (r.checkedInRoomsCount < (r.totalBookedRoomsCount || r.roomQuantity || 1));
+                  const isDepositPaid = r.depositPaymentStatus === 'PAID';
+
+                  if (!isDepositPaid && !isPartial) {
+                    return (
+                      <button
+                        disabled
+                        title="Đơn này chưa hoàn tất thanh toán tiền cọc"
+                        style={{
+                          background: '#f1f5f9',
+                          color: '#94a3b8',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: 6,
+                          padding: '6px 14px',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          cursor: 'not-allowed',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                      >
+                        <i className="bi bi-lock-fill" style={{ fontSize: 13 }}></i>
+                        <span>Chờ cọc</span>
+                      </button>
+                    );
+                  }
+
                   return (
                     <button
                       onClick={() => openCheckInModal(r)}
@@ -1174,6 +1576,236 @@ export const FrontDeskDashboardPage = () => {
               },
             ]}
           />
+          <PaginationControl
+            totalItems={arrivals.length}
+            currentPage={arrivalsPage}
+            pageSize={arrivalsPageSize}
+            onPageChange={setArrivalsPage}
+            onPageSizeChange={setArrivalsPageSize}
+          />
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: PENDING DEPOSITS (ĐƠN CHỜ CỌC - ONLINE & TẠI QUẦY)                   */}
+      {/* ========================================================================= */}
+      {activeTab === 'pending-deposits' && (
+        <div>
+          <div style={{ marginBottom: 16 }}>
+            <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: '#0f172a' }}>
+              Danh Sách Đơn Đang Chờ Đặt Cọc (Online & Tại Quầy)
+            </h2>
+          </div>
+
+          <DataTable
+            keyField="reservationId"
+            data={paginatedPendingDeposits}
+            emptyMessage="Hiện tại không có đơn nào đang chờ đặt cọc."
+            columns={[
+              {
+                header: 'Mã Đặt Phòng',
+                render: (r) => (
+                  <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#0f172a' }}>
+                    {r.reservationCode}
+                  </span>
+                ),
+              },
+              {
+                header: 'Kênh Đặt',
+                render: (r) => {
+                  const isWalkin = (r.reservationCode || '').startsWith('BK-WALKIN');
+                  return isWalkin ? (
+                    <span
+                      style={{
+                        background: '#e0f2fe',
+                        color: '#0369a1',
+                        borderRadius: 4,
+                        padding: '2px 8px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <i className="bi bi-shop"></i> Tại Quầy
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        background: '#ede9fe',
+                        color: '#6d28d9',
+                        borderRadius: 4,
+                        padding: '2px 8px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <i className="bi bi-globe"></i> Online
+                    </span>
+                  );
+                },
+              },
+              {
+                header: 'Khách Hàng',
+                render: (r) => (
+                  <div>
+                    <div style={{ fontWeight: 600, color: '#0f172a' }}>{r.contactName}</div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>{r.contactPhone}</div>
+                  </div>
+                ),
+              },
+              {
+                header: 'Hạng Phòng',
+                render: (r) => (
+                  <div>
+                    <div style={{ fontWeight: 500, color: '#0f172a' }}>{r.roomTypeName || 'N/A'}</div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>
+                      {r.roomQuantity || 1} phòng • {r.guestCount || 1} khách
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                header: 'Lịch Lưu Trú',
+                render: (r) => (
+                  <div style={{ fontSize: 13 }}>
+                    <div>{formatDate(r.checkInDate)} → {formatDate(r.checkOutDate)}</div>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>{r.nights || 1} đêm</div>
+                  </div>
+                ),
+              },
+              {
+                header: 'Tiền Cọc Cần Thu',
+                render: (r) => (
+                  <div>
+                    <strong style={{ color: '#0369a1', fontSize: 14 }}>
+                      {formatVND(r.depositAmount || r.estimatedTotal || 0)}
+                    </strong>
+                    <div style={{ marginTop: 2 }}>
+                      <span
+                        style={{
+                          background: '#fef3c7',
+                          color: '#b45309',
+                          borderRadius: 4,
+                          padding: '2px 8px',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                        }}
+                      >
+                        <i className="bi bi-clock-history"></i> Chờ cọc
+                      </span>
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                header: 'Mã QR Thanh Toán',
+                render: (r) => {
+                  const payUrl =
+                    r.vnpayPaymentUrl ||
+                    `http://localhost:5173/booking/payment-callback?vnp_TxnRef=${r.reservationCode}`;
+                  return (
+                    <div
+                      onClick={() => {
+                        setIsCashPaidConfirmed(false);
+                        setSuccessModalData(r);
+                      }}
+                      title="Click để phóng to mã QR & thu cọc"
+                      style={{
+                        display: 'inline-flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        background: '#ffffff',
+                        border: '1px dashed #0284c7',
+                        borderRadius: 6,
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                        transition: 'transform 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1.0)')}
+                    >
+                      <img
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=64x64&margin=2&data=${encodeURIComponent(
+                          payUrl
+                        )}`}
+                        alt="QR Pay"
+                        style={{ width: 56, height: 56, borderRadius: 4, display: 'block' }}
+                      />
+                      <span style={{ fontSize: 10, color: '#0284c7', fontWeight: 600, marginTop: 3 }}>
+                        <i className="bi bi-zoom-in"></i> Phóng to / Cọc
+                      </span>
+                    </div>
+                  );
+                },
+              },
+              {
+                header: 'Thao Tác',
+                render: (r) => (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <button
+                      onClick={() => {
+                        setIsCashPaidConfirmed(false);
+                        setSuccessModalData(r);
+                      }}
+                      title="Mở Modal Thu tiền mặt hoặc quét mã QR VNPay cho đơn này"
+                      style={{
+                        background: '#005baa',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '6px 12px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <i className="bi bi-qr-code-scan"></i>
+                      <span>Thu Cọc / QR</span>
+                    </button>
+                    <button
+                      onClick={() => handleCancelPendingBooking(r.reservationCode)}
+                      title="Hủy đơn này do khách không đặt cọc"
+                      style={{
+                        background: '#fff1f2',
+                        color: '#e11d48',
+                        border: '1px solid #fecdd3',
+                        borderRadius: 6,
+                        padding: '6px 10px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <i className="bi bi-trash3"></i>
+                      <span>Hủy</span>
+                    </button>
+                  </div>
+                ),
+              },
+            ]}
+          />
+          <PaginationControl
+            totalItems={pendingDeposits.length}
+            currentPage={pendingPage}
+            pageSize={pendingPageSize}
+            onPageChange={setPendingPage}
+            onPageSizeChange={setPendingPageSize}
+          />
         </div>
       )}
 
@@ -1183,17 +1815,14 @@ export const FrontDeskDashboardPage = () => {
       {activeTab === 'stays' && (
         <div>
           <div style={{ marginBottom: 16 }}>
-            <h2 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 2px', color: '#0f172a' }}>
+            <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: '#0f172a' }}>
               Danh Sách Phòng Đang Phục Vụ Lưu Trú
             </h2>
-            <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
-              Theo dõi tình trạng khách đang ở tại khách sạn, tài khoản Folio và làm thủ tục trả phòng.
-            </p>
           </div>
 
           <DataTable
             keyField="stayId"
-            data={stays}
+            data={paginatedStays}
             emptyMessage="Hiện tại không có phòng nào đang có khách lưu trú."
             columns={[
               {
@@ -1258,10 +1887,15 @@ export const FrontDeskDashboardPage = () => {
                 header: 'Dư Nợ Folio',
                 render: (s) => (
                   <div>
-                    <div style={{ fontWeight: 600, color: '#0f172a' }}>
+                    <div style={{ fontWeight: 700, color: Number(s.folioTotalAmount || 0) > 0 ? '#b91c1c' : '#16a34a' }}>
                       {formatVND(s.folioTotalAmount || 0)}
                     </div>
-                    {s.folioId && <div style={{ fontSize: 11, color: '#64748b' }}>Mã Folio #{s.folioId}</div>}
+                    {Number(s.depositPaid || 0) > 0 && (
+                      <div style={{ fontSize: 11, color: '#16a34a', fontWeight: 500, marginTop: 2 }}>
+                        <i className="bi bi-shield-check me-1"></i> Đã trừ cọc: {formatVND(s.depositPaid)}
+                      </div>
+                    )}
+                    {s.folioId && <div style={{ fontSize: 11, color: '#64748b', marginTop: 1 }}>Folio #{s.folioId}</div>}
                   </div>
                 ),
               },
@@ -1346,6 +1980,13 @@ export const FrontDeskDashboardPage = () => {
               },
             ]}
           />
+          <PaginationControl
+            totalItems={stays.length}
+            currentPage={staysPage}
+            pageSize={staysPageSize}
+            onPageChange={setStaysPage}
+            onPageSizeChange={setStaysPageSize}
+          />
         </div>
       )}
 
@@ -1358,12 +1999,9 @@ export const FrontDeskDashboardPage = () => {
           <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '16px 20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <div>
-                <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 2px', color: '#0f172a' }}>
+                <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: '#0f172a' }}>
                   Đặt Phòng Tại Quầy (Walk-in / Phone)
                 </h2>
-                <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>
-                  Kiểm tra tình trạng phòng khả dụng và tạo phiếu đặt phòng nhanh cho khách.
-                </p>
               </div>
               <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', background: '#f1f5f9', padding: '4px 10px', borderRadius: 4 }}>
                 Mã đơn tạm: <span style={{ color: '#0f172a' }}>#TMP-{new Date().toISOString().slice(0, 10).replace(/-/g, '')}-WALKIN</span>
@@ -2029,6 +2667,24 @@ export const FrontDeskDashboardPage = () => {
                         {formatDong(bookingQuote ? bookingQuote.grandTotal : priceCalculation.grandTotal)}
                       </span>
                     </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'baseline',
+                        marginTop: 4,
+                        paddingTop: 6,
+                        borderTop: '1px dashed #cbd5e1',
+                      }}
+                    >
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: '#0369a1' }}>
+                        Tiền cọc yêu cầu (30%):
+                      </span>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: '#0369a1', whiteSpace: 'nowrap' }}>
+                        {formatDong(Math.round((bookingQuote ? bookingQuote.grandTotal : priceCalculation.grandTotal) * 0.3))}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -2084,12 +2740,9 @@ export const FrontDeskDashboardPage = () => {
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div>
-              <h2 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 2px', color: '#0f172a' }}>
+              <h2 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: '#0f172a' }}>
                 Hồ Sơ Đặt Phòng Toàn Hệ Thống
               </h2>
-              <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
-                Tra cứu lịch sử đặt phòng theo mã tham chiếu, tên hoặc số điện thoại khách hàng.
-              </p>
             </div>
             <div style={{ position: 'relative', width: 300 }}>
               <i
@@ -2100,7 +2753,10 @@ export const FrontDeskDashboardPage = () => {
                 type="text"
                 placeholder="Tìm mã, họ tên, số điện thoại..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setBookingsPage(1);
+                }}
                 style={{
                   width: '100%',
                   padding: '8px 12px 8px 34px',
@@ -2115,7 +2771,7 @@ export const FrontDeskDashboardPage = () => {
 
           <DataTable
             keyField="reservationId"
-            data={filteredBookings}
+            data={paginatedBookings}
             emptyMessage="Không tìm thấy hồ sơ đặt phòng phù hợp."
             columns={[
               {
@@ -2155,7 +2811,77 @@ export const FrontDeskDashboardPage = () => {
                 header: 'Trạng Thái',
                 render: (b) => <StatusBadge status={b.status} />,
               },
+              {
+                header: 'Thao Tác / QR',
+                render: (b) => {
+                  if (b.status === 'PENDING') {
+                    const payUrl =
+                      b.vnpayPaymentUrl ||
+                      `http://localhost:5173/booking/payment-callback?vnp_TxnRef=${b.reservationCode}`;
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div
+                          onClick={() => {
+                            setIsCashPaidConfirmed(false);
+                            setSuccessModalData(b);
+                          }}
+                          title="Click xem mã QR phóng to & thu cọc"
+                          style={{
+                            cursor: 'pointer',
+                            padding: '2px 4px',
+                            background: '#ffffff',
+                            border: '1px dashed #0284c7',
+                            borderRadius: 4,
+                            display: 'inline-flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=48x48&margin=1&data=${encodeURIComponent(
+                              payUrl
+                            )}`}
+                            alt="QR"
+                            style={{ width: 38, height: 38, display: 'block', borderRadius: 2 }}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCashPaidConfirmed(false);
+                            setSuccessModalData(b);
+                          }}
+                          style={{
+                            background: '#005baa',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: 4,
+                            padding: '6px 10px',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                          }}
+                        >
+                          <i className="bi bi-qr-code-scan"></i>
+                          <span>Thu Cọc</span>
+                        </button>
+                      </div>
+                    );
+                  }
+                  return <span style={{ fontSize: 12, color: '#94a3b8' }}>—</span>;
+                },
+              },
             ]}
+          />
+          <PaginationControl
+            totalItems={filteredBookings.length}
+            currentPage={bookingsPage}
+            pageSize={bookingsPageSize}
+            onPageChange={setBookingsPage}
+            onPageSizeChange={setBookingsPageSize}
           />
         </div>
       )}
@@ -3330,8 +4056,19 @@ export const FrontDeskDashboardPage = () => {
                 <div>Mã Folio: <strong>#{checkOutModalStay.folioId || 'N/A'}</strong></div>
               </div>
 
-              <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 12, paddingTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>Số tiền còn phải thanh toán:</span>
+              {Number(checkOutModalStay.depositPaid || 0) > 0 && (
+                <div style={{ borderTop: '1px dashed #e2e8f0', marginTop: 10, paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 600 }}>
+                    <i className="bi bi-shield-check me-1"></i> Đã khấu trừ tiền cọc:
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#16a34a' }}>
+                    - {formatVND(checkOutModalStay.depositPaid)}
+                  </span>
+                </div>
+              )}
+
+              <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 10, paddingTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>Dư nợ Folio còn lại phải thanh toán:</span>
                 <span style={{ fontSize: 18, fontWeight: 700, color: Number(checkOutModalStay.folioTotalAmount || 0) > 0 ? '#b91c1c' : '#16a34a' }}>
                   {formatVND(checkOutModalStay.folioTotalAmount || 0)}
                 </span>
@@ -3649,129 +4386,347 @@ export const FrontDeskDashboardPage = () => {
         );
       })()}
 
-      {/* Modal Thông Báo Đặt Phòng Thành Công */}
-      {successModalData && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15, 23, 42, 0.55)',
-            backdropFilter: 'blur(3px)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 9999,
-            padding: 16,
-          }}
-        >
+      {/* Modal Thông Báo Đặt Phòng Thành Công & Thanh Toán */}
+      {successModalData && (() => {
+        const isPaid = isCashPaidConfirmed || successModalData.depositPaymentStatus === 'PAID';
+        const depositVal = successModalData.depositAmount || successModalData.estimatedTotal || 0;
+        const vnpayAmount = Math.round(depositVal * 100);
+        const payUrl =
+          successModalData.vnpayPaymentUrl ||
+          `http://localhost:5173/booking/payment-callback?vnp_TxnRef=${encodeURIComponent(
+            successModalData.reservationCode
+          )}`;
+
+        return (
           <div
             style={{
-              background: '#ffffff',
-              borderRadius: 10,
-              maxWidth: 480,
-              width: '100%',
-              padding: 24,
-              border: '1px solid #e2e8f0',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15, 23, 42, 0.55)',
+              backdropFilter: 'blur(3px)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 9999,
+              padding: 16,
             }}
           >
-            <div style={{ textAlign: 'center', marginBottom: 20 }}>
-              <div
-                style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: '50%',
-                  background: '#ecfdf5',
-                  color: '#059669',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 26,
-                  marginBottom: 10,
-                }}
-              >
-                <i className="bi bi-check-lg"></i>
+            <div
+              style={{
+                background: '#ffffff',
+                borderRadius: 12,
+                maxWidth: 480,
+                width: '100%',
+                padding: '18px 20px',
+                border: '1px solid #e2e8f0',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+                maxHeight: '92vh',
+                overflowY: 'auto',
+              }}
+            >
+              {/* Header modal */}
+              <div style={{ textAlign: 'center', marginBottom: 14 }}>
+                {isPaid ? (
+                  <>
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: '50%',
+                        background: '#ecfdf5',
+                        color: '#059669',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 20,
+                        marginBottom: 6,
+                      }}
+                    >
+                      <i className="bi bi-check-lg"></i>
+                    </div>
+                    <h3 style={{ fontSize: 17, fontWeight: 700, margin: '0 0 2px', color: '#0f172a' }}>
+                      Đặt Phòng & Đặt Cọc Thành Công
+                    </h3>
+                    <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
+                      Đã ghi nhận thanh toán cọc đơn #{successModalData.reservationCode}.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: '50%',
+                        background: '#eff6ff',
+                        color: '#0284c7',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 20,
+                        marginBottom: 6,
+                      }}
+                    >
+                      <i className="bi bi-qr-code-scan"></i>
+                    </div>
+                    <h3 style={{ fontSize: 17, fontWeight: 700, margin: '0 0 2px', color: '#0f172a' }}>
+                      Thanh Toán Tiền Cọc
+                    </h3>
+                    <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
+                      Quét mã QR VNPay hoặc thanh toán tiền mặt tại quầy.
+                    </p>
+                  </>
+                )}
               </div>
-              <h3 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 6px', color: '#0f172a' }}>
-                Đặt Phòng Thành Công!
-              </h3>
-              <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>
-                Hồ sơ đặt phòng trực tiếp tại quầy đã được tạo thành công.
-              </p>
-            </div>
 
-            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 16, marginBottom: 20, fontSize: 13 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span style={{ color: '#64748b' }}>Mã đặt phòng:</span>
-                <strong style={{ color: '#0f172a', fontSize: 14 }}>{successModalData.reservationCode}</strong>
+              {/* Thông tin đơn đặt phòng */}
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <span style={{ color: '#64748b' }}>Mã đặt phòng:</span>
+                  <strong style={{ color: '#0f172a' }}>{successModalData.reservationCode}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <span style={{ color: '#64748b' }}>Khách hàng:</span>
+                  <span style={{ color: '#0f172a', fontWeight: 600 }}>{successModalData.contactName} ({successModalData.contactPhone})</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <span style={{ color: '#64748b' }}>Hạng phòng:</span>
+                  <span style={{ color: '#0f172a', fontWeight: 500 }}>{successModalData.roomTypeName}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <span style={{ color: '#64748b' }}>Thời gian lưu trú:</span>
+                  <span style={{ color: '#0f172a' }}>
+                    {formatDate(successModalData.checkInDate)} → {formatDate(successModalData.checkOutDate)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: 5, marginTop: 4 }}>
+                  <span style={{ color: '#475569', fontWeight: 600 }}>Tổng tiền dự kiến:</span>
+                  <strong style={{ color: '#0f172a' }}>{formatVND(successModalData.estimatedTotal)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                  <span style={{ color: '#0369a1', fontWeight: 600 }}>Tiền cọc yêu cầu (30%):</span>
+                  <strong style={{ color: '#0369a1', fontSize: 14 }}>
+                    {formatVND(depositVal)}
+                  </strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                  <span style={{ color: '#64748b' }}>Trạng thái thanh toán:</span>
+                  {isPaid ? (
+                    <span style={{ color: '#16a34a', background: '#dcfce7', padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: 12 }}>
+                      <i className="bi bi-check-circle-fill me-1"></i> Đã thanh toán cọc
+                    </span>
+                  ) : (
+                    <span style={{ color: '#b45309', background: '#fef3c7', padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: 12 }}>
+                      <i className="bi bi-clock-history me-1"></i> Chờ thanh toán cọc
+                    </span>
+                  )}
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span style={{ color: '#64748b' }}>Khách hàng:</span>
-                <span style={{ color: '#0f172a', fontWeight: 600 }}>{successModalData.contactName} ({successModalData.contactPhone})</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span style={{ color: '#64748b' }}>Hạng phòng:</span>
-                <span style={{ color: '#0f172a', fontWeight: 500 }}>{successModalData.roomTypeName}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span style={{ color: '#64748b' }}>Thời gian lưu trú:</span>
-                <span style={{ color: '#0f172a' }}>
-                  {formatDate(successModalData.checkInDate)} → {formatDate(successModalData.checkOutDate)}
-                </span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: 8, marginTop: 4 }}>
-                <span style={{ color: '#475569', fontWeight: 600 }}>Tổng tiền dự kiến:</span>
-                <strong style={{ color: '#0f172a', fontSize: 16 }}>{formatVND(successModalData.estimatedTotal)}</strong>
-              </div>
-            </div>
 
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => setSuccessModalData(null)}
-                style={{
-                  flex: 1,
-                  background: '#ffffff',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: 6,
-                  padding: '9px 14px',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: '#334155',
-                  cursor: 'pointer',
-                }}
-              >
-                Tạo Đơn Mới
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSuccessModalData(null);
-                  setActiveTab('arrivals');
-                }}
-                style={{
-                  flex: 1,
-                  background: '#0f172a',
-                  border: 'none',
-                  borderRadius: 6,
-                  padding: '9px 14px',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: '#ffffff',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 6,
-                }}
-              >
-                <i className="bi bi-box-arrow-in-right"></i>
-                <span>Xem Khách Nhận Phòng</span>
-              </button>
+              {/* Khối Trạng thái & QR Code Thanh Toán */}
+              {isPaid ? (
+                <div
+                  style={{
+                    background: '#ecfdf5',
+                    border: '1px solid #a7f3d0',
+                    borderRadius: 8,
+                    padding: '14px 16px',
+                    textAlign: 'center',
+                    marginBottom: 14,
+                  }}
+                >
+                  <div style={{ color: '#059669', fontSize: 26, marginBottom: 2 }}>
+                    <i className="bi bi-check-circle-fill"></i>
+                  </div>
+                  <div style={{ fontWeight: 700, color: '#065f46', fontSize: 13, marginBottom: 2 }}>
+                    Đã Ghi Nhận Thanh Toán Đặt Cọc
+                  </div>
+                  <div style={{ fontSize: 12, color: '#047857' }}>
+                    Lễ tân có thể tiếp tục làm thủ tục Check-in phòng cho khách.
+                  </div>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 8,
+                    padding: '12px 14px',
+                    marginBottom: 14,
+                    textAlign: 'center',
+                  }}
+                >
+                  <div
+                    onClick={() => window.open(payUrl, '_blank')}
+                    title="Bấm vào mã QR để mở Cổng thanh toán VNPay"
+                    style={{
+                      display: 'inline-block',
+                      cursor: 'pointer',
+                      padding: 6,
+                      background: '#ffffff',
+                      borderRadius: 8,
+                      border: '1px solid #cbd5e1',
+                      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.04)',
+                      transition: 'transform 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.02)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1.0)')}
+                  >
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&margin=3&data=${encodeURIComponent(
+                        payUrl
+                      )}`}
+                      alt="VNPay QR Code"
+                      style={{ width: 140, height: 140, display: 'block', borderRadius: 4 }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 10, marginTop: 12, justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={() => window.open(payUrl, '_blank')}
+                      style={{
+                        flex: 1,
+                        background: '#005baa',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '8px 12px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <i className="bi bi-qr-code"></i>
+                      <span>Cổng VNPay</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleConfirmCash(successModalData.reservationCode)}
+                      disabled={isProcessingCash}
+                      style={{
+                        flex: 1,
+                        background: '#16a34a',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '8px 12px',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: isProcessingCash ? 'not-allowed' : 'pointer',
+                        opacity: isProcessingCash ? 0.7 : 1,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <i className="bi bi-cash-stack"></i>
+                      <span>{isProcessingCash ? 'Đang xử lý...' : 'Khách Trả Tiền Mặt'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Nút chân modal */}
+              <div style={{ display: 'flex', gap: 10 }}>
+                {isPaid ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setSuccessModalData(null)}
+                      style={{
+                        flex: 1,
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: 6,
+                        padding: '9px 14px',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: '#334155',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Tạo Đơn Mới
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSuccessModalData(null);
+                        setActiveTab('arrivals');
+                      }}
+                      style={{
+                        flex: 1,
+                        background: '#0f172a',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '9px 14px',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: '#ffffff',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <i className="bi bi-box-arrow-in-right"></i>
+                      <span>Tiến Hành Nhận Phòng Ngay</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleCancelPendingBooking(successModalData.reservationCode)}
+                      style={{
+                        flex: 1,
+                        background: '#fff1f2',
+                        border: '1px solid #fecdd3',
+                        borderRadius: 6,
+                        padding: '9px 14px',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: '#e11d48',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <i className="bi bi-x-circle"></i>
+                      <span>Hủy Đơn Này (Không cọc)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSuccessModalData(null)}
+                      style={{
+                        flex: 1,
+                        background: '#f8fafc',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: 6,
+                        padding: '9px 14px',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: '#475569',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Đóng (Chờ cọc)
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

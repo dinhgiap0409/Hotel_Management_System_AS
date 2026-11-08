@@ -25,4 +25,7 @@ public interface FrontDeskService {
     GuestStayDto extendStay(Integer stayId, ExtendStayRequest request);
     GuestStayDto transferRoom(Integer stayId, RoomTransferRequest request);
     GuestStayDto checkOutGuest(Integer stayId);
+    ReservationDto confirmCashPayment(String reservationCode);
+    java.util.Map<String, Object> getReservationPaymentStatus(String reservationCode);
+    ReservationDto cancelDirectBooking(String reservationCode, String reason);
 }
