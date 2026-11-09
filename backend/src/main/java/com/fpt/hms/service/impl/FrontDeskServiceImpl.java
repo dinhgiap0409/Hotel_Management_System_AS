@@ -732,13 +732,8 @@ public class FrontDeskServiceImpl implements FrontDeskService {
     private boolean isReservationBlockingInventory(Reservation res, Instant now) {
         if (res.getStatus() == null) return false;
         String status = res.getStatus().toUpperCase();
-        if (ReservationStatus.CONFIRMED.name().equals(status) || ReservationStatus.CHECKED_IN.name().equals(status)) {
-            return true;
-        }
-        if (ReservationStatus.PENDING.name().equals(status)) {
-            return res.getHoldExpiresAt() == null || res.getHoldExpiresAt().isAfter(now);
-        }
-        return false;
+        // Chỉ trừ vào quota phòng trống khi đơn đã thanh toán cọc thành công (CONFIRMED) hoặc đang lưu trú (CHECKED_IN)
+        return ReservationStatus.CONFIRMED.name().equals(status) || ReservationStatus.CHECKED_IN.name().equals(status);
     }
 
     private Map<Integer, BigDecimal> loadTariffMap(Integer roomTypeId) {
