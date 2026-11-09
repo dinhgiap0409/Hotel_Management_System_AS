@@ -450,11 +450,11 @@ export const RoomCategoryModal = ({
                 <div className="rounded-3 p-3 bg-light border">
                   <div className="fw-semibold text-dark small mb-2">
                     <i className="bi bi-shield-check me-2 text-success"></i>
-                    Chính sách lưu trú & Quy định giữ chỗ:
+                    Chính sách lưu trú & Thanh toán:
                   </div>
                   <ul className="small text-secondary mb-0 ps-3" style={{ lineHeight: 1.7 }}>
                     <li>Giờ nhận phòng (Check-in): Từ <strong>14:00</strong> — Giờ trả phòng (Check-out): Trước <strong>12:00</strong> trưa.</li>
-                    <li>Đơn đặt phòng trực tuyến sẽ ở trạng thái <strong>PENDING</strong> và được giữ chỗ trong <strong>24 giờ</strong> chờ thanh toán đặt cọc 30% qua VNPay.</li>
+                    <li>Đơn đặt phòng trực tuyến cần thanh toán đặt cọc <strong>30% qua VNPay</strong> để xác nhận đặt phòng thành công.</li>
                   </ul>
                 </div>
               </div>
@@ -580,13 +580,13 @@ export const RoomCategoryModal = ({
                       <div className="d-flex align-items-center gap-2 mb-1">
                         <i className="bi bi-check-circle-fill fs-5 text-success"></i>
                         <strong className="fs-6">
-                          Tạo đơn đặt phòng thành công! Đang giữ chỗ 24 giờ
+                          Tạo đơn đặt phòng thành công!
                         </strong>
                       </div>
                       <div className="small">
                         Mã đặt phòng của quý khách là{' '}
                         <strong className="text-dark">{createdBooking.reservationCode}</strong>. Vui
-                        lòng hoàn tất thanh toán đặt cọc 30% trước hạn giữ chỗ để xác nhận đơn.
+                        lòng hoàn tất thanh toán đặt cọc 30% qua VNPay để xác nhận đơn.
                       </div>
                     </Alert>
 
@@ -599,7 +599,7 @@ export const RoomCategoryModal = ({
                         <Col sm={6}>
                           <span className="text-secondary">Trạng thái:</span>{' '}
                           <Badge bg="warning" text="dark">
-                            {createdBooking.status} (Giữ chỗ 24 giờ)
+                            {createdBooking.status} (Chờ thanh toán cọc)
                           </Badge>
                         </Col>
                         <Col sm={6}>
@@ -609,7 +609,7 @@ export const RoomCategoryModal = ({
                           </strong>
                         </Col>
                         <Col sm={6}>
-                          <span className="text-secondary">Hạn giữ chỗ:</span>{' '}
+                          <span className="text-secondary">Hạn thanh toán cọc:</span>{' '}
                           <strong className="text-danger">
                             {formatDateTime(createdBooking.holdExpiresAt)}
                           </strong>
@@ -667,7 +667,7 @@ export const RoomCategoryModal = ({
                       Vui lòng đăng nhập để đặt phòng trực tuyến
                     </h5>
                     <p className="text-secondary small mb-4 mx-auto" style={{ maxWidth: 440 }}>
-                      Theo quy định bảo mật và quản lý giữ chỗ 24 giờ, quý khách cần đăng nhập
+                      Theo quy định bảo mật của khách sạn, quý khách cần đăng nhập
                       tài khoản Khách hàng trước khi xác nhận đặt phòng và thanh toán cọc VNPay.
                     </p>
                     <div className="d-flex justify-content-center gap-3">
@@ -701,8 +701,7 @@ export const RoomCategoryModal = ({
                           Thông tin người liên hệ & Đặt phòng
                         </h5>
                         <p className="text-secondary small mb-0">
-                          Đơn đặt phòng sẽ được giữ chỗ trong <strong>24 giờ</strong> chờ thanh
-                          toán đặt cọc 30% qua VNPay.
+                          Vui lòng kiểm tra thông tin và tiến hành thanh toán đặt cọc 30% qua VNPay.
                         </p>
                       </div>
                     </div>
@@ -774,12 +773,12 @@ export const RoomCategoryModal = ({
                         {submittingBooking ? (
                           <>
                             <Spinner animation="border" size="sm" className="me-2" />
-                            Đang khởi tạo đơn giữ chỗ 7 phút...
+                            Đang xử lý đặt phòng...
                           </>
                         ) : (
                           <>
                             <i className="bi bi-check2-circle me-2"></i>
-                            Xác nhận Đặt phòng & Giữ chỗ 7 phút (Đặt cọc {formatVND(estimatedDeposit)})
+                            Xác nhận Đặt phòng & Thanh toán cọc (Đặt cọc {formatVND(estimatedDeposit)})
                           </>
                         )}
                       </Button>
@@ -896,7 +895,7 @@ export const RoomCategoryModal = ({
                     </span>
                   </div>
                   <div className="d-flex justify-content-between small mb-2">
-                    <span className="text-secondary">Tiền cọc giữ chỗ (30% VNPay):</span>
+                    <span className="text-secondary">Tiền đặt cọc (30% VNPay):</span>
                     <strong style={{ color: '#C96442' }}>{formatVND(estimatedDeposit)}</strong>
                   </div>
                   <div className="border-top pt-2 mt-2 d-flex justify-content-between align-items-center">
@@ -915,7 +914,7 @@ export const RoomCategoryModal = ({
                     onClick={() => setActiveTab('BOOKING')}
                   >
                     <i className="bi bi-calendar2-check me-2"></i>
-                    Đặt phòng ngay (Giữ chỗ 24 giờ)
+                    Đặt phòng & Thanh toán
                   </Button>
                 )}
                 <div className="d-flex justify-content-between align-items-center">

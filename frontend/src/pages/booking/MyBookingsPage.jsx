@@ -70,7 +70,7 @@ export const MyBookingsPage = () => {
         <div>
           <h2 className="h4 fw-bold text-dark mb-1">Đặt phòng của tôi</h2>
           <p className="text-secondary small mb-0">
-            Theo dõi trạng thái đơn đặt phòng, thời hạn giữ chỗ 7 phút và thanh toán đặt cọc VNPay.
+            Theo dõi trạng thái đơn đặt phòng và thanh toán đặt cọc VNPay.
           </p>
         </div>
         <Button className="btn-hms-primary" onClick={() => navigate('/rooms')}>
@@ -155,13 +155,13 @@ export const MyBookingsPage = () => {
                   },
                 },
                 {
-                  header: 'Trạng thái & Hạn giữ chỗ',
+                  header: 'Trạng thái & Hạn thanh toán',
                   render: (b) => (
                     <div>
                       <StatusBadge status={b.status} />
                       {b.status === 'PENDING' && b.holdExpiresAt && (
                         <div className="small text-danger mt-1" style={{ fontSize: 11.5 }}>
-                          Giữ đến: {formatDateTime(b.holdExpiresAt)}
+                          Hạn thanh toán: {formatDateTime(b.holdExpiresAt)}
                         </div>
                       )}
                     </div>
@@ -346,7 +346,7 @@ export const MyBookingsPage = () => {
                       lineHeight: 1.5,
                     }}
                   >
-                    Đơn đặt phòng đang ở trạng thái giữ chỗ (chưa thanh toán cọc). Khi hủy, đơn sẽ chuyển sang trạng thái <strong>HỦY (CANCELLED)</strong> và giải phóng chỗ ngay lập tức.
+                    Đơn đặt phòng đang ở trạng thái chờ thanh toán cọc. Khi hủy, đơn sẽ chuyển sang trạng thái <strong>HỦY (CANCELLED)</strong> ngay lập tức.
                   </div>
                 )}
               </>
