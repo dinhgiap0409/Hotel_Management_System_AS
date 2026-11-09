@@ -106,6 +106,9 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         if (request.getContactPhone() == null || request.getContactPhone().trim().isBlank()) {
             throw new BusinessException("MSG04A", "Số điện thoại liên hệ là bắt buộc.");
         }
+        if (!request.getContactPhone().trim().matches("^0\\d{9}$")) {
+            throw new BusinessException("MSG04A", "Số điện thoại không hợp lệ: Yêu cầu đúng 10 chữ số và bắt đầu bằng số 0.");
+        }
         if (request.getContactName() == null || request.getContactName().trim().isBlank()) {
             throw new BusinessException("MSG04A", "Họ và tên khách hàng là bắt buộc.");
         }
@@ -152,7 +155,7 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .contactName(request.getContactName().trim())
                 .contactPhone(phone)
                 .contactEmail(email)
-                .holdExpiresAt(now.plus(30, ChronoUnit.DAYS))
+                .holdExpiresAt(now.plus(7, ChronoUnit.MINUTES))
                 .build();
 
         for (DirectBookingRequest.SelectedRoomItem item : items) {
@@ -729,13 +732,8 @@ public class FrontDeskServiceImpl implements FrontDeskService {
     private boolean isReservationBlockingInventory(Reservation res, Instant now) {
         if (res.getStatus() == null) return false;
         String status = res.getStatus().toUpperCase();
-        if (ReservationStatus.CONFIRMED.name().equals(status) || ReservationStatus.CHECKED_IN.name().equals(status)) {
-            return true;
-        }
-        if (ReservationStatus.PENDING.name().equals(status)) {
-            return res.getHoldExpiresAt() == null || res.getHoldExpiresAt().isAfter(now);
-        }
-        return false;
+        // Chỉ trừ vào quota phòng trống khi đơn đã thanh toán cọc thành công (CONFIRMED) hoặc đang lưu trú (CHECKED_IN)
+        return ReservationStatus.CONFIRMED.name().equals(status) || ReservationStatus.CHECKED_IN.name().equals(status);
     }
 
     private Map<Integer, BigDecimal> loadTariffMap(Integer roomTypeId) {

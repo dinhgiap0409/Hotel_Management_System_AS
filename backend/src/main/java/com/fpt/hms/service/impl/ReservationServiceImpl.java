@@ -48,9 +48,9 @@ public class ReservationServiceImpl implements ReservationService {
     private final Clock hotelClock;
     private final AuditService auditService;
 
-    /** BR-19 hold duration, configured in application.yml (app.booking.hold-hours, default 24h). */
-    @Value("${app.booking.hold-hours:24}")
-    private long bookingHoldHours;
+    /** BR-19 hold duration in minutes, default 7 minutes. */
+    @Value("${app.booking.hold-minutes:7}")
+    private long bookingHoldMinutes;
 
     @Override
     @Transactional(readOnly = true)
@@ -291,13 +291,8 @@ public class ReservationServiceImpl implements ReservationService {
     private boolean isReservationBlockingInventory(Reservation res, Instant now) {
         if (res.getStatus() == null) return false;
         String status = res.getStatus().toUpperCase();
-        if (ReservationStatus.CONFIRMED.name().equals(status) || ReservationStatus.CHECKED_IN.name().equals(status)) {
-            return true;
-        }
-        if (ReservationStatus.PENDING.name().equals(status)) {
-            return res.getHoldExpiresAt() == null || res.getHoldExpiresAt().isAfter(now);
-        }
-        return false;
+        // Chỉ trừ vào quota phòng trống khi đơn đã thanh toán cọc thành công (CONFIRMED) hoặc đang lưu trú (CHECKED_IN)
+        return ReservationStatus.CONFIRMED.name().equals(status) || ReservationStatus.CHECKED_IN.name().equals(status);
     }
 
     private PublicRoomCategoryDto toPublicRoomCategoryDto(
@@ -469,11 +464,11 @@ public class ReservationServiceImpl implements ReservationService {
                 + UUID.randomUUID().toString().substring(0, 5).toUpperCase();
 
         Instant now = Instant.now(hotelClock);
-        // BR-19: hold the room quota for app.booking.hold-hours (default 24h).
+        // BR-19: hold the room quota for app.booking.hold-minutes (default 7m).
         // The scheduler cancels PENDING reservations past this instant.
-        Instant holdExpiresAt = now.plus(bookingHoldHours, ChronoUnit.HOURS);
+        Instant holdExpiresAt = now.plus(bookingHoldMinutes, ChronoUnit.MINUTES);
 
-        // BR-19: New reservations start as PENDING and hold quota for 24 hours
+        // BR-19: New reservations start as PENDING and hold quota for 7 minutes
         Reservation reservation = Reservation.builder()
                 .customer(customer)
                 .reservationCode(code)
@@ -515,7 +510,7 @@ public class ReservationServiceImpl implements ReservationService {
 
         auditService.recordAction(accountId, accountId != null ? "CUSTOMER" : "GUEST",
                 "RESERVATION_CREATED", "Reservation", savedReservation.getReservationId(),
-                null, "code=" + code + ";status=PENDING;holdHours=" + bookingHoldHours,
+                null, "code=" + code + ";status=PENDING;holdMinutes=" + bookingHoldMinutes,
                 "Tao don dat phong online (UC-23)");
 
         // Create Deposit Payment (30% of estimated stay total) & VNPay PaymentAttempt record

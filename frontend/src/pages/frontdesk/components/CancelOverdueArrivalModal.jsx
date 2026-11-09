@@ -108,7 +108,7 @@ export const CancelOverdueArrivalModal = ({ data, onClose, onSuccess, checkOverd
               <option value="Khách không đến nhận phòng quá giờ quy định (No-show)">
                 Khách không đến nhận phòng quá giờ quy định (No-show)
               </option>
-              <option value="Quá thời hạn giữ chỗ 24h">Quá thời hạn giữ chỗ 24h</option>
+              <option value="Quá thời hạn giữ chỗ">Quá thời hạn giữ chỗ (7 phút)</option>
               <option value="Khách liên hệ xin hủy do trễ giờ">Khách liên hệ xin hủy do trễ giờ</option>
               <option value="Khác">Lý do khác...</option>
             </select>
