@@ -1286,7 +1286,7 @@ export const FrontDeskDashboardPage = () => {
     }
     const now = new Date();
     if (r.holdExpiresAt && new Date(r.holdExpiresAt) < now) {
-      return { isOverdue: true, reason: 'Quá thời hạn giữ chỗ 24h' };
+      return { isOverdue: true, reason: 'Quá thời hạn giữ chỗ' };
     }
     const todayStr = new Date().toLocaleDateString('en-CA');
     if (r.checkInDate && r.checkInDate < todayStr) {

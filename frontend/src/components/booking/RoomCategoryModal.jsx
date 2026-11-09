@@ -774,12 +774,12 @@ export const RoomCategoryModal = ({
                         {submittingBooking ? (
                           <>
                             <Spinner animation="border" size="sm" className="me-2" />
-                            Đang khởi tạo đơn giữ chỗ 24h...
+                            Đang khởi tạo đơn giữ chỗ 7 phút...
                           </>
                         ) : (
                           <>
                             <i className="bi bi-check2-circle me-2"></i>
-                            Xác nhận Đặt phòng & Giữ chỗ 24h (Đặt cọc {formatVND(estimatedDeposit)})
+                            Xác nhận Đặt phòng & Giữ chỗ 7 phút (Đặt cọc {formatVND(estimatedDeposit)})
                           </>
                         )}
                       </Button>

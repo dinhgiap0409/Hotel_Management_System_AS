@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Badge, Spinner, Alert } from 'react-bootstrap';
+import { Card, Button, Badge, Spinner, Alert, Modal } from 'react-bootstrap';
 import { bookingApi } from '../../services/bookingApi';
 import { DataTable } from '../../components/common/DataTable';
 import { StatusBadge } from '../../components/common/StatusBadge';
@@ -14,7 +14,8 @@ export const MyBookingsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [cancellingId, setCancellingId] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const loadBookings = () => {
     setLoading(true);
@@ -35,36 +36,22 @@ export const MyBookingsPage = () => {
     loadBookings();
   }, []);
 
-  // UC-25: Huy dat phong. Chi hien nut Huy voi booking con huy duoc
-  // (PENDING hoac CONFIRMED); backend chan huy khi da CHECKED_IN hoac
-  // COMPLETED. Quy tac coc (user chot 06/11/2026, giu nguyen): huy thi
-  // MAT coc da tra, khong hoan tien. Chi truong hop da tra coc moi hien
-  // luu y mat coc; booking chua tra coc / chi moi giu cho thi huy khong
-  // mat gi nen chi hoi xac nhan binh thuong, khong ghi ve tien.
-  // Khong co component xac nhan dung chung trong app nen dung
-  // window.confirm.
-  const handleCancelBooking = (b) => {
-    if (!b) return;
-    const isPaid = b.depositPaymentStatus === 'PAID' || b.status === 'CONFIRMED';
-    const message = isPaid
-      ? `Quý khách lưu ý: đơn đặt phòng ${b.reservationCode} đã được thanh toán đặt cọc ${formatVND(b.depositAmount)}. Nếu hủy đơn này, khoản đặt cọc sẽ không được hoàn lại. Quý khách có chắc chắn muốn hủy không?`
-      : `Quý khách có chắc chắn muốn hủy đơn đặt phòng ${b.reservationCode} không?`;
-    if (!window.confirm(message)) return;
-    setCancellingId(b.reservationId);
+  // UC-25: Hủy đặt phòng bằng Modal giao diện đẹp (thay thế window.confirm)
+  const handleConfirmCancel = async () => {
+    if (!cancelTarget) return;
+    setIsCancelling(true);
     setError(null);
     setSuccess(null);
-    // Backend khong nhan query param reason (controller chi nhan
-    // reservationId) nen goi khong truyen reason.
-    bookingApi
-      .cancelReservation(b.reservationId)
-      .then(() => {
-        setSuccess(`Đã hủy đơn đặt phòng ${b.reservationCode}.`);
-        loadBookings();
-      })
-      .catch((err) => {
-        setError(err.response?.data?.message || 'Không thể hủy đơn đặt phòng. Vui lòng thử lại.');
-      })
-      .finally(() => setCancellingId(null));
+    try {
+      await bookingApi.cancelReservation(cancelTarget.reservationId);
+      setSuccess(`Đã hủy thành công đơn đặt phòng #${cancelTarget.reservationCode}.`);
+      setCancelTarget(null);
+      loadBookings();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Không thể hủy đơn đặt phòng. Vui lòng thử lại.');
+    } finally {
+      setIsCancelling(false);
+    }
   };
 
   const handlePayDeposit = (b) => {
@@ -83,7 +70,7 @@ export const MyBookingsPage = () => {
         <div>
           <h2 className="h4 fw-bold text-dark mb-1">Đặt phòng của tôi</h2>
           <p className="text-secondary small mb-0">
-            Theo dõi trạng thái đơn đặt phòng, thời hạn giữ chỗ 24h và thanh toán đặt cọc VNPay.
+            Theo dõi trạng thái đơn đặt phòng, thời hạn giữ chỗ 7 phút và thanh toán đặt cọc VNPay.
           </p>
         </div>
         <Button className="btn-hms-primary" onClick={() => navigate('/rooms')}>
@@ -213,11 +200,11 @@ export const MyBookingsPage = () => {
                         <Button
                           size="sm"
                           variant="outline-danger"
-                          disabled={cancellingId === b.reservationId}
-                          onClick={() => handleCancelBooking(b)}
+                          disabled={isCancelling && cancelTarget?.reservationId === b.reservationId}
+                          onClick={() => setCancelTarget(b)}
                         >
                           <i className="bi bi-x-circle me-1"></i>
-                          {cancellingId === b.reservationId ? 'Đang hủy...' : 'Hủy đặt phòng'}
+                          Hủy đặt phòng
                         </Button>
                       )}
                     </div>
@@ -228,6 +215,182 @@ export const MyBookingsPage = () => {
           </Card.Body>
         </Card>
       )}
+
+      {/* Modal xác nhận hủy đơn đặt phòng (thay thế window.confirm) */}
+      <Modal
+        show={!!cancelTarget}
+        onHide={() => !isCancelling && setCancelTarget(null)}
+        centered
+        backdrop="static"
+        keyboard={!isCancelling}
+      >
+        <div style={{ borderRadius: 12, overflow: 'hidden' }}>
+          <div
+            style={{
+              padding: '16px 20px',
+              borderBottom: '1px solid #f1f5f9',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              background: '#ffffff',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span
+                style={{
+                  background: '#fee2e2',
+                  color: '#dc2626',
+                  width: 34,
+                  height: 34,
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 16,
+                }}
+              >
+                <i className="bi bi-exclamation-triangle-fill"></i>
+              </span>
+              <h5 style={{ margin: 0, fontWeight: 700, fontSize: 16, color: '#0f172a' }}>
+                Xác Nhận Hủy Đặt Phòng
+              </h5>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCancelTarget(null)}
+              disabled={isCancelling}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                fontSize: 18,
+                color: '#94a3b8',
+                cursor: isCancelling ? 'not-allowed' : 'pointer',
+                lineHeight: 1,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+
+          <div style={{ padding: '20px', background: '#ffffff' }}>
+            {cancelTarget && (
+              <>
+                <div
+                  style={{
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 8,
+                    padding: '12px 16px',
+                    marginBottom: 16,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <span style={{ fontWeight: 700, fontFamily: 'monospace', fontSize: 14, color: '#0f172a' }}>
+                      #{cancelTarget.reservationCode}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        padding: '2px 8px',
+                        borderRadius: 4,
+                        fontWeight: 600,
+                        background: '#e0f2fe',
+                        color: '#0369a1',
+                      }}
+                    >
+                      {cancelTarget.roomTypeName}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 13, color: '#64748b', display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span>Thời gian lưu trú:</span>
+                    <strong style={{ color: '#334155' }}>
+                      {formatDate(cancelTarget.checkInDate)} → {formatDate(cancelTarget.checkOutDate)}
+                    </strong>
+                  </div>
+                  <div style={{ fontSize: 13, color: '#64748b', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Tiền đặt cọc (30%):</span>
+                    <strong style={{ color: cancelTarget.depositPaymentStatus === 'PAID' || cancelTarget.status === 'CONFIRMED' ? '#dc2626' : '#64748b' }}>
+                      {formatVND(cancelTarget.depositAmount)}{' '}
+                      {cancelTarget.depositPaymentStatus === 'PAID' || cancelTarget.status === 'CONFIRMED' ? '(Đã cọc)' : '(Chưa cọc)'}
+                    </strong>
+                  </div>
+                </div>
+
+                {cancelTarget.depositPaymentStatus === 'PAID' || cancelTarget.status === 'CONFIRMED' ? (
+                  <div
+                    style={{
+                      background: '#fffbeb',
+                      border: '1px solid #fde68a',
+                      borderRadius: 8,
+                      padding: '12px 14px',
+                      fontSize: 13,
+                      color: '#92400e',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <i className="bi bi-info-circle-fill" style={{ color: '#d97706' }}></i>
+                      Lưu ý quan trọng về chính sách tiền cọc:
+                    </div>
+                    Đơn đặt phòng này <strong>đã được thanh toán tiền cọc {formatVND(cancelTarget.depositAmount)}</strong>. Theo quy định chính sách hủy phòng của khách sạn, nếu quý khách hủy đơn thì <strong>khoản tiền cọc này sẽ không được hoàn lại</strong>. Quý khách có chắc chắn muốn hủy đơn không?
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 8,
+                      padding: '12px 14px',
+                      fontSize: 13,
+                      color: '#475569',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Đơn đặt phòng đang ở trạng thái giữ chỗ (chưa thanh toán cọc). Khi hủy, đơn sẽ chuyển sang trạng thái <strong>HỦY (CANCELLED)</strong> và giải phóng chỗ ngay lập tức.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div
+            style={{
+              padding: '12px 20px',
+              borderTop: '1px solid #f1f5f9',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: 10,
+              background: '#f8fafc',
+            }}
+          >
+            <Button
+              variant="outline-secondary"
+              size="sm"
+              disabled={isCancelling}
+              onClick={() => setCancelTarget(null)}
+              style={{ padding: '6px 14px', fontSize: 13, borderRadius: 6 }}
+            >
+              Quay lại
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={isCancelling}
+              onClick={handleConfirmCancel}
+              style={{ padding: '6px 14px', fontSize: 13, borderRadius: 6, fontWeight: 600 }}
+            >
+              {isCancelling ? (
+                <>
+                  <Spinner size="sm" animation="border" className="me-1" />
+                  Đang hủy đơn...
+                </>
+              ) : (
+                'Xác nhận hủy đặt phòng'
+              )}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

@@ -155,7 +155,7 @@ public class FrontDeskServiceImpl implements FrontDeskService {
                 .contactName(request.getContactName().trim())
                 .contactPhone(phone)
                 .contactEmail(email)
-                .holdExpiresAt(now.plus(30, ChronoUnit.DAYS))
+                .holdExpiresAt(now.plus(7, ChronoUnit.MINUTES))
                 .build();
 
         for (DirectBookingRequest.SelectedRoomItem item : items) {
