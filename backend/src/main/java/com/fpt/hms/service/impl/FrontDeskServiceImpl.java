@@ -106,6 +106,9 @@ public class FrontDeskServiceImpl implements FrontDeskService {
         if (request.getContactPhone() == null || request.getContactPhone().trim().isBlank()) {
             throw new BusinessException("MSG04A", "Số điện thoại liên hệ là bắt buộc.");
         }
+        if (!request.getContactPhone().trim().matches("^0\\d{9}$")) {
+            throw new BusinessException("MSG04A", "Số điện thoại không hợp lệ: Yêu cầu đúng 10 chữ số và bắt đầu bằng số 0.");
+        }
         if (request.getContactName() == null || request.getContactName().trim().isBlank()) {
             throw new BusinessException("MSG04A", "Họ và tên khách hàng là bắt buộc.");
         }

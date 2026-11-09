@@ -172,6 +172,16 @@ export const FrontDeskDashboardPage = () => {
   const todayStr = new Date().toISOString().split('T')[0];
   const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
 
+  const getNextDayStr = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    d.setDate(d.getDate() + 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const [bookingForm, setBookingForm] = useState({
     checkInDate: todayStr,
     checkOutDate: tomorrowStr,
@@ -181,6 +191,27 @@ export const FrontDeskDashboardPage = () => {
     guestIdNumber: '',
     specialNotes: '',
   });
+
+  const handleCheckInDateChange = (newCheckIn) => {
+    const minNext = getNextDayStr(newCheckIn);
+    setBookingForm((prev) => {
+      let nextCheckOut = prev.checkOutDate;
+      if (!nextCheckOut || nextCheckOut <= newCheckIn) {
+        nextCheckOut = minNext;
+      }
+      return { ...prev, checkInDate: newCheckIn, checkOutDate: nextCheckOut };
+    });
+    setBookingQuote(null);
+  };
+
+  const handleCheckOutDateChange = (newCheckOut) => {
+    setBookingForm((prev) => {
+      const minNext = getNextDayStr(prev.checkInDate);
+      const safeCheckOut = newCheckOut && newCheckOut > prev.checkInDate ? newCheckOut : minNext;
+      return { ...prev, checkOutDate: safeCheckOut };
+    });
+    setBookingQuote(null);
+  };
 
   // Step 1 & Step 2 Booking Availability Filtering
   const [filterGuestCount, setFilterGuestCount] = useState(2);
@@ -586,6 +617,23 @@ export const FrontDeskDashboardPage = () => {
     e.preventDefault();
     if (!bookingForm.contactName.trim() || !bookingForm.contactPhone.trim()) {
       notifyToast({ type: 'WARNING', message: 'Họ tên và số điện thoại khách hàng là bắt buộc.' });
+      return;
+    }
+
+    const phoneRegex = /^0\d{9}$/;
+    if (!phoneRegex.test(bookingForm.contactPhone.trim())) {
+      notifyToast({
+        type: 'WARNING',
+        message: 'Số điện thoại không hợp lệ: Yêu cầu đúng 10 chữ số và bắt đầu bằng số 0 (ví dụ: 0912345678).',
+      });
+      return;
+    }
+
+    if (new Date(bookingForm.checkInDate) >= new Date(bookingForm.checkOutDate)) {
+      notifyToast({
+        type: 'WARNING',
+        message: 'Ngày trả phòng phải sau ngày nhận phòng ít nhất 1 đêm.',
+      });
       return;
     }
 
@@ -2272,10 +2320,7 @@ export const FrontDeskDashboardPage = () => {
                   required
                   min={todayStr}
                   value={bookingForm.checkInDate}
-                  onChange={(e) => {
-                    setBookingForm((prev) => ({ ...prev, checkInDate: e.target.value }));
-                    setBookingQuote(null);
-                  }}
+                  onChange={(e) => handleCheckInDateChange(e.target.value)}
                   style={{
                     width: '100%',
                     padding: '7px 10px',
@@ -2295,12 +2340,9 @@ export const FrontDeskDashboardPage = () => {
                 <input
                   type="date"
                   required
-                  min={bookingForm.checkInDate || todayStr}
+                  min={getNextDayStr(bookingForm.checkInDate) || tomorrowStr}
                   value={bookingForm.checkOutDate}
-                  onChange={(e) => {
-                    setBookingForm((prev) => ({ ...prev, checkOutDate: e.target.value }));
-                    setBookingQuote(null);
-                  }}
+                  onChange={(e) => handleCheckOutDateChange(e.target.value)}
                   style={{
                     width: '100%',
                     padding: '7px 10px',
@@ -2633,23 +2675,37 @@ export const FrontDeskDashboardPage = () => {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     <div>
                       <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-                        Số Điện Thoại *
+                        Số Điện Thoại (10 số, bắt đầu 0) *
                       </label>
                       <input
                         type="tel"
                         required
+                        maxLength={10}
+                        pattern="^0[0-9]{9}$"
                         placeholder="0912345678"
                         value={bookingForm.contactPhone}
-                        onChange={(e) => setBookingForm((prev) => ({ ...prev, contactPhone: e.target.value }))}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          setBookingForm((prev) => ({ ...prev, contactPhone: val }));
+                        }}
                         style={{
                           width: '100%',
                           padding: '7px 10px',
-                          border: '1px solid #cbd5e1',
+                          border: `1px solid ${
+                            bookingForm.contactPhone && !/^0\d{9}$/.test(bookingForm.contactPhone)
+                              ? '#ef4444'
+                              : '#cbd5e1'
+                          }`,
                           borderRadius: 6,
                           fontSize: 13,
                           color: '#0f172a',
                         }}
                       />
+                      {bookingForm.contactPhone && !/^0\d{9}$/.test(bookingForm.contactPhone) && (
+                        <div style={{ fontSize: 11, color: '#ef4444', marginTop: 3 }}>
+                          * Bắt buộc đúng 10 số và bắt đầu bằng số 0
+                        </div>
+                      )}
                     </div>
 
                     <div>
